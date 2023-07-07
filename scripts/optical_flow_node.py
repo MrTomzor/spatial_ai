@@ -6,13 +6,17 @@ from cv_bridge import CvBridge
 import cv2
 import numpy as np
 import time
+from visualization_msgs.msg import Marker
+from geometry_msgs.msg import Point
 
 class OpticalFlowNode:
     def __init__(self):
         self.bridge = CvBridge()
         self.prev_image = None
         self.prev_time = None
+
         self.pub = rospy.Publisher('optical_flow', Image, queue_size=1)
+        self.marker_pub = rospy.Publisher('/tracked_features', Marker, queue_size=10)
         self.sub = rospy.Subscriber('/robot1/camera1/raw', Image, self.image_callback, queue_size=10000)
 
         self.laststamp = None
@@ -57,21 +61,63 @@ class OpticalFlowNode:
             prev_gray = cv2.cvtColor(self.prev_image, cv2.COLOR_BGR2GRAY)
             current_gray = cv2.cvtColor(current_image, cv2.COLOR_BGR2GRAY)
 
-            flow = cv2.calcOpticalFlowFarneback(prev_gray, current_gray, None, 0.5, 3, 15, 3, 5, 1.2, 0) * (0.1 / tdif)
+            # ---opticflow
+            # flow = cv2.calcOpticalFlowFarneback(prev_gray, current_gray, None, 0.5, 3, 15, 3, 5, 1.2, 0) * (0.1 / tdif)
+                
+            # ---orb features
+            orb = cv2.ORB_create()
+            kp = orb.detect(current_gray,None)
+            kp, des = orb.compute(current_gray, kp)
+
             comp_end_time = rospy.get_rostime()
+
+            # ---harris corners
+            corners = cv2.cornerHarris(current_gray, 2, 3, 0.04)
+            corners = cv2.dilate(corners, None)
+            # cv_image[corners > 0.01 * corners.max()] = [0, 0, 255]
+
 
             print("computation time: " + str((comp_end_time - current_time).to_sec()))
 
+            # Visualize orb
+            vis = self.visualize_keypoints(current_gray, kp)
+            self.pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
+
+            # Visualize corners
+            # vis = self.visualize_corners(corners)
+            # self.pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
+
             # Visualize optical flow
-            cv2.imshow('preview', self.draw_flow(current_gray, flow))
-            cv2.waitKey()
-            flow_vis = self.visualize_optical_flow(flow)
+            # cv2.imshow('preview', self.draw_flow(current_gray, flow))
+            # cv2.waitKey()
+            # flow_vis = self.visualize_optical_flow(flow)
 
-            try:
-                self.pub.publish(self.bridge.cv2_to_imgmsg(flow_vis, "bgr8"))
-            except CvBridgeError as e:
-                rospy.logerr(e)
+            # try:
+            #     self.pub.publish(self.bridge.cv2_to_imgmsg(flow_vis, "bgr8"))
+            # except CvBridgeError as e:
+            #     rospy.logerr(e)
 
+            # marker = Marker()
+            # marker.header = msg.header
+            # marker.type = Marker.POINTS
+            # marker.action = Marker.ADD
+            # marker.scale.x = 0.05
+            # marker.scale.y = 0.05
+            # marker.color.r = 1.0
+            # marker.color.g = 0.0
+            # marker.color.b = 0.0
+            # marker.color.a = 1.0
+
+            # for i in range(corners.shape[0]):
+            #     for j in range(corners.shape[1]):
+            #         if corners[i, j] > 0.01 * corners.max():
+            #             point = Point()
+            #             point.x = j
+            #             point.y = i
+            #             point.z = 0
+            #             marker.points.append(point)
+
+            # self.marker_pub.publish(marker)
 
 
         self.prev_image = current_image
@@ -86,6 +132,38 @@ class OpticalFlowNode:
         hsv[..., 2] = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)
         flow_vis = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
 
+        return flow_vis
+
+    def visualize_corners(self, corners):
+        rgb = np.zeros((corners.shape[0], corners.shape[1], 3), dtype=np.uint8)
+        thresh = 0.01 * corners.max()
+        rgb[corners > thresh, 0] = 255
+
+        # for i in range(corners.shape[0]):
+        #     for j in range(corners.shape[1]):
+        #         if corners[i, j] > thresh:
+        #             rgb[i,j,0] = 255
+        flow_vis = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+        return flow_vis
+
+    def visualize_keypoints(self, img, kp):
+        rgb = np.zeros((img.shape[0], img.shape[1], 3), dtype=np.uint8)
+        # thresh = 0.01 * corners.max()
+        # rgb[corners > thresh, 0] = 255
+        # coords = np.zeros((len(kp),2))
+        # for i in range(len(kp)):
+        #     # print(k)
+        #     # rgb[corners > thresh, 0] = 255
+        #     coords[i,0] = ()
+        #     coords[i,1] = ()
+        for k in kp:
+            rgb[int(k.pt[1]), int(k.pt[0]), 0] = 255
+
+        # for i in range(corners.shape[0]):
+        #     for j in range(corners.shape[1]):
+        #         if corners[i, j] > thresh:
+        #             rgb[i,j,0] = 255
+        flow_vis = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         return flow_vis
 
 if __name__ == '__main__':
