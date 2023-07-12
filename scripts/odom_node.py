@@ -8,6 +8,8 @@ import numpy as np
 import time
 from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point
+from sensor_msgs.msg import PointCloud
+from geometry_msgs.msg import Point32
 
 class OdomNode:
     def __init__(self):
@@ -17,10 +19,11 @@ class OdomNode:
 
         self.kp_pub = rospy.Publisher('tracked_features_img', Image, queue_size=1)
         self.marker_pub = rospy.Publisher('/vo_odom', Marker, queue_size=10)
+        self.kp_pcl_pub = rospy.Publisher('tracked_features_space', PointCloud, queue_size=10)
         self.sub = rospy.Subscriber('/robot1/camera1/raw', Image, self.image_callback, queue_size=10000)
 
         self.laststamp = None
-        self.orb = cv2.ORB_create(3000)
+        self.orb = cv2.ORB_create(nfeatures=3000)
 
         # Load calib
         self.K = np.array([415, 0, 320, 0, 415, 240, 0, 0, 1]).reshape((3,3))
@@ -120,6 +123,13 @@ class OdomNode:
 
         print("current pose: ")
         print(self.current_pose)
+        
+        print("Triangulated pts:")
+        print(self.triangulated_points.shape)
+        print(self.triangulated_points)
+
+        # Visualize points
+        self.visualize_keypoints_in_space(self.triangulated_points)
 
         # Visualize orb
         vis = self.visualize_keypoints(current_gray, kp)
@@ -191,7 +201,7 @@ class OdomNode:
         -------
         right_pair (list): Contains the rotation matrix and translation vector
         """
-        def sum_z_cal_relative_scale(R, t):
+        def sum_z_cal_relative_scale(R, t, store=False):
             # Get the transformation matrix
             T = self._form_transf(R, t)
             # Make the projection matrix
@@ -205,6 +215,9 @@ class OdomNode:
             # Un-homogenize
             uhom_Q1 = hom_Q1[:3, :] / hom_Q1[3, :]
             uhom_Q2 = hom_Q2[:3, :] / hom_Q2[3, :]
+
+            if store:
+                return uhom_Q2
 
             # Find the number of points there has positive z coordinate in both cameras
             sum_of_pos_z_Q1 = sum(uhom_Q1[2, :] > 0)
@@ -235,6 +248,10 @@ class OdomNode:
         right_pair = pairs[right_pair_idx]
         relative_scale = relative_scales[right_pair_idx]
         R1, t = right_pair
+
+        # store the unhomogenized keypoints for the correct pair
+        self.triangulated_points = sum_z_cal_relative_scale(R1, t, True)
+
         t = t * relative_scale
 
         return [R1, t]
@@ -245,6 +262,22 @@ class OdomNode:
             rgb[int(k.pt[1]), int(k.pt[0]), 0] = 255
         flow_vis = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         return flow_vis
+
+    def visualize_keypoints_in_space(self, kp):
+        point_cloud = PointCloud()
+        point_cloud.header.stamp = rospy.Time.now()
+        point_cloud.header.frame_id = 'odom'  # Set the frame ID according to your robot's configuration
+        
+        # Sample points
+        for i in range(kp.shape[1]):
+            if kp[2, i] > 0:
+                point1 = Point32()
+                point1.x = kp[0, i]
+                point1.y = kp[1, i]
+                point1.z = kp[2, i]
+                point_cloud.points.append(point1)
+        
+        self.kp_pcl_pub.publish(point_cloud)
 
 if __name__ == '__main__':
     rospy.init_node('visual_odom_node')
