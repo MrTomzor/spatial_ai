@@ -15,8 +15,8 @@ class OdomNode:
         self.prev_image = None
         self.prev_time = None
 
-        self.pub = rospy.Publisher('optical_flow', Image, queue_size=1)
-        self.marker_pub = rospy.Publisher('/tracked_features', Marker, queue_size=10)
+        self.kp_pub = rospy.Publisher('tracked_features_img', Image, queue_size=1)
+        self.marker_pub = rospy.Publisher('/vo_odom', Marker, queue_size=10)
         self.sub = rospy.Subscriber('/robot1/camera1/raw', Image, self.image_callback, queue_size=10000)
 
         self.laststamp = None
@@ -87,7 +87,6 @@ class OdomNode:
             self.prev_desc = desc
             return
 
-        comp_end_time = rospy.get_rostime()
 
         # Find matches
         matches = self.flann.knnMatch(self.prev_desc, desc, k=2)
@@ -108,6 +107,8 @@ class OdomNode:
         # get pose
         transf = self.get_pose(q1, q2)
 
+        comp_end_time = rospy.get_rostime()
+
         print("total computation time: " + str((comp_end_time - comp_start_time).to_sec()))
         print("good matches: " + str(len(good))+ "/" + str(len(matches)))
         print("transform: ")
@@ -119,12 +120,39 @@ class OdomNode:
 
         print("current pose: ")
         print(self.current_pose)
+
         # Visualize orb
-        # vis = self.visualize_keypoints(current_gray, kp)
-        # self.pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
+        vis = self.visualize_keypoints(current_gray, kp)
+        self.kp_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
 
         self.prev_kp = kp
         self.prev_desc = desc
+        self.update_and_publish_path_marker()
+
+    def update_and_publish_path_marker(self):
+        marker = Marker()
+        marker.header.frame_id = "odom"
+        marker.type = Marker.ARROW
+        marker.action = Marker.ADD
+        # WARN! transformation!
+        marker.pose.position.z = self.current_pose[0, 3]
+        marker.pose.position.y = -self.current_pose[1, 3]
+        marker.pose.position.x = self.current_pose[2, 3]
+        # marker.pose.position.x = self.current_pose[0, 3]
+        # marker.pose.position.y = self.current_pose[1, 3]
+        # marker.pose.position.z = self.current_pose[2, 3]
+
+        marker.pose.orientation.w = 1.0
+        marker.scale.x = 3.0
+        marker.scale.y = 3.2
+        marker.scale.z = 3.2
+        marker.color.a = 1.0
+        marker.color.r = 1.0
+        marker.color.g = 0.0
+        marker.color.b = 0.0
+
+        # Publish the marker
+        self.marker_pub.publish(marker)
 
     def get_pose(self, q1, q2):
         """
@@ -211,51 +239,15 @@ class OdomNode:
 
         return [R1, t]
 
-    def visualize_optical_flow(self, flow):
-        hsv = np.zeros((flow.shape[0], flow.shape[1], 3), dtype=np.uint8)
-        hsv[..., 1] = 255
-
-        mag, ang = cv2.cartToPolar(flow[..., 0], flow[..., 1])
-        hsv[..., 0] = ang * 180 / np.pi / 2
-        hsv[..., 2] = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)
-        flow_vis = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
-
-        return flow_vis
-
-    def visualize_corners(self, corners):
-        rgb = np.zeros((corners.shape[0], corners.shape[1], 3), dtype=np.uint8)
-        thresh = 0.01 * corners.max()
-        rgb[corners > thresh, 0] = 255
-
-        # for i in range(corners.shape[0]):
-        #     for j in range(corners.shape[1]):
-        #         if corners[i, j] > thresh:
-        #             rgb[i,j,0] = 255
-        flow_vis = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-        return flow_vis
-
     def visualize_keypoints(self, img, kp):
         rgb = np.zeros((img.shape[0], img.shape[1], 3), dtype=np.uint8)
-        # thresh = 0.01 * corners.max()
-        # rgb[corners > thresh, 0] = 255
-        # coords = np.zeros((len(kp),2))
-        # for i in range(len(kp)):
-        #     # print(k)
-        #     # rgb[corners > thresh, 0] = 255
-        #     coords[i,0] = ()
-        #     coords[i,1] = ()
         for k in kp:
             rgb[int(k.pt[1]), int(k.pt[0]), 0] = 255
-
-        # for i in range(corners.shape[0]):
-        #     for j in range(corners.shape[1]):
-        #         if corners[i, j] > thresh:
-        #             rgb[i,j,0] = 255
         flow_vis = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         return flow_vis
 
 if __name__ == '__main__':
-    rospy.init_node('optical_flow_node')
+    rospy.init_node('visual_odom_node')
     optical_flow_node = OdomNode()
     rospy.spin()
     cv2.destroyAllWindows()
