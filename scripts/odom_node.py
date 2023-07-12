@@ -10,6 +10,9 @@ from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point
 from sensor_msgs.msg import PointCloud
 from geometry_msgs.msg import Point32
+from scipy.spatial import Delaunay, delaunay_plot_2d
+import matplotlib.pyplot as plt
+import io
 
 class OdomNode:
     def __init__(self):
@@ -124,16 +127,41 @@ class OdomNode:
         print("current pose: ")
         print(self.current_pose)
         
-        print("Triangulated pts:")
-        print(self.triangulated_points.shape)
-        print(self.triangulated_points)
+        # print("Triangulated pts:")
+        # print(self.triangulated_points.shape)
+        # print(self.triangulated_points)
+
+        print("DELAUNAYING")
+        # print(self.triangulated_points[:2, :].T.shape)
+        comp_start_time = rospy.get_rostime()
+
+        q2[:, 1] = -q2[:, 1]
+        tri = Delaunay(q2)
+        comp_end_time = rospy.get_rostime()
+
+        # fig = plt.figure()
+        # ax = fig.add_subplot(111)
+
+        fig = delaunay_plot_2d(tri)
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=180)
+        buf.seek(0)
+        img_arr = np.frombuffer(buf.getvalue(), dtype=np.uint8)
+        buf.close()
+        img = cv2.imdecode(img_arr, 1)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        self.kp_pub.publish(self.bridge.cv2_to_imgmsg(img, "bgr8"))
+
+        print("triangulation computation time: " + str((comp_end_time - comp_start_time).to_sec()))
+
 
         # Visualize points
         self.visualize_keypoints_in_space(self.triangulated_points)
 
         # Visualize orb
         vis = self.visualize_keypoints(current_gray, kp)
-        self.kp_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
+        # self.kp_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
 
         self.prev_kp = kp
         self.prev_desc = desc
