@@ -162,6 +162,7 @@ include_directories(
 catkin_install_python(PROGRAMS
   # scripts/my_python_script
   scripts/optical_flow_node.py
+  scripts/imu_odom_node.py
   scripts/odom_node.py
   scripts/tracking_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}

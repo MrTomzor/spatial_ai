@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 
 import rospy
-from sensor_msgs.msg import Image
+# from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, CompressedImage
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
@@ -24,12 +25,15 @@ class OdomNode:
         self.marker_pub = rospy.Publisher('/vo_odom', Marker, queue_size=10)
         self.kp_pcl_pub = rospy.Publisher('tracked_features_space', PointCloud, queue_size=10)
         self.sub = rospy.Subscriber('/robot1/camera1/raw', Image, self.image_callback, queue_size=10000)
+        # self.sub = rospy.Subscriber('/robot1/camera1/compressed', CompressedImage, self.image_callback, queue_size=10000)
 
         self.laststamp = None
         self.orb = cv2.ORB_create(nfeatures=3000)
 
         # Load calib
-        self.K = np.array([415, 0, 320, 0, 415, 240, 0, 0, 1]).reshape((3,3))
+        tmp_x = 643.3520818301457
+        self.K = np.array([tmp_x, 0, 400, 0, tmp_x, 300, 0, 0, 1]).reshape((3,3))
+        # self.K = np.array([642.8495341420769, 644.5958939934509, 400.0503960299562, 300.5824096896595]).reshape((3,3))
         self.P = np.zeros((3,4))
         self.P[:3, :3] = self.K
 
@@ -46,6 +50,9 @@ class OdomNode:
         # cv2.startWindowThread()
         # cv2.namedWindow("preview")
         # cv2.imshow("preview", img)
+
+        self.n_frames_sec = 0
+        self.countsec = 0
 
     @staticmethod
     def _form_transf(R, t):
@@ -72,6 +79,22 @@ class OdomNode:
         current_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
         stamp = msg.header.stamp
         tdif = 0
+
+        # self.n_frames_sec+=1
+        # if int(stamp.to_sec()) > self.countsec:
+        #     self.countsec = int(stamp.to_sec())
+        #     print("frames per timestamp second: " + str(self.n_frames_sec))
+        #     self.n_frames_sec = 0
+
+        self.n_frames_sec+=1
+        if int(rospy.get_rostime().to_sec()) > self.countsec:
+            self.countsec = int(rospy.get_rostime().to_sec())
+            print("frames per rospy_time second: " + str(self.n_frames_sec))
+            self.n_frames_sec = 0
+            
+            
+
+        print("timestamp: " + str(stamp.to_sec()) + ", time: " + str(rospy.get_rostime().to_sec()))
         if self.laststamp != None:
             tdif = stamp.to_sec() - self.laststamp.to_sec()
             print("timestamp dif: " + str(tdif))
@@ -131,29 +154,29 @@ class OdomNode:
         # print(self.triangulated_points.shape)
         # print(self.triangulated_points)
 
-        print("DELAUNAYING")
-        # print(self.triangulated_points[:2, :].T.shape)
-        comp_start_time = rospy.get_rostime()
+        # print("DELAUNAYING")
+        # # print(self.triangulated_points[:2, :].T.shape)
+        # comp_start_time = rospy.get_rostime()
 
-        q2[:, 1] = -q2[:, 1]
-        tri = Delaunay(q2)
-        comp_end_time = rospy.get_rostime()
+        # q2[:, 1] = -q2[:, 1]
+        # tri = Delaunay(q2)
+        # comp_end_time = rospy.get_rostime()
 
-        # fig = plt.figure()
-        # ax = fig.add_subplot(111)
+        # # fig = plt.figure()
+        # # ax = fig.add_subplot(111)
 
-        fig = delaunay_plot_2d(tri)
+        # fig = delaunay_plot_2d(tri)
 
-        buf = io.BytesIO()
-        fig.savefig(buf, format="png", dpi=180)
-        buf.seek(0)
-        img_arr = np.frombuffer(buf.getvalue(), dtype=np.uint8)
-        buf.close()
-        img = cv2.imdecode(img_arr, 1)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        self.kp_pub.publish(self.bridge.cv2_to_imgmsg(img, "bgr8"))
+        # buf = io.BytesIO()
+        # fig.savefig(buf, format="png", dpi=180)
+        # buf.seek(0)
+        # img_arr = np.frombuffer(buf.getvalue(), dtype=np.uint8)
+        # buf.close()
+        # img = cv2.imdecode(img_arr, 1)
+        # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        # self.kp_pub.publish(self.bridge.cv2_to_imgmsg(img, "bgr8"))
 
-        print("triangulation computation time: " + str((comp_end_time - comp_start_time).to_sec()))
+        # print("triangulation computation time: " + str((comp_end_time - comp_start_time).to_sec()))
 
 
         # Visualize points
@@ -161,7 +184,7 @@ class OdomNode:
 
         # Visualize orb
         vis = self.visualize_keypoints(current_gray, kp)
-        # self.kp_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
+        self.kp_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
 
         self.prev_kp = kp
         self.prev_desc = desc
@@ -169,12 +192,14 @@ class OdomNode:
 
     def update_and_publish_path_marker(self):
         marker = Marker()
-        marker.header.frame_id = "odom"
+        marker.header.frame_id = "mission_origin"
         marker.type = Marker.ARROW
         marker.action = Marker.ADD
         # WARN! transformation!
-        marker.pose.position.z = self.current_pose[0, 3]
-        marker.pose.position.y = -self.current_pose[1, 3]
+        # marker.pose.position.z = self.current_pose[0, 3]
+        # marker.pose.position.y = -self.current_pose[1, 3]
+        marker.pose.position.z = -self.current_pose[1, 3]
+        marker.pose.position.y = -self.current_pose[0, 3]
         marker.pose.position.x = self.current_pose[2, 3]
         # marker.pose.position.x = self.current_pose[0, 3]
         # marker.pose.position.y = self.current_pose[1, 3]
@@ -294,7 +319,7 @@ class OdomNode:
     def visualize_keypoints_in_space(self, kp):
         point_cloud = PointCloud()
         point_cloud.header.stamp = rospy.Time.now()
-        point_cloud.header.frame_id = 'odom'  # Set the frame ID according to your robot's configuration
+        point_cloud.header.frame_id = 'mission_origin'  # Set the frame ID according to your robot's configuration
         
         # Sample points
         for i in range(kp.shape[1]):
