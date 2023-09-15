@@ -100,10 +100,11 @@ class ImuOdomNode:
         self.velnoise = gtsam.noiseModel.Isotropic.Sigma(3, 0.1)
 
         # Calculate with correct initial velocity
-        self.n_velocity = vector3(0, 0, 0) # EDIT - ZERO VEL PRIOR
-        self.velprior = PriorFactorVector(V(0), self.n_velocity, self.velnoise)
+        self.last_velocity = vector3(0, 0, 0) # EDIT - ZERO VEL PRIOR
+        self.last_pose = Pose3() # EDIT - ZERO VEL PRIOR
+        self.velprior = PriorFactorVector(V(0), self.last_velocity, self.velnoise)
         self.graph.push_back(self.velprior)
-        self.initialEstimate.insert(V(0), self.n_velocity)
+        self.initialEstimate.insert(V(0), self.last_velocity)
 
         self.accum = gtsam.PreintegratedImuMeasurements(self.PARAMS)
 
@@ -143,7 +144,8 @@ class ImuOdomNode:
             self.initialEstimate.insert(X(1), pose_0.compose(self.DELTA))
 
         elif i >= 2:  # Add more poses as necessary
-            self.initialEstimate.insert(X(i), pose_0.compose(self.DELTA))
+            # self.initialEstimate.insert(X(i), X(i-1))
+            self.initialEstimate.insert(X(i), self.last_pose)
 
         if i > 0:
             # Add Bias variables periodically
@@ -154,13 +156,14 @@ class ImuOdomNode:
                 self.graph.add(factor)
                 self.initialEstimate.insert(self.biasKey, gtsam.imuBias.ConstantBias())
 
-            measuredAcc =  - np.array([msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z])
-            measuredOmega =  - np.array([msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z])
+            measuredAcc =  np.array([msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z])
+            measuredOmega =  np.array([msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z])
 
             # measuredAcc = np.array([msg.linear_acceleration.x, msg.linear_acceleration.z, msg.linear_acceleration.y])
             # measuredOmega = np.array([msg.angular_velocity.x, msg.angular_velocity.z, msg.angular_velocity.y])
 
             # measuredAcc = np.array([0, 0, g])
+            print("ACCELERATION: ")
             print(measuredAcc)
 
             self.accum.integrateMeasurement(measuredAcc, measuredOmega, delta_t)
@@ -170,19 +173,24 @@ class ImuOdomNode:
             self.graph.add(imufac)
 
             # insert new velocity, which is wrong
-            self.initialEstimate.insert(V(i), self.n_velocity)
+            self.initialEstimate.insert(V(i), self.last_velocity)
             self.accum.resetIntegration()
 
         # Incremental solution
         self.isam.update(self.graph, self.initialEstimate)
         result = self.isam.calculateEstimate()
+        self.last_velocity = result.atVector(V(i))
+        self.last_pose = result.atPose3(X(i))
 
         print("RESULT: ")
         # print(result)
+        print("VELOCITY:")
+        print(result.atVector(V(i)))
+        print("POSE:")
+        print(result.atPose3(X(i)))
 
         comp_time = time.time() - comp_start_time
         print("computation time: " + str((comp_time) * 1000) +  " ms")
-        print(result.atPose3(X(i)))
         # plot.plot_incremental_trajectory(0, result,
         #                                  start=i, scale=3, time_interval=0.01)
 
