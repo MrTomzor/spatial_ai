@@ -163,6 +163,7 @@ catkin_install_python(PROGRAMS
   # scripts/my_python_script
   scripts/optical_flow_node.py
   scripts/mono_vo_based_node.py
+  scripts/ov_extension.py
   scripts/imu_odom_node.py
   scripts/odom_node.py
   scripts/tracking_node.py
