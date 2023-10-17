@@ -50,6 +50,7 @@ def featureTracking(image_ref, image_cur, px_ref, tracking_stats):
 class TrackingStat:
     def __init__(self):
         self.age = 0
+        self.prev_points = []
 
 class OdomNode:
     def __init__(self):
@@ -97,7 +98,8 @@ class OdomNode:
         self.tracking_bin_width = 100
         self.min_features_per_bin = 2
         self.max_features_per_bin = 5
-        
+        self.max_tracked_positions_of_points = 5
+
         self.trueX, self.trueY, self.trueZ = 0, 0, 0
         self.detector = cv2.FastFeatureDetector_create(threshold=30, nonmaxSuppression=True)
 
@@ -240,19 +242,50 @@ class OdomNode:
         # TRACK
         print("BEFORE TRACKING: " + str(self.px_ref.shape[0]))
         self.px_ref, self.px_cur, self.tracking_stats = featureTracking(self.last_frame, self.new_frame, self.px_ref, self.tracking_stats)
-        for stat in self.tracking_stats:
-            stat.age += 1
+        # for stat in self.tracking_stats:
+        #     stat.age += 1
+        #     stat.prev_points.append(self.px_ref
+        for i in range(self.px_ref.shape[0]):
+            self.tracking_stats[i].age += 1
+            self.tracking_stats[i].prev_points.append((self.px_ref[i,0], self.px_ref[i,1]))
+            if len(self.tracking_stats[i].prev_points) > self.max_tracked_positions_of_points:
+                self.tracking_stats[i].prev_points.pop(0)
+
         print("AFTER TRACKING: " + str(self.px_cur.shape[0]))
 
         # TRY TO TRIANGULATE FEATURES
         closest_time_odom_msg = self.get_closest_time_odom_msg(self.new_img_stamp )
         closest_time_prev_odom_msg = self.get_closest_time_odom_msg(self.last_img_stamp)
 
-        # VISUALIZE FEATURES
+        # E, mask = cv2.findEssentialMat(self.px_cur, self.px_ref, focal=self.focal, pp=self.pp, method=cv2.RANSAC, prob=0.999, threshold=1.0)
+        # # TODO wtf why does it return multiple poses? multiple 3x3 matrices? IS it the 4 hypotheses, so those ones are likely?
+        # if E.shape[0] > 3:
+        #     print("E MATRIX HAS MULTIPLE POSSIBLE SOLUTIONS, TAKING 1ST ONE")
+        #     E = E[:3, :]
+        # # _, R, t, mask = cv2.recoverPose(E, self.px_cur, self.px_ref, focal=self.focal, pp = self.pp)
+        # R, t = self.decomp_essential_mat(E, self.px_cur, self.px_ref)
 
+        # print("R")
+        # print(R)
+        # print("T")
+        # print(t)
+
+        # # INIT ROTATION AND TRANSLATION AT 2ND FRMAE
+        # if self.cur_R is None or self.cur_t is None:
+        #     self.cur_R = R
+        #     self.cur_t = t
+        # else:
+        #     absolute_scale = 1
+        #     self.cur_t = self.cur_t + absolute_scale*self.cur_R.dot(t)
+        #     self.cur_R = R.dot(self.cur_R)
+        # # print("T:")
+        # # print(self.cur_t)
+        # # print(self.cur_t)
+        # self.publish_pose_msg()
+
+        # VISUALIZE FEATURES
         vis = self.visualize_tracking()
         self.kp_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
-        # self.publish_pose_msg()
 
         comp_time = time.time() - comp_start_time
         print("computation time: " + str((comp_time) * 1000) +  " ms")
@@ -275,9 +308,11 @@ class OdomNode:
             if size > 10:
                 size = 10
             size += 3
-
-            rgb = cv2.circle(rgb, (inside_pix_idxs[i,0], inside_pix_idxs[i,1]), int(size), 
+            prevpt = self.tracking_stats[inidx][i].prev_points[-1]
+            rgb = cv2.circle(rgb, (int(prevpt[0]), int(prevpt[1])), int(size), 
                            (255, 0, 0), -1) 
+            rgb = cv2.circle(rgb, (inside_pix_idxs[i,0], inside_pix_idxs[i,1]), int(size), 
+                           (255, 150, 0), -1) 
             # rgb = cv2.circle(rgb, (inside_pix_idxs[i,0], inside_pix_idxs[i,1]), 5, 
             #                (255, 0, 0), -1) 
         # np.random.randint(0, 20)
@@ -331,6 +366,95 @@ class OdomNode:
                 point_cloud.points.append(point1)
 
         self.kp_pcl_pub.publish(point_cloud)
+
+    def decomp_essential_mat(self, E, q1, q2):
+        """
+        Decompose the Essential matrix
+
+        Parameters
+        ----------
+        E (ndarray): Essential matrix
+        q1 (ndarray): The good keypoints matches position in i-1'th image
+        q2 (ndarray): The good keypoints matches position in i'th image
+
+        Returns
+        -------
+        right_pair (list): Contains the rotation matrix and translation vector
+        """
+        def sum_z_cal_relative_scale(R, t, store=False):
+            # Get the transformation matrix
+            T = self._form_transf(R, t)
+            # Make the projection matrix
+            P = np.matmul(np.concatenate((self.K, np.zeros((3, 1))), axis=1), T)
+
+            # Triangulate the 3D points
+            hom_Q1 = cv2.triangulatePoints(self.P, P, q1.T, q2.T)
+            # Also seen from cam 2
+            hom_Q2 = np.matmul(T, hom_Q1)
+
+            # Un-homogenize
+            uhom_Q1 = hom_Q1[:3, :] / hom_Q1[3, :]
+            uhom_Q2 = hom_Q2[:3, :] / hom_Q2[3, :]
+
+            if store:
+                return uhom_Q2
+
+            # Find the number of points there has positive z coordinate in both cameras
+            sum_of_pos_z_Q1 = sum(uhom_Q1[2, :] > 0)
+            sum_of_pos_z_Q2 = sum(uhom_Q2[2, :] > 0)
+
+            # Form point pairs and calculate the relative scale
+            relative_scale = np.mean(np.linalg.norm(uhom_Q1.T[:-1] - uhom_Q1.T[1:], axis=-1)/
+                                     np.linalg.norm(uhom_Q2.T[:-1] - uhom_Q2.T[1:], axis=-1))
+            return sum_of_pos_z_Q1 + sum_of_pos_z_Q2, relative_scale
+
+        # Decompose the essential matrix
+        R1, R2, t = cv2.decomposeEssentialMat(E)
+        t = np.squeeze(t)
+
+        # Make a list of the different possible pairs
+        pairs = [[R1, t], [R1, -t], [R2, t], [R2, -t]]
+
+        # Check which solution there is the right one
+        z_sums = []
+        relative_scales = []
+        for R, t in pairs:
+            z_sum, scale = sum_z_cal_relative_scale(R, t)
+            z_sums.append(z_sum)
+            relative_scales.append(scale)
+
+        # Select the pair there has the most points with positive z coordinate
+        right_pair_idx = np.argmax(z_sums)
+        right_pair = pairs[right_pair_idx]
+        relative_scale = relative_scales[right_pair_idx]
+        R1, t = right_pair
+
+        # store the unhomogenized keypoints for the correct pair
+        self.triangulated_points = sum_z_cal_relative_scale(R1, t, True)
+
+        t = t * relative_scale
+
+        return [R1, t]
+
+    @staticmethod
+    def _form_transf(R, t):
+        """
+        Makes a transformation matrix from the given rotation matrix and translation vector
+
+        Parameters
+        ----------
+        R (ndarray): The rotation matrix
+        t (list): The translation vector
+
+        Returns
+        -------
+        T (ndarray): The transformation matrix
+        """
+        T = np.eye(4, dtype=np.float64)
+        T[:3, :3] = R
+        T[:3, 3] = t
+        return T
+
 
 if __name__ == '__main__':
     rospy.init_node('visual_odom_node')
