@@ -14,15 +14,23 @@ from geometry_msgs.msg import Point32
 from scipy.spatial import Delaunay, delaunay_plot_2d
 import matplotlib.pyplot as plt
 import io
+import copy
+
+from scipy.spatial.transform import Rotation
+import tf
+import tf2_ros
+import tf2_geometry_msgs  # for transforming geometry_msgs
+from geometry_msgs.msg import TransformStamped
 
 
 STAGE_FIRST_FRAME = 0
 STAGE_SECOND_FRAME = 1
 STAGE_DEFAULT_FRAME = 2
-kMinNumFeature = 1500
+kMinNumFeature = 200
+kMaxNumFeature = 2000
 
 # LKPARAMS
-lk_params = dict(winSize  = (21, 21),
+lk_params = dict(winSize  = (31, 31),
                  #maxLevel = 3,
                  criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01))
 
@@ -45,6 +53,8 @@ class OdomNode:
         self.marker_pub = rospy.Publisher('/vo_odom', Marker, queue_size=10)
         self.kp_pcl_pub = rospy.Publisher('tracked_features_space', PointCloud, queue_size=10)
         self.sub = rospy.Subscriber('/robot1/camera1/raw', Image, self.image_callback, queue_size=10000)
+
+        self.tf_broadcaster = tf.TransformBroadcaster()
         # self.sub = rospy.Subscriber('/robot1/camera1/compressed', CompressedImage, self.image_callback, queue_size=10000)
 
         self.laststamp = None
@@ -71,8 +81,13 @@ class OdomNode:
         self.pp = (400, 300)
         self.width = 800
         self.height = 600
+        self.tracking_bin_width = 50
+        self.min_features_per_bin = 2
+        
         self.trueX, self.trueY, self.trueZ = 0, 0, 0
-        self.detector = cv2.FastFeatureDetector_create(threshold=25, nonmaxSuppression=True)
+        self.detector = cv2.FastFeatureDetector_create(threshold=40, nonmaxSuppression=True)
+
+        self.tracking_colors = np.random.randint(0, 255, (100, 3)) 
 
         self.n_frames = 0
 
@@ -98,59 +113,116 @@ class OdomNode:
             self.n_frames = 1
             return
 
-
         # TRACK
         self.px_ref, self.px_cur = featureTracking(self.last_frame, self.new_frame, self.px_ref)
 
-        # FIND FEATS IF LOST!
+        '''
+        # FIND ESSENTIAL MATRIX
+        E, mask = cv2.findEssentialMat(self.px_cur, self.px_ref, focal=self.focal, pp=self.pp, method=cv2.RANSAC, prob=0.999, threshold=1.0)
+        _, R, t, mask = cv2.recoverPose(E, self.px_cur, self.px_ref, focal=self.focal, pp = self.pp)
+
+        # INIT ROTATION AND TRANSLATION AT 2ND FRMAE
+        if self.n_frames == 1:
+            self.cur_R = R
+            self.cur_t = t
+        else:
+            absolute_scale = 1
+            self.cur_t = self.cur_t + absolute_scale*self.cur_R.dot(t)
+            self.cur_R = R.dot(self.cur_R)
+        print("T:")
+        print(self.cur_t)
+        # print(self.cur_t)
+        '''
+
+        # FIND FEATS IF NOT ENOUGH!
         if(self.px_ref.shape[0] < kMinNumFeature):
             print("FINDING FEATURES")
             self.px_cur = self.detector.detect(self.new_frame)
             self.px_cur = np.array([x.pt for x in self.px_cur], dtype=np.float32)
         self.px_ref = self.px_cur
+
+        # FIND SPARSE AREAS WITH HISTOGRAM!
+        wbins = self.width // self.tracking_bin_width
+        hbins = self.height // self.tracking_bin_width
+        trackhist = np.histogram2d(self.px_cur[:, 0], self.px_cur[:, 1], [wbins, hbins])
+        print(trackhist[0])
+        print(trackhist[0].shape)
+        bins_to_regenerate = trackhist[0] < self.min_features_per_bin
+
+        print(bins_to_regenerate)
+        print("REGENERATING IN " + str(np.sum(bins_to_regenerate, None)) + " BINS")
+        found_total = 0
+        for xx in range(wbins):
+            for yy in range(hbins):
+                bin_coords = [xx * self.tracking_bin_width, (xx+1) * self.tracking_bin_width, yy * self.tracking_bin_width, (yy+1) * self.tracking_bin_width]
+                locally_found = self.detector.detect(self.new_frame[bin_coords [2] : bin_coords [3], bin_coords [0] : bin_coords [1]])
+                found_total += len(locally_found)
+                if len(locally_found) == 0:
+                    continue
+
+                locally_found = np.array([x.pt for x in locally_found], dtype=np.float32)
+                locally_found[:, 0] += bin_coords[0]
+                locally_found[:, 1] += bin_coords[2]
+                self.px_cur = np.concatenate((self.px_cur, locally_found))
+
+        print("FOUND IN BINS: " + str(found_total))
+
         print("TRACKED FEATURES: " + str(self.px_ref.shape[0]))
-        print(self.px_cur)
+
 
         # VISUALIZE FEATURES
-
         self.n_frames += 1
 
         vis = self.visualize_tracking()
         self.kp_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
+        # self.publish_pose_msg()
 
         comp_time = time.time() - comp_start_time
         print("computation time: " + str((comp_time) * 1000) +  " ms")
 
 
     def visualize_tracking(self):
-        rgb = np.zeros((self.new_frame.shape[0], self.new_frame.shape[1], 3), dtype=np.uint8)
+        # rgb = np.zeros((self.new_frame.shape[0], self.new_frame.shape[1], 3), dtype=np.uint8)
+        # print(self.new_frame.shape)
+        rgb = np.repeat(copy.deepcopy(self.new_frame)[:, :, np.newaxis], 3, axis=2)
+        # rgb = np.repeat((self.new_frame)[:, :, np.newaxis], 3, axis=2)
 
         ll = np.array([0, 0])  # lower-left
         ur = np.array([self.width, self.height])  # upper-right
-
         inidx = np.all(np.logical_and(ll <= self.px_cur, self.px_cur <= ur), axis=1)
         inside_pix_idxs = self.px_cur[inidx].astype(int)
-        print(inside_pix_idxs)
+
         rgb[inside_pix_idxs[:, 1],inside_pix_idxs[:, 0], 0] = 255
+        for i in range(inside_pix_idxs.shape[0]):
+            rgb = cv2.circle(rgb, (inside_pix_idxs[i,0], inside_pix_idxs[i,1]), 5, 
+                           (255, 0, 0), -1) 
 
-
-        # idxs_c = self.px_cur[self.px_cur[0]
-
-        # idxs_c = np.array([x.pt for x in self.px_cur], dtype=np.float32)
-        # idxs_c = np
-        # idxs_r = int(self.px_ref)
-        # rgb[idxs_c[:, 0], idxs_c[:, 1], 0] = 255
-        # rgb[idxs_r[:, 0], idxs_r[:, 1], 1] = 255
-        # rgb[
-        # for k in self.px_cur:
-        #     # if k.pt[1] > 
-        #     if k[1] >= 0 and k[1] < self.height and k[0] >= 0 and k[0] < self.width:
-        #         rgb[int(k[1]), int(k[0]), 0] = 255
-        # for k in self.px_ref:
-        #     if k[1] >= 0 and k[1] < self.height and k[0] >= 0 and k[0] < self.width:
-        #         rgb[int(k[1]), int(k[0]), 1] = 255
         flow_vis = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         return flow_vis
+    
+    def publish_pose_msg(self):
+        tf_msg = TransformStamped()
+        tf_msg.header.stamp = rospy.Time.now()
+        tf_msg.header.frame_id = "mission_origin"
+        tf_msg.child_frame_id = "cam_odom"
+
+        # Set the translation 
+        tf_msg.transform.translation.x = self.cur_t[0]
+        tf_msg.transform.translation.y = self.cur_t[1]
+        tf_msg.transform.translation.z = self.cur_t[2]
+
+        # Set the rotation 
+        r = Rotation.from_matrix(self.cur_R)
+        quat = r.as_quat()
+        # quat = pose.rotation().toQuaternion()
+        tf_msg.transform.rotation.x = quat[0]
+        tf_msg.transform.rotation.y = quat[1]
+        tf_msg.transform.rotation.z = quat[2]
+        tf_msg.transform.rotation.w = quat[3]
+
+
+        # Broadcast the TF transform
+        self.tf_broadcaster.sendTransformMessage(tf_msg)
 
     def visualize_keypoints(self, img, kp):
         rgb = np.zeros((img.shape[0], img.shape[1], 3), dtype=np.uint8)
