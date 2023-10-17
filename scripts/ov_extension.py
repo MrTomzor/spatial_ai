@@ -3,6 +3,7 @@
 import rospy
 # from sensor_msgs.msg import Image
 from sensor_msgs.msg import Image, CompressedImage
+from nav_msgs.msg import Odometry
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
@@ -30,7 +31,7 @@ kMinNumFeature = 200
 kMaxNumFeature = 2000
 
 # LKPARAMS
-lk_params = dict(winSize  = (31, 31),
+lk_params = dict(winSize  = (21, 21),
                  maxLevel = 3,
                  criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01))
 
@@ -55,12 +56,15 @@ class OdomNode:
         self.kp_pub = rospy.Publisher('tracked_features_img', Image, queue_size=1)
         self.marker_pub = rospy.Publisher('/vo_odom', Marker, queue_size=10)
         self.kp_pcl_pub = rospy.Publisher('tracked_features_space', PointCloud, queue_size=10)
-        self.sub = rospy.Subscriber('/robot1/camera1/raw', Image, self.image_callback, queue_size=10000)
+
+        self.sub_cam = rospy.Subscriber('/robot1/camera1/raw', Image, self.image_callback, queue_size=10000)
+
+        self.odom_buffer = []
+        self.odom_buffer_maxlen = 1000
+        self.sub_odom = rospy.Subscriber('/ov_msckf/odomimu', Odometry, self.odometry_callback, queue_size=10000)
 
         self.tf_broadcaster = tf.TransformBroadcaster()
-        # self.sub = rospy.Subscriber('/robot1/camera1/compressed', CompressedImage, self.image_callback, queue_size=10000)
 
-        self.laststamp = None
         self.orb = cv2.ORB_create(nfeatures=3000)
 
         # Load calib
@@ -74,6 +78,8 @@ class OdomNode:
         # NEW
         self.new_frame = None
         self.last_frame = None
+        self.last_img_stamp = None
+        self.new_img_stamp = None
         self.cur_R = None
         self.cur_t = None
         self.px_ref = None
@@ -84,8 +90,9 @@ class OdomNode:
         self.pp = (400, 300)
         self.width = 800
         self.height = 600
-        self.tracking_bin_width = 50
+        self.tracking_bin_width = 100
         self.min_features_per_bin = 2
+        self.max_features_per_bin = 50
         
         self.trueX, self.trueY, self.trueZ = 0, 0, 0
         self.detector = cv2.FastFeatureDetector_create(threshold=40, nonmaxSuppression=True)
@@ -94,12 +101,29 @@ class OdomNode:
 
         self.n_frames = 0
 
+    def get_closest_time_odom_msg(self, stamp):
+        bestmsg = None
+        besttimedif = 0
+        for msg in self.odom_buffer:
+            tdif2 = np.power(msg.header.stamp.to_sec() - stamp.to_sec(), 2)
+            if bestmsg == None or tdif2 < besttimedif:
+                bestmsg = msg
+                besttimedif = tdif2
+        return bestmsg
+
+    def odometry_callback(self, msg):
+        self.odom_buffer.append(msg)
+        if len(self.odom_buffer) > self.odom_buffer_maxlen:
+            self.odom_buffer.pop(0)
+        
+
     def image_callback(self, msg):
         img = self.bridge.imgmsg_to_cv2(msg, "bgr8")
-        stamp = msg.header.stamp
 
         comp_start_time = rospy.get_rostime()
 
+        self.last_img_stamp = self.new_img_stamp 
+        self.new_img_stamp  = msg.header.stamp
         # convert img to grayscale and shift buffer
         self.last_frame = self.new_frame
         self.new_frame = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -114,11 +138,15 @@ class OdomNode:
             self.px_ref = np.array([x.pt for x in self.px_ref], dtype=np.float32)
             print("FOUND FEATURES: " + str(self.px_ref.shape[0]))
             self.n_frames = 1
+            # self.last_img_stamp = stamp
             return
 
         # TRACK
+        print("BEFORE TRACKING: " + str(self.px_ref.shape[0]))
         self.px_ref, self.px_cur = featureTracking(self.last_frame, self.new_frame, self.px_ref)
+        print("AFTER TRACKING: " + str(self.px_cur.shape[0]))
 
+        '''
         if self.px_cur.shape[0] < 5:
             print("NOT ENOUGH FEATURES FOR HOMOGRAPHY ESTIMATION!")
         else:
@@ -141,41 +169,75 @@ class OdomNode:
             print("T:")
             print(self.cur_t)
             # print(self.cur_t)
+        '''
 
-        # FIND FEATS IF NOT ENOUGH!
+        wbins = self.width // self.tracking_bin_width
+        hbins = self.height // self.tracking_bin_width
+        found_total = 0
+
+        self.px_cur_prev = copy.deepcopy(self.px_cur)
+        self.px_cur = self.px_cur[:0, :]
+
+        for xx in range(wbins):
+            for yy in range(hbins):
+                # count how many we have there and get the points in there:
+                ul = np.array([xx * self.tracking_bin_width , yy * self.tracking_bin_width ])  
+                lr = np.array([ul[0] + self.tracking_bin_width , ul[1] + self.tracking_bin_width]) 
+
+                inidx = np.all(np.logical_and(ul <= self.px_cur_prev, self.px_cur_prev <= lr), axis=1)
+                inside_points = self.px_cur_prev[inidx]
+
+                n_existing_in_bin = inside_points.shape[0]
+                # print(n_existing_in_bin )
+
+                if n_existing_in_bin > self.max_features_per_bin:
+                    # CUTOFF ADDITIONAL POINTS
+                    self.px_cur = np.concatenate((self.px_cur, inside_points[:self.max_features_per_bin, :]))
+
+                elif n_existing_in_bin < self.min_features_per_bin:
+                    # ADD THE EXISTING
+                    self.px_cur = np.concatenate((self.px_cur, inside_points))
+
+                    # FIND NEW ONES
+                    locally_found = self.detector.detect(self.new_frame[ul[1] : lr[1], ul[0] : lr[0]])
+                    if len(locally_found) == 0:
+                        continue
+
+                    # be sure to not add too many!
+                    if found_total + n_existing_in_bin > self.max_features_per_bin:
+                        n_to_add = int(self.max_features_per_bin - n_existing_in_bin)
+                        locally_found = locally_found[0:n_to_add]
+
+                    found_total += len(locally_found)
+
+                    # ADD THE NEW ONES
+                    locally_found = np.array([x.pt for x in locally_found], dtype=np.float32)
+                    locally_found[:, 0] += ul[0]
+                    locally_found[:, 1] += ul[1]
+                    self.px_cur = np.concatenate((self.px_cur, locally_found))
+                else:
+                    # JUST COPY THEM
+                    self.px_cur = np.concatenate((self.px_cur, inside_points))
+
+        print("FOUND IN BINS: " + str(found_total))
+        print("CURRENT FEATURES: " + str(self.px_cur.shape[0]))
+
+        # FIND FEATS IF ZERO!
         if(self.px_ref.shape[0] == 0):
             print("ZERO FEATURES! FINDING FEATURES")
             self.px_cur = self.detector.detect(self.new_frame)
             self.px_cur = np.array([x.pt for x in self.px_cur], dtype=np.float32)
+        # RETURN IF STILL CANT FIND ANY
+        if(self.px_ref.shape[0] == 0):
+            self.n_frames += 1
+            return
         self.px_ref = self.px_cur
 
-        # FIND SPARSE AREAS WITH HISTOGRAM!
-        wbins = self.width // self.tracking_bin_width
-        hbins = self.height // self.tracking_bin_width
-        trackhist = np.histogram2d(self.px_cur[:, 0], self.px_cur[:, 1], [wbins, hbins])
-        print(trackhist[0])
-        print(trackhist[0].shape)
-        bins_to_regenerate = trackhist[0] < self.min_features_per_bin
 
-        print(bins_to_regenerate)
-        print("REGENERATING IN " + str(np.sum(bins_to_regenerate, None)) + " BINS")
-        found_total = 0
-        for xx in range(wbins):
-            for yy in range(hbins):
-                bin_coords = [xx * self.tracking_bin_width, (xx+1) * self.tracking_bin_width, yy * self.tracking_bin_width, (yy+1) * self.tracking_bin_width]
-                locally_found = self.detector.detect(self.new_frame[bin_coords [2] : bin_coords [3], bin_coords [0] : bin_coords [1]])
-                found_total += len(locally_found)
-                if len(locally_found) == 0:
-                    continue
 
-                locally_found = np.array([x.pt for x in locally_found], dtype=np.float32)
-                locally_found[:, 0] += bin_coords[0]
-                locally_found[:, 1] += bin_coords[2]
-                self.px_cur = np.concatenate((self.px_cur, locally_found))
-
-        print("FOUND IN BINS: " + str(found_total))
-
-        print("TRACKED FEATURES: " + str(self.px_ref.shape[0]))
+        # TRY TO TRIANGULATE FEATURES
+        closest_time_odom_msg = self.get_closest_time_odom_msg(self.new_img_stamp )
+        closest_time_prev_odom_msg = self.get_closest_time_odom_msg(self.last_img_stamp)
 
 
         # VISUALIZE FEATURES
@@ -183,7 +245,7 @@ class OdomNode:
 
         vis = self.visualize_tracking()
         self.kp_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
-        self.publish_pose_msg()
+        # self.publish_pose_msg()
 
         comp_time = time.time() - comp_start_time
         print("computation time: " + str((comp_time) * 1000) +  " ms")
@@ -204,6 +266,7 @@ class OdomNode:
         for i in range(inside_pix_idxs.shape[0]):
             rgb = cv2.circle(rgb, (inside_pix_idxs[i,0], inside_pix_idxs[i,1]), 5, 
                            (255, 0, 0), -1) 
+        # np.random.randint(0, 20)
 
         flow_vis = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         return flow_vis
