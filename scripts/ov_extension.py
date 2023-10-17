@@ -95,7 +95,7 @@ class OdomNode:
         self.max_features_per_bin = 50
         
         self.trueX, self.trueY, self.trueZ = 0, 0, 0
-        self.detector = cv2.FastFeatureDetector_create(threshold=40, nonmaxSuppression=True)
+        self.detector = cv2.FastFeatureDetector_create(threshold=30, nonmaxSuppression=True)
 
         self.tracking_colors = np.random.randint(0, 255, (100, 3)) 
 
@@ -115,62 +115,8 @@ class OdomNode:
         self.odom_buffer.append(msg)
         if len(self.odom_buffer) > self.odom_buffer_maxlen:
             self.odom_buffer.pop(0)
-        
 
-    def image_callback(self, msg):
-        img = self.bridge.imgmsg_to_cv2(msg, "bgr8")
-
-        comp_start_time = rospy.get_rostime()
-
-        self.last_img_stamp = self.new_img_stamp 
-        self.new_img_stamp  = msg.header.stamp
-        # convert img to grayscale and shift buffer
-        self.last_frame = self.new_frame
-        self.new_frame = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-        print("FRAME " + str(self.n_frames))
-
-        comp_start_time = time.time()
-
-        if self.n_frames == 0:
-            # FIND FIRST FEATURES
-            self.px_ref = self.detector.detect(self.new_frame)
-            self.px_ref = np.array([x.pt for x in self.px_ref], dtype=np.float32)
-            print("FOUND FEATURES: " + str(self.px_ref.shape[0]))
-            self.n_frames = 1
-            # self.last_img_stamp = stamp
-            return
-
-        # TRACK
-        print("BEFORE TRACKING: " + str(self.px_ref.shape[0]))
-        self.px_ref, self.px_cur = featureTracking(self.last_frame, self.new_frame, self.px_ref)
-        print("AFTER TRACKING: " + str(self.px_cur.shape[0]))
-
-        '''
-        if self.px_cur.shape[0] < 5:
-            print("NOT ENOUGH FEATURES FOR HOMOGRAPHY ESTIMATION!")
-        else:
-            # FIND ESSENTIAL MATRIX
-            E, mask = cv2.findEssentialMat(self.px_cur, self.px_ref, focal=self.focal, pp=self.pp, method=cv2.RANSAC, prob=0.999, threshold=1.0)
-            # TODO wtf why does it return multiple poses? multiple 3x3 matrices? IS it the 4 hypotheses, so those ones are likely?
-            if E.shape[0] > 3:
-                print("E MATRIX HAS MULTIPLE POSSIBLE SOLUTIONS, TAKING 1ST ONE")
-                E = E[:3, :]
-            _, R, t, mask = cv2.recoverPose(E, self.px_cur, self.px_ref, focal=self.focal, pp = self.pp)
-
-            # INIT ROTATION AND TRANSLATION AT 2ND FRMAE
-            if self.n_frames == 1:
-                self.cur_R = R
-                self.cur_t = t
-            else:
-                absolute_scale = 1
-                self.cur_t = self.cur_t + absolute_scale*self.cur_R.dot(t)
-                self.cur_R = R.dot(self.cur_R)
-            print("T:")
-            print(self.cur_t)
-            # print(self.cur_t)
-        '''
-
+    def control_features_population(self):
         wbins = self.width // self.tracking_bin_width
         hbins = self.height // self.tracking_bin_width
         found_total = 0
@@ -191,8 +137,11 @@ class OdomNode:
                 # print(n_existing_in_bin )
 
                 if n_existing_in_bin > self.max_features_per_bin:
-                    # CUTOFF ADDITIONAL POINTS
-                    self.px_cur = np.concatenate((self.px_cur, inside_points[:self.max_features_per_bin, :]))
+                    # CUTOFF POINTS ABOVE MAXIMUM
+                    idxs = np.arange(self.max_features_per_bin)
+                    np.random.shuffle(idxs)
+                    self.px_cur = np.concatenate((self.px_cur, inside_points[idxs, :]))
+                    # self.px_cur = np.concatenate((self.px_cur, inside_points[:self.max_features_per_bin, :]))
 
                 elif n_existing_in_bin < self.min_features_per_bin:
                     # ADD THE EXISTING
@@ -227,21 +176,55 @@ class OdomNode:
             print("ZERO FEATURES! FINDING FEATURES")
             self.px_cur = self.detector.detect(self.new_frame)
             self.px_cur = np.array([x.pt for x in self.px_cur], dtype=np.float32)
-        # RETURN IF STILL CANT FIND ANY
-        if(self.px_ref.shape[0] == 0):
-            self.n_frames += 1
-            return
+        
+
+    def image_callback(self, msg):
+        img = self.bridge.imgmsg_to_cv2(msg, "bgr8")
+
+        comp_start_time = rospy.get_rostime()
+
+        # SHIFT LAST AND NEW
+        self.last_img_stamp = self.new_img_stamp 
+        self.new_img_stamp  = msg.header.stamp
+
+        self.last_frame = self.new_frame
+        self.new_frame = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
         self.px_ref = self.px_cur
 
+        print("FRAME " + str(self.n_frames))
 
+        comp_start_time = time.time()
+
+        if self.n_frames == 0:
+            # FIND FIRST FEATURES
+            self.n_frames = 1
+            # self.last_img_stamp = stamp
+            return
+        self.n_frames += 1
+
+        # IF ZERO FEATS, FIND NEW
+        if(self.px_ref is None or self.px_ref.shape[0] == 0):
+            self.px_cur = self.detector.detect(self.new_frame)
+            self.px_cur = np.array([x.pt for x in self.px_cur], dtype=np.float32)
+            print("FOUND FEATURES: " + str(self.px_cur.shape[0]))
+            # RETURN IF STILL CANT FIND ANY
+            if(self.px_ref.shape[0] == 0):
+                return
+
+        # TRACK
+        print("BEFORE TRACKING: " + str(self.px_ref.shape[0]))
+        self.px_ref, self.px_cur = featureTracking(self.last_frame, self.new_frame, self.px_ref)
+        print("AFTER TRACKING: " + str(self.px_cur.shape[0]))
+
+        # CONTROL FEATURE POPULATION
+        self.control_features_population()
 
         # TRY TO TRIANGULATE FEATURES
         closest_time_odom_msg = self.get_closest_time_odom_msg(self.new_img_stamp )
         closest_time_prev_odom_msg = self.get_closest_time_odom_msg(self.last_img_stamp)
 
-
         # VISUALIZE FEATURES
-        self.n_frames += 1
 
         vis = self.visualize_tracking()
         self.kp_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
