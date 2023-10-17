@@ -23,6 +23,14 @@ import tf2_ros
 import tf2_geometry_msgs  # for transforming geometry_msgs
 from geometry_msgs.msg import TransformStamped
 
+import gtsam
+import gtsam.utils.plot as gtsam_plot
+import matplotlib.pyplot as plt
+import numpy as np
+from gtsam.symbol_shorthand import L, X
+from gtsam.examples import SFMdata
+from mpl_toolkits.mplot3d import Axes3D  # pylint: disable=W0611
+
 
 STAGE_FIRST_FRAME = 0
 STAGE_SECOND_FRAME = 1
@@ -253,35 +261,10 @@ class OdomNode:
 
         print("AFTER TRACKING: " + str(self.px_cur.shape[0]))
 
-        # TRY TO TRIANGULATE FEATURES
-        closest_time_odom_msg = self.get_closest_time_odom_msg(self.new_img_stamp )
-        closest_time_prev_odom_msg = self.get_closest_time_odom_msg(self.last_img_stamp)
-
-        # E, mask = cv2.findEssentialMat(self.px_cur, self.px_ref, focal=self.focal, pp=self.pp, method=cv2.RANSAC, prob=0.999, threshold=1.0)
-        # # TODO wtf why does it return multiple poses? multiple 3x3 matrices? IS it the 4 hypotheses, so those ones are likely?
-        # if E.shape[0] > 3:
-        #     print("E MATRIX HAS MULTIPLE POSSIBLE SOLUTIONS, TAKING 1ST ONE")
-        #     E = E[:3, :]
-        # # _, R, t, mask = cv2.recoverPose(E, self.px_cur, self.px_ref, focal=self.focal, pp = self.pp)
-        # R, t = self.decomp_essential_mat(E, self.px_cur, self.px_ref)
-
-        # print("R")
-        # print(R)
-        # print("T")
-        # print(t)
-
-        # # INIT ROTATION AND TRANSLATION AT 2ND FRMAE
-        # if self.cur_R is None or self.cur_t is None:
-        #     self.cur_R = R
-        #     self.cur_t = t
-        # else:
-        #     absolute_scale = 1
-        #     self.cur_t = self.cur_t + absolute_scale*self.cur_R.dot(t)
-        #     self.cur_R = R.dot(self.cur_R)
-        # # print("T:")
-        # # print(self.cur_t)
-        # # print(self.cur_t)
-        # self.publish_pose_msg()
+        # TRY TO ESTIMATE FEATURES POINTS AND SELF MOTION (WITHOUT ODOM FOR NOW)
+        self.pose_estim_gtsam()
+        # closest_time_odom_msg = self.get_closest_time_odom_msg(self.new_img_stamp)
+        # closest_time_prev_odom_msg = self.get_closest_time_odom_msg(self.last_img_stamp)
 
         # VISUALIZE FEATURES
         vis = self.visualize_tracking()
@@ -289,6 +272,102 @@ class OdomNode:
 
         comp_time = time.time() - comp_start_time
         print("computation time: " + str((comp_time) * 1000) +  " ms")
+
+    def pose_estim_gtsam(self):
+        measurement_noise = gtsam.noiseModel.Isotropic.Sigma(
+            2, 1.0)  # one pixel in u and v
+
+        # K = gtsam.Cal3_S2(50.0, 50.0, 0.0, 50.0, 50.0)
+        K = gtsam.Cal3_S2(self.K[0,0], self.K[0,0], 0.0, self.width, self.height)
+        # self.K = np.array([642.8495341420769, 0, 400, 0, 644.5958939934509, 300, 0, 0, 1]).reshape((3,3))
+
+        # Create an iSAM2 object. Unlike iSAM1, which performs periodic batch steps
+        # to maintain proper linearization and efficient variable ordering, iSAM2
+        # performs partial relinearization/reordering at each step. A parameter
+        # structure is available that allows the user to set various properties, such
+        # as the relinearization threshold and type of linear solver. For this
+        # example, we we set the relinearization threshold small so the iSAM2 result
+        # will approach the batch result.
+        parameters = gtsam.ISAM2Params()
+        parameters.setRelinearizeThreshold(0.01)
+        parameters.relinearizeSkip = 1
+        isam = gtsam.ISAM2(parameters)
+
+        # Create a Factor Graph and Values to hold the new data
+        graph = gtsam.NonlinearFactorGraph()
+        initial_estimate = gtsam.Values()
+
+        n_current_features = self.px_cur.shape[0]
+        optim_steps = self.max_tracked_positions_of_points + 1
+
+        landmark_index = -1
+
+        # Add factors for each landmark observation
+        for i in range(n_current_features):
+            if len(self.tracking_stats[i].prev_points) < self.max_tracked_positions_of_points:
+                continue
+            landmark_index += 1
+
+            # Add current observation
+            current_pt = self.px_cur[i, :]
+            graph.push_back(gtsam.GenericProjectionFactorCal3_S2(
+                current_pt, measurement_noise, X(optim_steps-1), L(landmark_index), K))
+
+            # Add previous observations
+            for j in range(len(self.tracking_stats[i].prev_points)):
+               current_pt = self.tracking_stats[i].prev_points[j]
+               current_pt = np.array([current_pt[0], current_pt[1]], dtype=np.float64)
+
+               graph.push_back(gtsam.GenericProjectionFactorCal3_S2(
+                   current_pt, measurement_noise, X(optim_steps-2-j), L(landmark_index), K))
+
+        # Add a prior on pose x0
+        pose_noise = gtsam.noiseModel.Diagonal.Sigmas(np.array(
+            # [0.1, 0.1, 0.1, 0.3, 0.3, 0.3]))  # 30cm std on x,y,z 0.1 rad on roll,pitch,yaw
+            [0.1, 0.1, 0.1, 0.3, 0.3, 0.3]))  # 30cm std on x,y,z 0.1 rad on roll,pitch,yaw
+        graph.push_back(gtsam.PriorFactorPose3(X(0), gtsam.Pose3(), pose_noise))
+
+        # Add a prior on landmark l0
+        # TODO try projecting keypoint from first frame with camera matrix! scale will be off but whatever
+        # L0_projection_at_start = 
+        point_noise = gtsam.noiseModel.Isotropic.Sigma(3, 10)
+        graph.push_back(gtsam.PriorFactorPoint3(
+            L(0), gtsam.Point3(0, 0, 10), point_noise))  # add directly to graph
+
+        # Add initial guesses to all observed landmarks
+        for i in range(landmark_index+1):
+            initial_estimate.insert(L(i), gtsam.Point3(0,0,0))
+
+        # Add initial guesses for all x
+        for i in range(optim_steps):
+            initial_estimate.insert(X(i), gtsam.Pose3().compose(gtsam.Pose3(
+                gtsam.Rot3.Rodrigues(-0.1, 0.2, 0.25), gtsam.Point3(0.05, -0.10, 0.20))))
+
+        print("LAST LANDMARK INDEX:" + str(landmark_index))
+        # print("INITIAL ESTIM:")
+        # print(initial_estimate)
+
+        # Update iSAM with the new factors
+        isam.update(graph, initial_estimate)
+        # Each call to iSAM2 update(*) performs one iteration of the iterative nonlinear solver.
+        # If accuracy is desired at the expense of time, update(*) can be called additional
+        # times to perform multiple optimizer iterations every step.
+        # isam.update()
+        print("ISAM DONE!")
+        current_estimate = isam.calculateEstimate()
+        print("****************************************************")
+        print("Frame", i, ":")
+        for j in range(i + 1):
+            print(X(j), ":", current_estimate.atPose3(X(j)))
+
+        for j in range(len(points)):
+            print(L(j), ":", current_estimate.atPoint3(L(j)))
+
+        # visual_ISAM2_plot(current_estimate)
+
+        # Clear the factor graph and values for the next iteration
+        graph.resize(0)
+        initial_estimate.clear()
 
 
     def visualize_tracking(self):
