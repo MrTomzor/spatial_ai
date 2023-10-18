@@ -109,8 +109,8 @@ class OdomNode:
         self.width = 800
         self.height = 600
         self.tracking_bin_width = 100
-        self.min_features_per_bin = 2
-        self.max_features_per_bin = 5
+        self.min_features_per_bin = 1
+        self.max_features_per_bin = 10
         self.max_tracked_positions_of_points = 1
         self.node_offline = False
 
@@ -159,6 +159,8 @@ class OdomNode:
         self.tracking_stats_prev = copy.deepcopy(self.tracking_stats)
         self.tracking_stats = self.tracking_stats[:0]
 
+        n_culled = 0
+
         for xx in range(wbins):
             for yy in range(hbins):
                 # count how many we have there and get the points in there:
@@ -173,9 +175,14 @@ class OdomNode:
                 # print(n_existing_in_bin )
 
                 if n_existing_in_bin > self.max_features_per_bin:
-                    # CUTOFF POINTS ABOVE MAXIMUM
-                    idxs = np.arange(self.max_features_per_bin)
-                    np.random.shuffle(idxs)
+                    # CUTOFF POINTS ABOVE MAXIMUM, SORTED BY AGE
+                    ages = np.array([pt.age for pt in inside_stats])
+                    # idxs = np.arange(self.max_features_per_bin)
+                    # np.random.shuffle(idxs)
+                    idxs = np.argsort(ages)
+                    idxs = idxs[:self.max_features_per_bin]
+                    n_culled += n_existing_in_bin - self.max_features_per_bin
+
                     self.px_ref = np.concatenate((self.px_ref, inside_points[idxs, :]))
                     self.tracking_stats = np.concatenate((self.tracking_stats, inside_stats[idxs]))
                     # self.px_ref = np.concatenate((self.px_ref, inside_points[:self.max_features_per_bin, :]))
@@ -210,7 +217,7 @@ class OdomNode:
                     # self.tracking_stats += inside_stats
                     self.tracking_stats = np.concatenate((self.tracking_stats, inside_stats))
 
-        print("FOUND IN BINS: " + str(found_total))
+        print("FOUND IN BINS: " + str(found_total) + " CULLED: " + str(n_culled))
         print("CURRENT FEATURES: " + str(self.px_ref.shape[0]))
 
         # FIND FEATS IF ZERO!
@@ -270,12 +277,17 @@ class OdomNode:
         print("AFTER TRACKING: " + str(self.px_cur.shape[0]))
 
         # TRY TO ESTIMATE FEATURES POINTS AND SELF MOTION (WITHOUT ODOM FOR NOW)
-        try:
-            self.pose_estim_gtsam()
-        except Exception as error:
-            cprint("GTSAM ERROR:", 'red')
-            cprint(error, 'red')
-            self.node_offline = True
+
+        E, mask = cv2.findEssentialMat(self.px_cur, self.px_ref, focal=self.focal, pp=self.pp, method=cv2.RANSAC, prob=0.999, threshold=1.0)
+        R, t = self.decomp_essential_mat(E, self.px_ref, self.px_cur)
+
+        # try:
+        #     self.pose_estim_gtsam()
+        # except Exception as error:
+        #     cprint("GTSAM ERROR:", 'red')
+        #     cprint(error, 'red')
+        #     self.node_offline = True
+
         # closest_time_odom_msg = self.get_closest_time_odom_msg(self.new_img_stamp)
         # closest_time_prev_odom_msg = self.get_closest_time_odom_msg(self.last_img_stamp)
 
@@ -283,12 +295,14 @@ class OdomNode:
         vis = self.visualize_tracking()
         self.kp_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
 
+        self.visualize_keypoints_in_space()
+
         comp_time = time.time() - comp_start_time
         print("computation time: " + str((comp_time) * 1000) +  " ms")
 
     def pose_estim_gtsam(self):
         measurement_noise = gtsam.noiseModel.Isotropic.Sigma(
-            2, 2.0)  # two pixel in u and v
+            2, 1.0)  # two pixel in u and v
 
         # K = gtsam.Cal3_S2(50.0, 50.0, 0.0, 50.0, 50.0)
         # K = gtsam.Cal3_S2(self.K[0,0], self.K[0,0], 0.0, self.width, self.height)
@@ -318,10 +332,17 @@ class OdomNode:
         landmark_index = -1
 
         first_landmark_first_frame_pix = None
-        min_parallax_pixels = 10
+        min_parallax_pixels = 20
         landmark_idxs_to_feature_idxs = []
         # Add factors for each landmark observation
-        for i in range(n_current_features):
+
+        # shuffle landmark idxs to not take just the first ones in top left corner
+        landmark_selection_idxs = np.arange(n_current_features)
+        np.random.shuffle(landmark_selection_idxs)
+
+        for k in range(n_current_features):
+            i = landmark_selection_idxs[k]
+
             # CHECK IF OLD ENOUGH HISTORY
             if len(self.tracking_stats[i].prev_points) < self.max_tracked_positions_of_points:
                 continue
@@ -329,13 +350,12 @@ class OdomNode:
             parallax_pix = np.linalg.norm(self.px_cur[i, :] - self.tracking_stats[i].prev_points[-1])
             if parallax_pix < min_parallax_pixels:
                 continue
-            # MAX N LANDMARKS
-            if landmark_index > 10:
-                break
+            # # MAX N LANDMARKS
+            # if landmark_index > 5:
+            #     break
 
             landmark_index += 1
             landmark_idxs_to_feature_idxs.append(i)
-
 
             # Add current observation
             current_pt = self.px_cur[i, :]
@@ -360,9 +380,9 @@ class OdomNode:
             return 1
 
         # Add a prior on pose x0
-        pose_noise = gtsam.noiseModel.Diagonal.Sigmas(np.array(
+        pose_noise = gtsam.noiseModel.Diagonal.Sigmas(0.1 * np.array(
             # [0.1, 0.1, 0.1, 0.3, 0.3, 0.3]))  # 30cm std on x,y,z 0.1 rad on roll,pitch,yaw
-            [0.1, 0.1, 0.1, 0.3, 0.3, 0.3]))  # 30cm std on x,y,z 0.1 rad on roll,pitch,yaw
+            [0.3, 0.3, 0.3, 0.1, 0.1, 0.1]))  # 30cm std on x,y,z 0.1 rad on roll,pitch,yaw
         prior_first_pose = gtsam.Pose3()
         print("PRIOR FIRST POSE:")
         print(prior_first_pose)
@@ -372,7 +392,7 @@ class OdomNode:
         # Add a prior on landmark l0
         # TODO try projecting keypoint from first frame with camera matrix! scale will be off but whatever
         # L0_projection_at_start = 
-        point_noise = gtsam.noiseModel.Isotropic.Sigma(3, 0.1)
+        point_noise = gtsam.noiseModel.Isotropic.Sigma(3, 1.1)
         projected_first_obsv = np.array([(first_landmark_first_frame_pix[0] - self.K[0, 2])/self.K[0, 0], (first_landmark_first_frame_pix[1] - self.K[1, 2])/self.K[1, 1], 1])
         print("PROJECTED FIRST OBSV PIX: ")
         print(first_landmark_first_frame_pix)
@@ -400,6 +420,8 @@ class OdomNode:
         # Add initial guesses for all x
         for i in range(optim_steps):
             initial_estimate.insert(X(i), prior_first_pose)
+            # initial_estimate.insert(X(i), prior_first_pose.compose(gtsam.Pose3(
+            #     gtsam.Rot3.Rodrigues(0, 0, 0), gtsam.Point3(0, 0, 0.1 * i))))
             # initial_estimate.insert(X(i), gtsam.Pose3().compose(gtsam.Pose3(
             #     gtsam.Rot3.Rodrigues(-0.1, 0.2, 0.25), gtsam.Point3(0.05, -0.10, 0.20))))
         print("INITIAL ESTIM:")
@@ -420,7 +442,7 @@ class OdomNode:
         # If accuracy is desired at the expense of time, update(*) can be called additional
         # times to perform multiple optimizer iterations every step.
         # isam.update()
-        print("OPTIMIZATION DONE!")
+        print("yeehaw")
         current_estimate = isam.calculateEstimate()
         print("****************************************************")
         print("Frame", i, ":")
@@ -449,18 +471,26 @@ class OdomNode:
         inside_pix_idxs = self.px_cur[inidx].astype(int)
 
         rgb[inside_pix_idxs[:, 1],inside_pix_idxs[:, 0], 0] = 255
+        growsize = 7
+        minsize = 4
+
         for i in range(inside_pix_idxs.shape[0]):
-            size = self.tracking_stats[inidx][i].age / 10.0
-            if size > 10:
-                size = 10
-            size += 3
+            size = self.tracking_stats[inidx][i].age / growsize
+            if size > growsize:
+                size = growsize
+            size += minsize
             prevpt = self.tracking_stats[inidx][i].prev_points[-1]
             rgb = cv2.circle(rgb, (int(prevpt[0]), int(prevpt[1])), int(size), 
-                           (255, 0, 0), -1) 
+                           (0, 255, 0), -1) 
             rgb = cv2.circle(rgb, (inside_pix_idxs[i,0], inside_pix_idxs[i,1]), int(size), 
-                           (255, 150, 0), -1) 
+                           (255, 0, 255), -1) 
             # rgb = cv2.circle(rgb, (inside_pix_idxs[i,0], inside_pix_idxs[i,1]), 5, 
             #                (255, 0, 0), -1) 
+        for i in range(self.triangulated_points.shape[1]):
+            pixpos = self.K.dot(self.triangulated_points[:, i])
+            pixpos = pixpos / pixpos[2]
+            rgb = cv2.circle(rgb, (int(pixpos[0]), int(pixpos[1])), minsize+growsize+2, 
+                           (0, 0, 255), 2) 
         # np.random.randint(0, 20)
 
         flow_vis = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
@@ -497,18 +527,28 @@ class OdomNode:
         flow_vis = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         return flow_vis
 
-    def visualize_keypoints_in_space(self, kp):
+    def visualize_keypoints_in_space(self):
         point_cloud = PointCloud()
         point_cloud.header.stamp = rospy.Time.now()
         point_cloud.header.frame_id = 'mission_origin'  # Set the frame ID according to your robot's configuration
 
         # Sample points
-        for i in range(kp.shape[1]):
-            if kp[2, i] > 0:
+        # for i in range(kp.shape[1]):
+        #     if kp[2, i] > 0:
+        #         point1 = Point32()
+        #         point1.x = kp[0, i]
+        #         point1.y = kp[1, i]
+        #         point1.z = kp[2, i]
+        #         point_cloud.points.append(point1)
+        maxnorm = np.max(np.linalg.norm(self.triangulated_points), axis=0)
+        kps = 10 * self.triangulated_points / maxnorm
+
+        for i in range(self.triangulated_points.shape[1]):
+            if kps[2, i] > 0:
                 point1 = Point32()
-                point1.x = kp[0, i]
-                point1.y = kp[1, i]
-                point1.z = kp[2, i]
+                point1.x = kps[0, i]
+                point1.y = kps[1, i]
+                point1.z = kps[2, i]
                 point_cloud.points.append(point1)
 
         self.kp_pcl_pub.publish(point_cloud)
