@@ -24,12 +24,16 @@ import tf2_geometry_msgs  # for transforming geometry_msgs
 from geometry_msgs.msg import TransformStamped
 
 import gtsam
+from gtsam import DoglegOptimizer
 import gtsam.utils.plot as gtsam_plot
 import matplotlib.pyplot as plt
 import numpy as np
 from gtsam.symbol_shorthand import L, X
 from gtsam.examples import SFMdata
 from mpl_toolkits.mplot3d import Axes3D  # pylint: disable=W0611
+
+import sys
+from termcolor import colored, cprint
 
 
 STAGE_FIRST_FRAME = 0
@@ -87,6 +91,7 @@ class OdomNode:
         # self.K = np.array([642.8495341420769, 644.5958939934509, 400.0503960299562, 300.5824096896595]).reshape((3,3))
         self.P = np.zeros((3,4))
         self.P[:3, :3] = self.K
+        print(self.P)
 
         # NEW
         self.new_frame = None
@@ -106,7 +111,8 @@ class OdomNode:
         self.tracking_bin_width = 100
         self.min_features_per_bin = 2
         self.max_features_per_bin = 5
-        self.max_tracked_positions_of_points = 5
+        self.max_tracked_positions_of_points = 1
+        self.node_offline = False
 
         self.trueX, self.trueY, self.trueZ = 0, 0, 0
         self.detector = cv2.FastFeatureDetector_create(threshold=30, nonmaxSuppression=True)
@@ -139,9 +145,9 @@ class OdomNode:
 
         if self.px_ref is None:
             self.px_ref = self.detector.detect(self.new_frame)
-            self.px_ref = np.array([x.pt for x in self.px_ref], dtype=np.float32)
             if self.px_ref is None:
                 return
+            self.px_ref = np.array([x.pt for x in self.px_ref], dtype=np.float32)
             self.tracking_stats = np.array([TrackingStat() for x in self.px_ref], dtype=object)
         print("STTAS:")
         print(self.tracking_stats.shape)
@@ -215,6 +221,8 @@ class OdomNode:
         
 
     def image_callback(self, msg):
+        if self.node_offline:
+            return
         img = self.bridge.imgmsg_to_cv2(msg, "bgr8")
 
         comp_start_time = rospy.get_rostime()
@@ -262,7 +270,12 @@ class OdomNode:
         print("AFTER TRACKING: " + str(self.px_cur.shape[0]))
 
         # TRY TO ESTIMATE FEATURES POINTS AND SELF MOTION (WITHOUT ODOM FOR NOW)
-        self.pose_estim_gtsam()
+        try:
+            self.pose_estim_gtsam()
+        except Exception as error:
+            cprint("GTSAM ERROR:", 'red')
+            cprint(error, 'red')
+            self.node_offline = True
         # closest_time_odom_msg = self.get_closest_time_odom_msg(self.new_img_stamp)
         # closest_time_prev_odom_msg = self.get_closest_time_odom_msg(self.last_img_stamp)
 
@@ -275,10 +288,11 @@ class OdomNode:
 
     def pose_estim_gtsam(self):
         measurement_noise = gtsam.noiseModel.Isotropic.Sigma(
-            2, 1.0)  # one pixel in u and v
+            2, 2.0)  # two pixel in u and v
 
         # K = gtsam.Cal3_S2(50.0, 50.0, 0.0, 50.0, 50.0)
-        K = gtsam.Cal3_S2(self.K[0,0], self.K[0,0], 0.0, self.width, self.height)
+        # K = gtsam.Cal3_S2(self.K[0,0], self.K[0,0], 0.0, self.width, self.height)
+        K = gtsam.Cal3_S2(self.K[0,0], self.K[0,0], 0.0, self.width/2, self.height/2)
         # self.K = np.array([642.8495341420769, 0, 400, 0, 644.5958939934509, 300, 0, 0, 1]).reshape((3,3))
 
         # Create an iSAM2 object. Unlike iSAM1, which performs periodic batch steps
@@ -299,61 +313,114 @@ class OdomNode:
 
         n_current_features = self.px_cur.shape[0]
         optim_steps = self.max_tracked_positions_of_points + 1
+        print("OPTIM STEPS: " + str(optim_steps))
 
         landmark_index = -1
 
+        first_landmark_first_frame_pix = None
+        min_parallax_pixels = 10
+        landmark_idxs_to_feature_idxs = []
         # Add factors for each landmark observation
         for i in range(n_current_features):
+            # CHECK IF OLD ENOUGH HISTORY
             if len(self.tracking_stats[i].prev_points) < self.max_tracked_positions_of_points:
                 continue
+            # CHECK IF ENOUGH PARALLAX
+            parallax_pix = np.linalg.norm(self.px_cur[i, :] - self.tracking_stats[i].prev_points[-1])
+            if parallax_pix < min_parallax_pixels:
+                continue
+            # MAX N LANDMARKS
+            if landmark_index > 10:
+                break
+
             landmark_index += 1
+            landmark_idxs_to_feature_idxs.append(i)
+
 
             # Add current observation
             current_pt = self.px_cur[i, :]
             graph.push_back(gtsam.GenericProjectionFactorCal3_S2(
                 current_pt, measurement_noise, X(optim_steps-1), L(landmark_index), K))
 
+            print("PREV PTS LEN: " + str(len(self.tracking_stats[i].prev_points)))
             # Add previous observations
             for j in range(len(self.tracking_stats[i].prev_points)):
-               current_pt = self.tracking_stats[i].prev_points[j]
+               current_pt = self.tracking_stats[i].prev_points[-j-1]
                current_pt = np.array([current_pt[0], current_pt[1]], dtype=np.float64)
 
                graph.push_back(gtsam.GenericProjectionFactorCal3_S2(
                    current_pt, measurement_noise, X(optim_steps-2-j), L(landmark_index), K))
+            if landmark_index == 0:
+               current_pt = self.tracking_stats[i].prev_points[-1]
+               first_landmark_first_frame_pix = np.array([current_pt[0], current_pt[1]], dtype=np.float64)
+
+        print("NUM OPTIMIZED LANDMARKS:" + str(landmark_index+1))
+        if landmark_index < 3:
+            print("NOT ENOUGH USABLE LANDMARKS, RETURNING")
+            return 1
 
         # Add a prior on pose x0
         pose_noise = gtsam.noiseModel.Diagonal.Sigmas(np.array(
             # [0.1, 0.1, 0.1, 0.3, 0.3, 0.3]))  # 30cm std on x,y,z 0.1 rad on roll,pitch,yaw
             [0.1, 0.1, 0.1, 0.3, 0.3, 0.3]))  # 30cm std on x,y,z 0.1 rad on roll,pitch,yaw
-        graph.push_back(gtsam.PriorFactorPose3(X(0), gtsam.Pose3(), pose_noise))
+        prior_first_pose = gtsam.Pose3()
+        print("PRIOR FIRST POSE:")
+        print(prior_first_pose)
+        graph.push_back(gtsam.PriorFactorPose3(X(0), prior_first_pose, pose_noise))
+
 
         # Add a prior on landmark l0
         # TODO try projecting keypoint from first frame with camera matrix! scale will be off but whatever
         # L0_projection_at_start = 
-        point_noise = gtsam.noiseModel.Isotropic.Sigma(3, 10)
+        point_noise = gtsam.noiseModel.Isotropic.Sigma(3, 0.1)
+        projected_first_obsv = np.array([(first_landmark_first_frame_pix[0] - self.K[0, 2])/self.K[0, 0], (first_landmark_first_frame_pix[1] - self.K[1, 2])/self.K[1, 1], 1])
+        print("PROJECTED FIRST OBSV PIX: ")
+        print(first_landmark_first_frame_pix)
+        print("PROJECTED FIRST OBSV POSITION: ")
+        print(projected_first_obsv)
+
+        camera = gtsam.PinholeCameraCal3_S2(gtsam.Pose3(), K)
+        measurement = camera.project(projected_first_obsv)
+        print("BACKPROJECTED BY GTSAM CAM MODEL:")
+        print(measurement)
+
+        # print("BACKPROJECTED FIRST OBSV PIX: ")
+        # print(self.K.dot(projected_first_obsv))
+
         graph.push_back(gtsam.PriorFactorPoint3(
-            L(0), gtsam.Point3(0, 0, 10), point_noise))  # add directly to graph
+            L(0), gtsam.Point3(projected_first_obsv[0], projected_first_obsv[1], projected_first_obsv[2]), point_noise))  # add directly to graph
 
         # Add initial guesses to all observed landmarks
         for i in range(landmark_index+1):
-            initial_estimate.insert(L(i), gtsam.Point3(0,0,0))
+            first_obsv_pix = self.tracking_stats[landmark_idxs_to_feature_idxs[i]].prev_points[-1]
+            proj = np.array([(first_obsv_pix[0] - self.K[0, 2])/self.K[0, 0], (first_obsv_pix[1] - self.K[1, 2])/self.K[1, 1], 1])
+            # initial_estimate.insert(L(i), gtsam.Point3(0,0,0))
+            initial_estimate.insert(L(i), gtsam.Point3(proj[0], proj[1], proj[2]))
 
         # Add initial guesses for all x
         for i in range(optim_steps):
-            initial_estimate.insert(X(i), gtsam.Pose3().compose(gtsam.Pose3(
-                gtsam.Rot3.Rodrigues(-0.1, 0.2, 0.25), gtsam.Point3(0.05, -0.10, 0.20))))
-
-        print("LAST LANDMARK INDEX:" + str(landmark_index))
-        # print("INITIAL ESTIM:")
-        # print(initial_estimate)
+            initial_estimate.insert(X(i), prior_first_pose)
+            # initial_estimate.insert(X(i), gtsam.Pose3().compose(gtsam.Pose3(
+            #     gtsam.Rot3.Rodrigues(-0.1, 0.2, 0.25), gtsam.Point3(0.05, -0.10, 0.20))))
+        print("INITIAL ESTIM:")
+        print(initial_estimate)
+        print("GRAPH:")
+        print(graph)
 
         # Update iSAM with the new factors
-        isam.update(graph, initial_estimate)
+        # isam.update(graph, initial_estimate)
+
+        params = gtsam.DoglegParams()
+        params.setVerbosity('VALUES')
+        optimizer = DoglegOptimizer(graph, initial_estimate, params)
+        print('Optimizing:')
+        result = optimizer.optimize()
+
         # Each call to iSAM2 update(*) performs one iteration of the iterative nonlinear solver.
         # If accuracy is desired at the expense of time, update(*) can be called additional
         # times to perform multiple optimizer iterations every step.
         # isam.update()
-        print("ISAM DONE!")
+        print("OPTIMIZATION DONE!")
         current_estimate = isam.calculateEstimate()
         print("****************************************************")
         print("Frame", i, ":")
