@@ -111,7 +111,7 @@ class OdomNode:
         self.tracking_bin_width = 100
         self.min_features_per_bin = 1
         self.max_features_per_bin = 10
-        self.max_tracked_positions_of_points = 1
+        self.max_tracked_positions_of_points = 5
         self.node_offline = False
 
         self.trueX, self.trueY, self.trueZ = 0, 0, 0
@@ -280,7 +280,11 @@ class OdomNode:
 
         E, mask = cv2.findEssentialMat(self.px_cur, self.px_ref, focal=self.focal, pp=self.pp, method=cv2.RANSAC, prob=0.999, threshold=1.0)
         R, t = self.decomp_essential_mat(E, self.px_ref, self.px_cur)
+        self.last_triangulation_R = R
+        self.last_triangulation_t = t
 
+
+        self.pose_estim_gtsam()
         # try:
         #     self.pose_estim_gtsam()
         # except Exception as error:
@@ -380,50 +384,71 @@ class OdomNode:
             return 1
 
         # Add a prior on pose x0
-        pose_noise = gtsam.noiseModel.Diagonal.Sigmas(0.1 * np.array(
+        # pose_noise = gtsam.noiseModel.Diagonal.Sigmas(0.1 * np.array(
+        #     # [0.1, 0.1, 0.1, 0.3, 0.3, 0.3]))  # 30cm std on x,y,z 0.1 rad on roll,pitch,yaw
+        #     [0.3, 0.3, 0.3, 0.1, 0.1, 0.1]))  # 30cm std on x,y,z 0.1 rad on roll,pitch,yaw
+        # prior_first_pose = gtsam.Pose3()
+        # print("PRIOR FIRST POSE:")
+        # print(prior_first_pose)
+        # graph.push_back(gtsam.PriorFactorPose3(X(0), prior_first_pose, pose_noise))
+
+        # Add a prior final pose - set it as 0
+        pose_noise = gtsam.noiseModel.Diagonal.Sigmas(np.array(
             # [0.1, 0.1, 0.1, 0.3, 0.3, 0.3]))  # 30cm std on x,y,z 0.1 rad on roll,pitch,yaw
             [0.3, 0.3, 0.3, 0.1, 0.1, 0.1]))  # 30cm std on x,y,z 0.1 rad on roll,pitch,yaw
         prior_first_pose = gtsam.Pose3()
-        print("PRIOR FIRST POSE:")
+        print("POSE PRIOR:")
         print(prior_first_pose)
-        graph.push_back(gtsam.PriorFactorPose3(X(0), prior_first_pose, pose_noise))
+        graph.push_back(gtsam.PriorFactorPose3(X(optim_steps-1), prior_first_pose, pose_noise))
 
 
         # Add a prior on landmark l0
         # TODO try projecting keypoint from first frame with camera matrix! scale will be off but whatever
-        # L0_projection_at_start = 
-        point_noise = gtsam.noiseModel.Isotropic.Sigma(3, 1.1)
-        projected_first_obsv = np.array([(first_landmark_first_frame_pix[0] - self.K[0, 2])/self.K[0, 0], (first_landmark_first_frame_pix[1] - self.K[1, 2])/self.K[1, 1], 1])
-        print("PROJECTED FIRST OBSV PIX: ")
-        print(first_landmark_first_frame_pix)
-        print("PROJECTED FIRST OBSV POSITION: ")
-        print(projected_first_obsv)
 
-        camera = gtsam.PinholeCameraCal3_S2(gtsam.Pose3(), K)
-        measurement = camera.project(projected_first_obsv)
-        print("BACKPROJECTED BY GTSAM CAM MODEL:")
-        print(measurement)
+        point_noise = gtsam.noiseModel.Isotropic.Sigma(3, 0.1)
+
+        # projected_first_obsv = np.array([(first_landmark_first_frame_pix[0] - self.K[0, 2])/self.K[0, 0], (first_landmark_first_frame_pix[1] - self.K[1, 2])/self.K[1, 1], 1])
+        # print("PROJECTED FIRST OBSV PIX: ")
+        # print(first_landmark_first_frame_pix)
+        # print("PROJECTED FIRST OBSV POSITION: ")
+        # print(projected_first_obsv)
+
+        # camera = gtsam.PinholeCameraCal3_S2(gtsam.Pose3(), K)
+        # measurement = camera.project(projected_first_obsv)
+        # print("BACKPROJECTED BY GTSAM CAM MODEL:")
+        # print(measurement)
 
         # print("BACKPROJECTED FIRST OBSV PIX: ")
         # print(self.K.dot(projected_first_obsv))
 
+        # graph.push_back(gtsam.PriorFactorPoint3(
+        #     L(0), gtsam.Point3(projected_first_obsv[0], projected_first_obsv[1], projected_first_obsv[2]), point_noise))  # add directly to graph
+
+        # ADD PRIOR ON FIRST LANDMARK FROM ITS TRIANG POSITION
+        l0_triang_point = self.triangulated_points[:, landmark_selection_idxs[0]]
         graph.push_back(gtsam.PriorFactorPoint3(
-            L(0), gtsam.Point3(projected_first_obsv[0], projected_first_obsv[1], projected_first_obsv[2]), point_noise))  # add directly to graph
+            L(0), gtsam.Point3(l0_triang_point[0], l0_triang_point[1], l0_triang_point[2]), point_noise))  # add directly to graph
 
         # Add initial guesses to all observed landmarks
         for i in range(landmark_index+1):
-            first_obsv_pix = self.tracking_stats[landmark_idxs_to_feature_idxs[i]].prev_points[-1]
-            proj = np.array([(first_obsv_pix[0] - self.K[0, 2])/self.K[0, 0], (first_obsv_pix[1] - self.K[1, 2])/self.K[1, 1], 1])
-            # initial_estimate.insert(L(i), gtsam.Point3(0,0,0))
-            initial_estimate.insert(L(i), gtsam.Point3(proj[0], proj[1], proj[2]))
+            triang_point = self.triangulated_points[:, landmark_selection_idxs[i]]
+            initial_estimate.insert(L(i), gtsam.Point3(triang_point[0], triang_point[1], triang_point[2]))
 
-        # Add initial guesses for all x
-        for i in range(optim_steps):
-            initial_estimate.insert(X(i), prior_first_pose)
+        # Add initial guess for previous pose (from triangulation) as 0
+        initial_estimate.insert(X(optim_steps-1), prior_first_pose)
+
+        # Add initial guess for previous pose (from triangulation) as 0
+        second_to_last_pose = gtsam.Pose3(gtsam.Rot3(self.last_triangulation_R.T), gtsam.Point3(-self.last_triangulation_t))
+        initial_estimate.insert(X(optim_steps-2), second_to_last_pose)
+
+        # for all other x, set the pose estimate as the second-to-last as well
+        for i in range(optim_steps-2):
+            initial_estimate.insert(X(optim_steps-3-i), second_to_last_pose)
             # initial_estimate.insert(X(i), prior_first_pose.compose(gtsam.Pose3(
             #     gtsam.Rot3.Rodrigues(0, 0, 0), gtsam.Point3(0, 0, 0.1 * i))))
             # initial_estimate.insert(X(i), gtsam.Pose3().compose(gtsam.Pose3(
             #     gtsam.Rot3.Rodrigues(-0.1, 0.2, 0.25), gtsam.Point3(0.05, -0.10, 0.20))))
+
         print("INITIAL ESTIM:")
         print(initial_estimate)
         print("GRAPH:")
@@ -443,18 +468,18 @@ class OdomNode:
         # times to perform multiple optimizer iterations every step.
         # isam.update()
         print("yeehaw")
-        current_estimate = isam.calculateEstimate()
-        print("****************************************************")
-        print("Frame", i, ":")
-        for j in range(i + 1):
-            print(X(j), ":", current_estimate.atPose3(X(j)))
+        # current_estimate = isam.calculateEstimate()
+        # print("****************************************************")
+        # print("Frame", i, ":")
+        # for j in range(i + 1):
+        #     print(X(j), ":", current_estimate.atPose3(X(j)))
 
-        for j in range(len(points)):
-            print(L(j), ":", current_estimate.atPoint3(L(j)))
+        # for j in range(len(points)):
+        #     print(L(j), ":", current_estimate.atPoint3(L(j)))
 
-        # visual_ISAM2_plot(current_estimate)
+        # # visual_ISAM2_plot(current_estimate)
 
-        # Clear the factor graph and values for the next iteration
+        # # Clear the factor graph and values for the next iteration
         graph.resize(0)
         initial_estimate.clear()
 
@@ -473,6 +498,9 @@ class OdomNode:
         rgb[inside_pix_idxs[:, 1],inside_pix_idxs[:, 0], 0] = 255
         growsize = 7
         minsize = 4
+        print("SHAPES")
+        print(self.triangulated_points.shape[1])
+        print(self.px_cur.shape[0])
 
         for i in range(inside_pix_idxs.shape[0]):
             size = self.tracking_stats[inidx][i].age / growsize
