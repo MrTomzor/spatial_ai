@@ -284,13 +284,14 @@ class OdomNode:
         self.last_triangulation_t = t
 
 
-        self.pose_estim_gtsam()
-        # try:
-        #     self.pose_estim_gtsam()
-        # except Exception as error:
-        #     cprint("GTSAM ERROR:", 'red')
-        #     cprint(error, 'red')
-        #     self.node_offline = True
+        self.gtsam_triang_points = None
+        # self.pose_estim_gtsam()
+        try:
+            self.pose_estim_gtsam()
+        except Exception as error:
+            cprint("GTSAM ERROR:", 'red')
+            cprint(error, 'red')
+            # self.node_offline = True
 
         # closest_time_odom_msg = self.get_closest_time_odom_msg(self.new_img_stamp)
         # closest_time_prev_odom_msg = self.get_closest_time_odom_msg(self.last_img_stamp)
@@ -344,6 +345,8 @@ class OdomNode:
         landmark_selection_idxs = np.arange(n_current_features)
         np.random.shuffle(landmark_selection_idxs)
 
+        self.last_tried_landmarks_pxs = None
+
         for k in range(n_current_features):
             i = landmark_selection_idxs[k]
 
@@ -378,10 +381,13 @@ class OdomNode:
                current_pt = self.tracking_stats[i].prev_points[-1]
                first_landmark_first_frame_pix = np.array([current_pt[0], current_pt[1]], dtype=np.float64)
 
+
         print("NUM OPTIMIZED LANDMARKS:" + str(landmark_index+1))
         if landmark_index < 3:
             print("NOT ENOUGH USABLE LANDMARKS, RETURNING")
             return 1
+
+        self.last_tried_landmarks_pxs = self.px_cur[landmark_idxs_to_feature_idxs]
 
         # Add a prior on pose x0
         # pose_noise = gtsam.noiseModel.Diagonal.Sigmas(0.1 * np.array(
@@ -458,7 +464,8 @@ class OdomNode:
         # isam.update(graph, initial_estimate)
 
         params = gtsam.DoglegParams()
-        params.setVerbosity('VALUES')
+        # params.setVerbosity('VALUES')
+        params.setVerbosity('TERMINATION')
         optimizer = DoglegOptimizer(graph, initial_estimate, params)
         print('Optimizing:')
         result = optimizer.optimize()
@@ -474,8 +481,11 @@ class OdomNode:
         # for j in range(i + 1):
         #     print(X(j), ":", current_estimate.atPose3(X(j)))
 
-        # for j in range(len(points)):
-        #     print(L(j), ":", current_estimate.atPoint3(L(j)))
+        self.gtsam_triang_points = []
+        for j in range(landmark_index+1):
+            # print(L(j), ":", current_estimate.atPoint3(L(j)))
+            pt = result.atPoint3(L(j))
+            self.gtsam_triang_points.append(pt)
 
         # # visual_ISAM2_plot(current_estimate)
 
@@ -519,7 +529,20 @@ class OdomNode:
             pixpos = pixpos / pixpos[2]
             rgb = cv2.circle(rgb, (int(pixpos[0]), int(pixpos[1])), minsize+growsize+2, 
                            (0, 0, 255), 2) 
-        # np.random.randint(0, 20)
+
+        if not self.gtsam_triang_points is None:
+            for i in range(len(self.gtsam_triang_points)):
+                pixpos = self.K.dot(self.gtsam_triang_points[i])
+                pixpos = pixpos / pixpos[2]
+                rgb = cv2.circle(rgb, (int(pixpos[0]), int(pixpos[1])), minsize+growsize+5, 
+                               (255, 0, 0), 6) 
+
+        if self.last_tried_landmarks_pxs is not None:
+            for i in range(self.last_tried_landmarks_pxs.shape[0]):
+                pixpos = self.last_tried_landmarks_pxs[i, :]
+                rgb = cv2.circle(rgb, (int(pixpos[0]), int(pixpos[1])), minsize+growsize+5, 
+                               (255, 150, 0), 7) 
+
 
         flow_vis = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         return flow_vis
