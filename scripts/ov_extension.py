@@ -67,7 +67,11 @@ def featureTracking(image_ref, image_cur, px_ref, tracking_stats):
 class TrackingStat:
     def __init__(self):
         self.age = 0
+        self.invdepth_measurements = 0
+        self.invdepth_mean = 0
+        self.invdepth_sigma2 = 1
         self.prev_points = []
+        self.invdepth_buffer = []
 
 class KeyFrame:
     def __init__(self, odom_msg, img_timestamp, T_odom):
@@ -91,6 +95,7 @@ class OdomNode:
         self.kp_pub = rospy.Publisher('tracked_features_img', Image, queue_size=1)
         self.marker_pub = rospy.Publisher('/vo_odom', Marker, queue_size=10)
         self.kp_pcl_pub = rospy.Publisher('tracked_features_space', PointCloud, queue_size=10)
+        self.kp_pcl_pub_invdepth = rospy.Publisher('tracked_features_space_invdepth', PointCloud, queue_size=10)
 
         self.sub_cam = rospy.Subscriber('/robot1/camera1/raw', Image, self.image_callback, queue_size=10000)
 
@@ -166,8 +171,6 @@ class OdomNode:
         self.odom_buffer.append(msg)
         if len(self.odom_buffer) > self.odom_buffer_maxlen:
             self.odom_buffer.pop(0)
-        print("ODOM")
-        print(msg.header.stamp)
 
     def points_slam_callback(self, msg):
         print("N POINTS IN SLAMPOINTS:")
@@ -242,11 +245,27 @@ class OdomNode:
                     # idxs = np.arange(self.max_features_per_bin)
                     # np.random.shuffle(idxs)
                     idxs = np.argsort(ages)
-                    idxs = idxs[:self.max_features_per_bin]
-                    n_culled += n_existing_in_bin - self.max_features_per_bin
+                    surviving_idxs = idxs[:self.max_features_per_bin]
+                    n_culled_this_bin = n_existing_in_bin - self.max_features_per_bin
 
-                    self.px_cur = np.concatenate((self.px_cur, inside_points[idxs, :]))
-                    self.tracking_stats = np.concatenate((self.tracking_stats, inside_stats[idxs]))
+                    self.px_cur = np.concatenate((self.px_cur, inside_points[surviving_idxs , :]))
+                    self.tracking_stats = np.concatenate((self.tracking_stats, inside_stats[surviving_idxs ]))
+
+                    # LET THE ONES WITH MANY DEPTH MEASUREMENTS LIVE
+                    # print(n_culled_this_bin)
+                    spared_inside_idxs = []
+                    n_spared = 0
+                    for i in range(n_culled_this_bin):
+                        if inside_stats[idxs[self.max_features_per_bin + i]].invdepth_measurements > 1:
+                            spared_inside_idxs.append(self.max_features_per_bin + i)
+                            n_spared += 1
+                    if n_spared > 0:
+                        spared_inside_idxs = np.array(spared_inside_idxs)
+
+                        self.px_cur = np.concatenate((self.px_cur, inside_points[idxs[spared_inside_idxs] , :]))
+                        self.tracking_stats = np.concatenate((self.tracking_stats, inside_stats[idxs[spared_inside_idxs] ]))
+
+                    n_culled += n_culled_this_bin - n_spared
                     # self.px_cur = np.concatenate((self.px_cur, inside_points[:self.max_features_per_bin, :]))
 
                 elif n_existing_in_bin < self.min_features_per_bin:
@@ -294,6 +313,7 @@ class OdomNode:
             print("ZERO FEATURES! FINDING FEATURES")
             self.px_cur = self.detector.detect(self.new_frame)
             self.px_cur = np.array([x.pt for x in self.px_cur], dtype=np.float32)
+
         
 
     def image_callback(self, msg):
@@ -423,6 +443,35 @@ class OdomNode:
                     print("SCALE MODIFIER: "  + str(scale_modifier))
                     self.noprior_triangulation_points = scale_modifier * self.noprior_triangulation_points 
 
+                    # ADD DEPTH ESTIMATION TO THE POINT
+                    for i in range(self.noprior_triangulation_points.shape[1]):
+                        MINDEPTH = 0.01
+                        depth_meas = np.linalg.norm(self.noprior_triangulation_points[:, i])
+                        if depth_meas >= MINDEPTH:
+                            invdepth_meas = 1.0 / depth_meas
+                            self.tracking_stats[i].invdepth_buffer.append(invdepth_meas)
+                            # self.invdepth_meas_sigma2 = 0.01
+                            self.invdepth_meas_sigma2 = 0.001
+                            self.invdepth_meas_sigma2_init = 0.01
+                            if (self.tracking_stats[i].invdepth_measurements) == 0:
+                                self.tracking_stats[i].invdepth_mean = invdepth_meas
+                                self.tracking_stats[i].invdepth_sigma2 = self.invdepth_meas_sigma2_init
+                            else:
+                                self.tracking_stats[i].invdepth_mean = (self.tracking_stats[i].invdepth_mean * self.invdepth_meas_sigma2 + invdepth_meas * self.tracking_stats[i].invdepth_sigma2) / (self.invdepth_meas_sigma2 + self.tracking_stats[i].invdepth_sigma2) 
+                                self.tracking_stats[i].invdepth_sigma2 = self.invdepth_meas_sigma2 * self.tracking_stats[i].invdepth_sigma2 / (self.invdepth_meas_sigma2 + self.tracking_stats[i].invdepth_sigma2)
+                            print("--MEAS INDEX: " + str(self.tracking_stats[i].invdepth_measurements))
+                            print("MEAS MEAS: " + str(invdepth_meas) )
+                            print("ESTIM MEAN: " + str(self.tracking_stats[i].invdepth_mean) )
+                            print("ESTIM COV: " + str(self.tracking_stats[i].invdepth_sigma2) )
+                            avg = np.mean(np.array([x for x in self.tracking_stats[i].invdepth_buffer]))
+                            print("ESTIM AVG: " + str(avg) )
+                            self.tracking_stats[i].invdepth_measurements += 1
+
+
+            # VISUALIZE THE TRIANGULATED SHIT
+            self.visualize_keypoints_in_space(True)
+            self.visualize_keypoints_in_space(False)
+
 
             # CONTROL FEATURE POPULATION - ADDING AND PRUNING
             self.control_features_population()
@@ -442,11 +491,17 @@ class OdomNode:
                 self.tracking_stats[i].prev_keyframe_pixel_pos = self.px_cur[i, :]
 
 
+
+
+        # if self.tracking_stats.shape[0] != self.px_cur.shape[0]:
+        #     print("FUCK!")
+
+        # if (not self.noprior_triangulation_points is None) and self.tracking_stats.shape[0] != self.noprior_triangulation_points.shape[1]:
+        #     print("FUCK2!") # THIS HAPPENS BECAUSE POPULATION CONTROL IS AFTER THE FUCKING THING!
+
         # VISUALIZE FEATURES
         vis = self.visualize_tracking()
         self.kp_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
-
-        self.visualize_keypoints_in_space()
 
         comp_time = time.time() - comp_start_time
         print("computation time: " + str((comp_time) * 1000) +  " ms")
@@ -735,7 +790,7 @@ class OdomNode:
         flow_vis = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         return flow_vis
 
-    def visualize_keypoints_in_space(self):
+    def visualize_keypoints_in_space(self, use_invdepth):
         point_cloud = PointCloud()
         point_cloud.header.stamp = rospy.Time.now()
         # point_cloud.header.frame_id = 'mission_origin'  # Set the frame ID according to your robot's configuration
@@ -748,17 +803,27 @@ class OdomNode:
         if kps is None:
             return
 
-        for i in range(kps.shape[1]):
+        # for i in range(kps.shape[1]):
+        print("KPS:")
+        print(kps.shape)
+        print(self.tracking_stats.shape)
+        for i in range(self.tracking_stats.shape[0]):
             # if kps[2, i] > 0:
-            if True:
-                point1 = Point32()
-                point1.x = kps[0, i]
-                point1.y = kps[1, i]
-                point1.z = kps[2, i]
-                point_cloud.points.append(point1)
+            scaling_factor = 1
+            if use_invdepth and self.tracking_stats[i].invdepth_measurements > 0:
+                invdepth = self.tracking_stats[i].invdepth_mean
+                if invdepth > 0:
+                    scaling_factor = (1/invdepth) / np.linalg.norm(kps[:, i])
+            point1 = Point32()
+            point1.x = kps[0, i] * scaling_factor
+            point1.y = kps[1, i] * scaling_factor
+            point1.z = kps[2, i] * scaling_factor
+            point_cloud.points.append(point1)
 
-        self.kp_pcl_pub.publish(point_cloud)
-
+        if use_invdepth:
+            self.kp_pcl_pub_invdepth.publish(point_cloud)
+        else:
+            self.kp_pcl_pub.publish(point_cloud)
     def decomp_essential_mat(self, E, q1, q2):
         """
         Decompose the Essential matrix
