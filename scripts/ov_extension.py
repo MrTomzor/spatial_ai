@@ -85,6 +85,7 @@ class OdomNode:
         self.bridge = CvBridge()
         self.prev_image = None
         self.prev_time = None
+        self.proper_triang = False
 
         self.keyframes = []
         self.noprior_triangulation_points = None
@@ -466,11 +467,14 @@ class OdomNode:
                             avg = np.mean(np.array([x for x in self.tracking_stats[i].invdepth_buffer]))
                             print("ESTIM AVG: " + str(avg) )
                             self.tracking_stats[i].invdepth_measurements += 1
+                            self.proper_triang = True
 
 
             # VISUALIZE THE TRIANGULATED SHIT
-            self.visualize_keypoints_in_space(True)
-            self.visualize_keypoints_in_space(False)
+            if self.proper_triang:
+                self.proper_triang = False
+                self.visualize_keypoints_in_space(True)
+                self.visualize_keypoints_in_space(False)
 
 
             # CONTROL FEATURE POPULATION - ADDING AND PRUNING
