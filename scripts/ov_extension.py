@@ -110,9 +110,10 @@ class OdomNode:
         self.height = 600
         self.tracking_bin_width = 100
         self.min_features_per_bin = 1
-        self.max_features_per_bin = 1
+        self.max_features_per_bin = 4
         self.tracking_history_len = 4
         self.node_offline = False
+        self.last_tried_landmarks_pxs = None
 
         self.trueX, self.trueY, self.trueZ = 0, 0, 0
         self.detector = cv2.FastFeatureDetector_create(threshold=30, nonmaxSuppression=True)
@@ -169,10 +170,16 @@ class OdomNode:
                 lr = np.array([ul[0] + self.tracking_bin_width , ul[1] + self.tracking_bin_width]) 
 
                 inidx = np.all(np.logical_and(ul <= self.px_ref_prev, self.px_ref_prev <= lr), axis=1)
-                inside_points = self.px_ref_prev[inidx]
-                inside_stats = self.tracking_stats_prev[inidx]
+                print(inidx)
+                inside_points = []
+                inside_stats = np.array([], dtype=object)
 
-                n_existing_in_bin = inside_points.shape[0]
+                n_existing_in_bin = 0
+                if np.any(inidx):
+                    inside_points = self.px_ref_prev[inidx]
+                    inside_stats = self.tracking_stats_prev[inidx]
+                    n_existing_in_bin = inside_points.shape[0]
+
                 # print(n_existing_in_bin )
 
                 if n_existing_in_bin > self.max_features_per_bin:
@@ -190,24 +197,30 @@ class OdomNode:
 
                 elif n_existing_in_bin < self.min_features_per_bin:
                     # ADD THE EXISTING
-                    self.px_ref = np.concatenate((self.px_ref, inside_points))
-                    self.tracking_stats = np.concatenate((self.tracking_stats, inside_stats))
+                    if n_existing_in_bin > 0:
+                        self.px_ref = np.concatenate((self.px_ref, inside_points))
+                        self.tracking_stats = np.concatenate((self.tracking_stats, inside_stats))
 
                     # FIND NEW ONES
                     locally_found = self.detector.detect(self.new_frame[ul[1] : lr[1], ul[0] : lr[0]])
                     n_found_in_bin = len(locally_found)
                     if n_found_in_bin == 0:
                         continue
+                    locally_found = np.array([x.pt for x in locally_found], dtype=np.float32)
 
                     # be sure to not add too many!
                     if n_existing_in_bin + n_found_in_bin > self.max_features_per_bin:
                         n_to_add = int(self.max_features_per_bin - n_existing_in_bin)
-                        locally_found = locally_found[:n_to_add]
+
+                        shuf = np.arange(n_to_add)
+                        np.random.shuffle(shuf)
+
+                        # locally_found = locally_found[:n_to_add]
+                        locally_found = locally_found[shuf, :]
 
                     found_total += len(locally_found)
 
                     # ADD THE NEW ONES
-                    locally_found = np.array([x.pt for x in locally_found], dtype=np.float32)
                     locally_found[:, 0] += ul[0]
                     locally_found[:, 1] += ul[1]
                     self.px_ref = np.concatenate((self.px_ref, locally_found))
@@ -286,12 +299,12 @@ class OdomNode:
 
         self.gtsam_triang_points = None
         # self.pose_estim_gtsam()
-        try:
-            self.pose_estim_gtsam()
-        except Exception as error:
-            cprint("GTSAM ERROR:", 'red')
-            cprint(error, 'red')
-            # self.node_offline = True
+        # try:
+        #     self.pose_estim_gtsam()
+        # except Exception as error:
+        #     cprint("GTSAM ERROR:", 'red')
+        #     cprint(error, 'red')
+        #     # self.node_offline = True
 
         # closest_time_odom_msg = self.get_closest_time_odom_msg(self.new_img_stamp)
         # closest_time_prev_odom_msg = self.get_closest_time_odom_msg(self.last_img_stamp)
@@ -447,22 +460,22 @@ class OdomNode:
         # print(graph)
 
         # Update iSAM with the new factors
-        isam.update(graph, initial_estimate)
-        isam.update()
-        isam.update()
-        isam.update()
-        isam.update()
-        isam.update()
-        isam.update()
-        isam.update()
-        result = isam.calculateEstimate()
+        # isam.update(graph, initial_estimate)
+        # isam.update()
+        # isam.update()
+        # isam.update()
+        # isam.update()
+        # isam.update()
+        # isam.update()
+        # isam.update()
+        # result = isam.calculateEstimate()
 
-        # params = gtsam.DoglegParams()
-        # # params.setVerbosity('VALUES')
-        # params.setVerbosity('TERMINATION')
-        # optimizer = DoglegOptimizer(graph, initial_estimate, params)
-        # print('Optimizing:')
-        # result = optimizer.optimize()
+        params = gtsam.DoglegParams()
+        # params.setVerbosity('VALUES')
+        params.setVerbosity('TERMINATION')
+        optimizer = DoglegOptimizer(graph, initial_estimate, params)
+        print('Optimizing:')
+        result = optimizer.optimize()
 
         # Each call to iSAM2 update(*) performs one iteration of the iterative nonlinear solver.
         # If accuracy is desired at the expense of time, update(*) can be called additional
