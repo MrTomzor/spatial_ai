@@ -4,6 +4,7 @@ import rospy
 # from sensor_msgs.msg import Image
 from sensor_msgs.msg import Image, CompressedImage, PointCloud2
 import sensor_msgs.point_cloud2 as pc2
+from scipy.spatial.transform import Rotation
 # import pcl
 
 from nav_msgs.msg import Odometry
@@ -69,10 +70,11 @@ class TrackingStat:
         self.prev_points = []
 
 class KeyFrame:
-    def __init__(self, odom_msg, img_timestamp):
+    def __init__(self, odom_msg, img_timestamp, T_odom):
         self.triangulated_points = []
         self.odom_msg = odom_msg
         self.img_timestamp = img_timestamp
+        self.T_odom = T_odom
 
 class OdomNode:
     def __init__(self):
@@ -81,7 +83,8 @@ class OdomNode:
         self.prev_time = None
 
         self.keyframes = []
-        self.triangulated_points = None
+        self.noprior_triangulation_points = None
+        self.odomprior_triangulation_points = None
 
         self.localmap_points = None
 
@@ -127,7 +130,7 @@ class OdomNode:
         self.height = 600
         self.tracking_bin_width = 100
         self.min_features_per_bin = 1
-        self.max_features_per_bin = 4
+        self.max_features_per_bin = 2
         self.tracking_history_len = 4
         self.node_offline = False
         self.last_tried_landmarks_pxs = None
@@ -145,16 +148,16 @@ class OdomNode:
         bestmsg = None
         besttimedif = 0
         for msg in self.odom_buffer:
-            print(msg.header.stamp.to_sec())
+            # print(msg.header.stamp.to_sec())
             tdif2 = np.abs((msg.header.stamp - stamp).to_nsec())
             if bestmsg == None or tdif2 < besttimedif:
                 bestmsg = msg
                 besttimedif = tdif2
         final_tdif = (msg.header.stamp - stamp).to_sec()
-        print("TARGET")
-        print(stamp)
-        print("FOUND")
-        print(msg.header.stamp)
+        # print("TARGET")
+        # print(stamp)
+        # print("FOUND")
+        # print(msg.header.stamp)
         if not bestmsg is None:
             print("found msg with time" + str(msg.header.stamp.to_sec()) + " for time " + str(stamp.to_sec()) +" tdif: " + str(final_tdif))
         return bestmsg
@@ -338,8 +341,8 @@ class OdomNode:
 
             print("AFTER TRACKING: " + str(self.px_cur.shape[0]))
 
-        keyframe_time_threshold = 0.05
-        keyframe_distance_threshold = 0.1
+        keyframe_time_threshold = 0.15
+        keyframe_distance_threshold = 2.5
 
         time_since_last_keyframe = None
         dist_since_last_keyframe = None
@@ -355,10 +358,22 @@ class OdomNode:
         if self.px_ref is None or ( time_since_last_keyframe > keyframe_time_threshold and dist_since_last_keyframe > keyframe_distance_threshold):
             print("ATTEMPTING TO ADD NEW KEYFRAME! " + str(len(self.keyframes)) + ", dist: " + str(dist_since_last_keyframe) + ", time: " + str(time_since_last_keyframe))
 
+            # NUMPIFY THE CURRENT ODOMETRY TRANSFORMATION MATRIX
+            odom_p = np.array([closest_time_odom_msg.pose.pose.position.x, closest_time_odom_msg.pose.pose.position.y, closest_time_odom_msg.pose.pose.position.z])
+            odom_q = np.array([closest_time_odom_msg.pose.pose.orientation.x, closest_time_odom_msg.pose.pose.orientation.y,
+                closest_time_odom_msg.pose.pose.orientation.z, closest_time_odom_msg.pose.pose.orientation.w])
+            T_odom = np.eye(4)
+            print("R:")
+            print(Rotation.from_quat(odom_q).as_matrix())
+            T_odom[:3,:3] = Rotation.from_quat(odom_q).as_matrix()
+            T_odom[:3, 3] = odom_p
+            print("CURRENT ODOM POSE: ")
+            print(T_odom)
+
             # IF YOU CAN - FIRST TRIANGULATE WITHOUT SCALE! - JUST TO DISCARD OUTLIERS
             can_triangulate = not self.px_cur is None
             if can_triangulate:
-                print("TRIANGULATING")
+                print("TRIANGULATING WITH OWN ")
 
                 # TRIANG BETWEEN PX_CUR AND THEIR PIXEL POSITIONS IN THE PREVIOUS KEYFRAME
                 self.px_lkf = np.array([self.tracking_stats[i].prev_keyframe_pixel_pos for i in range(self.px_cur.shape[0])], dtype=np.float32)
@@ -370,10 +385,43 @@ class OdomNode:
                 self.tracking_stats = self.tracking_stats[mask]
                 print("AFTER OUTLIER REJECTION: " + str(self.px_cur.shape[0]))
 
-                # NOW USE THE TRANSF. MATRIX GIVEN BY OPENVINS ODOMETRY AND USE IT TO TRIANGULATE THE POINTS BETWEEN KEYFRAMES
+                # FIND TRANSFORMATION WITHOUT ODOM PRIOR
                 R, t = self.decomp_essential_mat(E, self.px_lkf, self.px_cur)
-                self.last_triangulation_R = R
-                self.last_triangulation_t = t
+                self.noprior_triangulation_points = self.triangulated_points
+                T_noprior = np.eye(4)
+                T_noprior[:3, :3] = R
+                T_noprior[:3, 3] = t
+
+
+                # NOW USE THE TRANSF. MATRIX GIVEN BY OPENVINS ODOMETRY AND USE IT TO TRIANGULATE THE POINTS BETWEEN KEYFRAMES
+                T_delta_odom = np.linalg.inv(self.keyframes[-1].T_odom) @ T_odom
+                print("T_NOPRIOR:")
+                print(T_noprior)
+                print("T_delta_ODOM:")
+                print(T_delta_odom)
+
+                P = np.matmul(np.concatenate((self.K, np.zeros((3, 1))), axis=1), T_delta_odom)
+
+                # Triangulate the 3D points
+                hom_Q1 = cv2.triangulatePoints(self.P, P, self.px_lkf.T, self.px_cur.T)
+                # Also seen from cam 2
+                hom_Q2 = np.matmul(T_delta_odom, hom_Q1)
+
+                # Un-homogenize
+                uhom_Q1 = hom_Q1[:3, :] / hom_Q1[3, :]
+                uhom_Q2 = hom_Q2[:3, :] / hom_Q2[3, :]
+
+                # self.odomprior_triangulation_points = uhom_Q2
+                self.odomprior_triangulation_points = uhom_Q2
+
+                # USE NOPRIOR PTS AND JUST GET SCALE FROM THE ODOMETRY
+                if(not np.any(np.isnan(np.linalg.norm(t)))):
+                    scale_modifier = np.linalg.norm(T_delta_odom[:3,3]) / np.linalg.norm(t)
+                    print("ORIG TRANSLATION SCALE: "  + str(np.linalg.norm(t)))
+                    print("ODOM TRANSLATION SCALE: "  + str(np.linalg.norm(T_delta_odom[:3,3])))
+
+                    print("SCALE MODIFIER: "  + str(scale_modifier))
+                    self.noprior_triangulation_points = scale_modifier * self.noprior_triangulation_points 
 
 
             # CONTROL FEATURE POPULATION - ADDING AND PRUNING
@@ -386,7 +434,7 @@ class OdomNode:
 
             # HAVE ENOUGH POINTS, ADD KEYFRAME
             print("ADDED NEW KEYFRAME! KF: " + str(len(self.keyframes)))
-            new_kf = KeyFrame(closest_time_odom_msg, self.new_img_stamp)
+            new_kf = KeyFrame(closest_time_odom_msg, self.new_img_stamp, T_odom)
             self.keyframes.append(new_kf)
 
             # STORE THE PIXELPOSITIONS OF ALL CURRENT POINTS FOR THIS GIVEN KEYFRAME 
@@ -398,7 +446,7 @@ class OdomNode:
         vis = self.visualize_tracking()
         self.kp_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
 
-        # self.visualize_keypoints_in_space()
+        self.visualize_keypoints_in_space()
 
         comp_time = time.time() - comp_start_time
         print("computation time: " + str((comp_time) * 1000) +  " ms")
@@ -639,12 +687,19 @@ class OdomNode:
                 # rgb = cv2.circle(rgb, (int(triang_pix[0]), int(triang_pix[1])), int(size), 
                 #                (0, 0, 255), 3) 
 
-            if not self.triangulated_points is None:
-                for i in range(self.triangulated_points.shape[1]):
-                    pixpos = self.K.dot(self.triangulated_points[:, i])
+            if not self.noprior_triangulation_points is None:
+                for i in range(self.noprior_triangulation_points .shape[1]):
+                    pixpos = self.K.dot(self.noprior_triangulation_points [:, i])
                     pixpos = pixpos / pixpos[2]
                     rgb = cv2.circle(rgb, (int(pixpos[0]), int(pixpos[1])), minsize+growsize+2, 
                                    (0, 0, 255), 2) 
+
+            if not self.odomprior_triangulation_points  is None:
+                for i in range(self.odomprior_triangulation_points  .shape[1]):
+                    pixpos = self.K.dot(self.odomprior_triangulation_points [:, i])
+                    pixpos = pixpos / pixpos[2]
+                    rgb = cv2.circle(rgb, (int(pixpos[0]), int(pixpos[1])), minsize+growsize+5, 
+                                   (0, 255, 255), 2) 
 
         res = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         return res
@@ -683,21 +738,19 @@ class OdomNode:
     def visualize_keypoints_in_space(self):
         point_cloud = PointCloud()
         point_cloud.header.stamp = rospy.Time.now()
-        point_cloud.header.frame_id = 'mission_origin'  # Set the frame ID according to your robot's configuration
+        # point_cloud.header.frame_id = 'mission_origin'  # Set the frame ID according to your robot's configuration
+        point_cloud.header.frame_id = 'cam0'  # Set the frame ID according to your robot's configuration
 
-        # Sample points
-        # for i in range(kp.shape[1]):
-        #     if kp[2, i] > 0:
-        #         point1 = Point32()
-        #         point1.x = kp[0, i]
-        #         point1.y = kp[1, i]
-        #         point1.z = kp[2, i]
-        #         point_cloud.points.append(point1)
-        maxnorm = np.max(np.linalg.norm(self.triangulated_points), axis=0)
-        kps = 10 * self.triangulated_points / maxnorm
+        # maxnorm = np.max(np.linalg.norm(self.triangulated_points), axis=0)
+        # kps = 10 * self.triangulated_points / maxnorm
+        # kps = self.odomprior_triangulation_points
+        kps = self.noprior_triangulation_points
+        if kps is None:
+            return
 
-        for i in range(self.triangulated_points.shape[1]):
-            if kps[2, i] > 0:
+        for i in range(kps.shape[1]):
+            # if kps[2, i] > 0:
+            if True:
                 point1 = Point32()
                 point1.x = kps[0, i]
                 point1.y = kps[1, i]
