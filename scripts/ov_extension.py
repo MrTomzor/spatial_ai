@@ -184,7 +184,7 @@ class OdomNode:
 
                 if n_existing_in_bin > self.max_features_per_bin:
                     # CUTOFF POINTS ABOVE MAXIMUM, SORTED BY AGE
-                    ages = np.array([pt.age for pt in inside_stats])
+                    ages = np.array([-pt.age for pt in inside_stats])
                     # idxs = np.arange(self.max_features_per_bin)
                     # np.random.shuffle(idxs)
                     idxs = np.argsort(ages)
@@ -557,8 +557,8 @@ class OdomNode:
             triang_pix = self.K.dot(self.triangulated_points[:, inidx][:, i])
             triang_pix = triang_pix  / triang_pix[2]
             rgb = cv2.line(rgb, (int(triang_pix[0]), int(triang_pix[1])), (inside_pix_idxs[i,0], inside_pix_idxs[i,1]), (255, 0, 0), 3)
-            rgb = cv2.circle(rgb, (int(triang_pix[0]), int(triang_pix[1])), 7, 
-                           (0, 0, 255), 2) 
+            rgb = cv2.circle(rgb, (int(triang_pix[0]), int(triang_pix[1])), int(size), 
+                           (0, 0, 255), 3) 
 
         # for i in range(self.triangulated_points.shape[1]):
         #     pixpos = self.K.dot(self.triangulated_points[:, i])
