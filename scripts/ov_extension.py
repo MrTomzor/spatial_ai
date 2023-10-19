@@ -43,7 +43,7 @@ kMinNumFeature = 200
 kMaxNumFeature = 2000
 
 # LKPARAMS
-lk_params = dict(winSize  = (21, 21),
+lk_params = dict(winSize  = (31, 31),
                  maxLevel = 3,
                  criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01))
 
@@ -170,7 +170,7 @@ class OdomNode:
                 lr = np.array([ul[0] + self.tracking_bin_width , ul[1] + self.tracking_bin_width]) 
 
                 inidx = np.all(np.logical_and(ul <= self.px_ref_prev, self.px_ref_prev <= lr), axis=1)
-                print(inidx)
+                # print(inidx)
                 inside_points = []
                 inside_stats = np.array([], dtype=object)
 
@@ -292,6 +292,14 @@ class OdomNode:
         # TRY TO ESTIMATE FEATURES POINTS AND SELF MOTION (WITHOUT ODOM FOR NOW)
 
         E, mask = cv2.findEssentialMat(self.px_cur, self.px_ref, focal=self.focal, pp=self.pp, method=cv2.RANSAC, prob=0.999, threshold=1.0)
+        mask = (mask > 0.5).flatten()
+        # print("MASK: ")
+        # print(mask.shape)
+        self.px_cur = self.px_cur[mask, :]
+        self.px_ref = self.px_ref[mask, :]
+        self.tracking_stats = self.tracking_stats[mask]
+        print("AFTER OUTLIER REJECTION: " + str(self.px_cur.shape[0]))
+
         R, t = self.decomp_essential_mat(E, self.px_ref, self.px_cur)
         self.last_triangulation_R = R
         self.last_triangulation_t = t
@@ -529,9 +537,9 @@ class OdomNode:
         rgb[inside_pix_idxs[:, 1],inside_pix_idxs[:, 0], 0] = 255
         growsize = 7
         minsize = 4
-        print("SHAPES")
-        print(self.triangulated_points.shape[1])
-        print(self.px_cur.shape[0])
+        # print("SHAPES")
+        # print(self.triangulated_points.shape[1])
+        # print(self.px_cur.shape[0])
 
         for i in range(inside_pix_idxs.shape[0]):
             size = self.tracking_stats[inidx][i].age / growsize
@@ -539,17 +547,24 @@ class OdomNode:
                 size = growsize
             size += minsize
             prevpt = self.tracking_stats[inidx][i].prev_points[-1]
-            rgb = cv2.circle(rgb, (int(prevpt[0]), int(prevpt[1])), int(size), 
-                           (0, 255, 0), -1) 
-            rgb = cv2.circle(rgb, (inside_pix_idxs[i,0], inside_pix_idxs[i,1]), int(size), 
-                           (255, 0, 255), -1) 
+            # rgb = cv2.circle(rgb, (int(prevpt[0]), int(prevpt[1])), int(size), 
+            #                (0, 255, 0), 3) 
+            # rgb = cv2.circle(rgb, (inside_pix_idxs[i,0], inside_pix_idxs[i,1]), int(size), 
+            #                (255, 0, 255), -1) 
             # rgb = cv2.circle(rgb, (inside_pix_idxs[i,0], inside_pix_idxs[i,1]), 5, 
-            #                (255, 0, 0), -1) 
-        for i in range(self.triangulated_points.shape[1]):
-            pixpos = self.K.dot(self.triangulated_points[:, i])
-            pixpos = pixpos / pixpos[2]
-            rgb = cv2.circle(rgb, (int(pixpos[0]), int(pixpos[1])), minsize+growsize+2, 
+            #                (255, 0, 255), 2) 
+
+            triang_pix = self.K.dot(self.triangulated_points[:, inidx][:, i])
+            triang_pix = triang_pix  / triang_pix[2]
+            rgb = cv2.line(rgb, (int(triang_pix[0]), int(triang_pix[1])), (inside_pix_idxs[i,0], inside_pix_idxs[i,1]), (255, 0, 0), 3)
+            rgb = cv2.circle(rgb, (int(triang_pix[0]), int(triang_pix[1])), 7, 
                            (0, 0, 255), 2) 
+
+        # for i in range(self.triangulated_points.shape[1]):
+        #     pixpos = self.K.dot(self.triangulated_points[:, i])
+        #     pixpos = pixpos / pixpos[2]
+        #     rgb = cv2.circle(rgb, (int(pixpos[0]), int(pixpos[1])), minsize+growsize+2, 
+        #                    (0, 0, 255), 2) 
 
         if self.last_tried_landmarks_pxs is not None:
             for i in range(self.last_tried_landmarks_pxs.shape[0]):
