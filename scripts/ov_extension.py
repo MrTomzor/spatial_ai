@@ -110,8 +110,8 @@ class OdomNode:
         self.height = 600
         self.tracking_bin_width = 100
         self.min_features_per_bin = 1
-        self.max_features_per_bin = 10
-        self.max_tracked_positions_of_points = 5
+        self.max_features_per_bin = 1
+        self.tracking_history_len = 4
         self.node_offline = False
 
         self.trueX, self.trueY, self.trueZ = 0, 0, 0
@@ -143,12 +143,13 @@ class OdomNode:
         hbins = self.height // self.tracking_bin_width
         found_total = 0
 
-        if self.px_ref is None:
+        if self.px_ref is None or len(self.px_ref) == 0:
             self.px_ref = self.detector.detect(self.new_frame)
-            if self.px_ref is None:
+            if self.px_ref is None or len(self.px_ref) == 0:
                 return
             self.px_ref = np.array([x.pt for x in self.px_ref], dtype=np.float32)
             self.tracking_stats = np.array([TrackingStat() for x in self.px_ref], dtype=object)
+
         print("STTAS:")
         print(self.tracking_stats.shape)
         print(self.px_ref.shape)
@@ -194,13 +195,14 @@ class OdomNode:
 
                     # FIND NEW ONES
                     locally_found = self.detector.detect(self.new_frame[ul[1] : lr[1], ul[0] : lr[0]])
-                    if len(locally_found) == 0:
+                    n_found_in_bin = len(locally_found)
+                    if n_found_in_bin == 0:
                         continue
 
                     # be sure to not add too many!
-                    if found_total + n_existing_in_bin > self.max_features_per_bin:
+                    if n_existing_in_bin + n_found_in_bin > self.max_features_per_bin:
                         n_to_add = int(self.max_features_per_bin - n_existing_in_bin)
-                        locally_found = locally_found[0:n_to_add]
+                        locally_found = locally_found[:n_to_add]
 
                     found_total += len(locally_found)
 
@@ -258,20 +260,18 @@ class OdomNode:
         self.control_features_population()
 
         # RETURN IF STILL CANT FIND ANY
-        if(self.px_ref.shape[0] == 0):
+        if(len(self.px_ref) == 0):
             print("--WARNING! NO FEATURES FOUND!")
             return
 
         # TRACK
         print("BEFORE TRACKING: " + str(self.px_ref.shape[0]))
         self.px_ref, self.px_cur, self.tracking_stats = featureTracking(self.last_frame, self.new_frame, self.px_ref, self.tracking_stats)
-        # for stat in self.tracking_stats:
-        #     stat.age += 1
-        #     stat.prev_points.append(self.px_ref
+
         for i in range(self.px_ref.shape[0]):
             self.tracking_stats[i].age += 1
             self.tracking_stats[i].prev_points.append((self.px_ref[i,0], self.px_ref[i,1]))
-            if len(self.tracking_stats[i].prev_points) > self.max_tracked_positions_of_points:
+            if len(self.tracking_stats[i].prev_points) > self.tracking_history_len:
                 self.tracking_stats[i].prev_points.pop(0)
 
         print("AFTER TRACKING: " + str(self.px_cur.shape[0]))
@@ -331,13 +331,13 @@ class OdomNode:
         initial_estimate = gtsam.Values()
 
         n_current_features = self.px_cur.shape[0]
-        optim_steps = self.max_tracked_positions_of_points + 1
+        optim_steps = self.tracking_history_len + 1
         print("OPTIM STEPS: " + str(optim_steps))
 
         landmark_index = -1
 
         first_landmark_first_frame_pix = None
-        min_parallax_pixels = 20
+        min_parallax_pixels = 10
         landmark_idxs_to_feature_idxs = []
         # Add factors for each landmark observation
 
@@ -351,7 +351,7 @@ class OdomNode:
             i = landmark_selection_idxs[k]
 
             # CHECK IF OLD ENOUGH HISTORY
-            if len(self.tracking_stats[i].prev_points) < self.max_tracked_positions_of_points:
+            if len(self.tracking_stats[i].prev_points) < self.tracking_history_len :
                 continue
             # CHECK IF ENOUGH PARALLAX
             parallax_pix = np.linalg.norm(self.px_cur[i, :] - self.tracking_stats[i].prev_points[-1])
@@ -413,23 +413,6 @@ class OdomNode:
 
         point_noise = gtsam.noiseModel.Isotropic.Sigma(3, 0.1)
 
-        # projected_first_obsv = np.array([(first_landmark_first_frame_pix[0] - self.K[0, 2])/self.K[0, 0], (first_landmark_first_frame_pix[1] - self.K[1, 2])/self.K[1, 1], 1])
-        # print("PROJECTED FIRST OBSV PIX: ")
-        # print(first_landmark_first_frame_pix)
-        # print("PROJECTED FIRST OBSV POSITION: ")
-        # print(projected_first_obsv)
-
-        # camera = gtsam.PinholeCameraCal3_S2(gtsam.Pose3(), K)
-        # measurement = camera.project(projected_first_obsv)
-        # print("BACKPROJECTED BY GTSAM CAM MODEL:")
-        # print(measurement)
-
-        # print("BACKPROJECTED FIRST OBSV PIX: ")
-        # print(self.K.dot(projected_first_obsv))
-
-        # graph.push_back(gtsam.PriorFactorPoint3(
-        #     L(0), gtsam.Point3(projected_first_obsv[0], projected_first_obsv[1], projected_first_obsv[2]), point_noise))  # add directly to graph
-
         # ADD PRIOR ON FIRST LANDMARK FROM ITS TRIANG POSITION
         l0_triang_point = self.triangulated_points[:, landmark_selection_idxs[0]]
         graph.push_back(gtsam.PriorFactorPoint3(
@@ -439,6 +422,9 @@ class OdomNode:
         for i in range(landmark_index+1):
             triang_point = self.triangulated_points[:, landmark_selection_idxs[i]]
             initial_estimate.insert(L(i), gtsam.Point3(triang_point[0], triang_point[1], triang_point[2]))
+            #AND PRIOR
+            # graph.push_back(gtsam.PriorFactorPoint3(
+            #     L(i), gtsam.Point3(triang_point[0], triang_point[1], triang_point[2]), point_noise))  # add directly to graph
 
         # Add initial guess for previous pose (from triangulation) as 0
         initial_estimate.insert(X(optim_steps-1), prior_first_pose)
@@ -455,20 +441,28 @@ class OdomNode:
             # initial_estimate.insert(X(i), gtsam.Pose3().compose(gtsam.Pose3(
             #     gtsam.Rot3.Rodrigues(-0.1, 0.2, 0.25), gtsam.Point3(0.05, -0.10, 0.20))))
 
-        print("INITIAL ESTIM:")
-        print(initial_estimate)
-        print("GRAPH:")
-        print(graph)
+        # print("INITIAL ESTIM:")
+        # print(initial_estimate)
+        # print("GRAPH:")
+        # print(graph)
 
         # Update iSAM with the new factors
-        # isam.update(graph, initial_estimate)
+        isam.update(graph, initial_estimate)
+        isam.update()
+        isam.update()
+        isam.update()
+        isam.update()
+        isam.update()
+        isam.update()
+        isam.update()
+        result = isam.calculateEstimate()
 
-        params = gtsam.DoglegParams()
-        # params.setVerbosity('VALUES')
-        params.setVerbosity('TERMINATION')
-        optimizer = DoglegOptimizer(graph, initial_estimate, params)
-        print('Optimizing:')
-        result = optimizer.optimize()
+        # params = gtsam.DoglegParams()
+        # # params.setVerbosity('VALUES')
+        # params.setVerbosity('TERMINATION')
+        # optimizer = DoglegOptimizer(graph, initial_estimate, params)
+        # print('Optimizing:')
+        # result = optimizer.optimize()
 
         # Each call to iSAM2 update(*) performs one iteration of the iterative nonlinear solver.
         # If accuracy is desired at the expense of time, update(*) can be called additional
@@ -481,11 +475,25 @@ class OdomNode:
         # for j in range(i + 1):
         #     print(X(j), ":", current_estimate.atPose3(X(j)))
 
+        print("RESULTING LAST TWO POSES:")
+        print( result.atPose3(X(optim_steps-1)))
+        print( result.atPose3(X(optim_steps-2)))
+        print("INITIAL LAST TWO POSES:")
+        print(prior_first_pose)
+        print(second_to_last_pose)
+
         self.gtsam_triang_points = []
         for j in range(landmark_index+1):
             # print(L(j), ":", current_estimate.atPoint3(L(j)))
             pt = result.atPoint3(L(j))
             self.gtsam_triang_points.append(pt)
+
+            print("L" + str(j) + " - INITIALE ESTIMATE POINT:")
+            triang_point = self.triangulated_points[:, landmark_selection_idxs[j]]
+            print(triang_point)
+
+            print("RESULTING POINT:")
+            print(pt)
 
         # # visual_ISAM2_plot(current_estimate)
 
@@ -530,18 +538,19 @@ class OdomNode:
             rgb = cv2.circle(rgb, (int(pixpos[0]), int(pixpos[1])), minsize+growsize+2, 
                            (0, 0, 255), 2) 
 
-        if not self.gtsam_triang_points is None:
-            for i in range(len(self.gtsam_triang_points)):
-                pixpos = self.K.dot(self.gtsam_triang_points[i])
-                pixpos = pixpos / pixpos[2]
-                rgb = cv2.circle(rgb, (int(pixpos[0]), int(pixpos[1])), minsize+growsize+5, 
-                               (255, 0, 0), 6) 
-
         if self.last_tried_landmarks_pxs is not None:
             for i in range(self.last_tried_landmarks_pxs.shape[0]):
                 pixpos = self.last_tried_landmarks_pxs[i, :]
                 rgb = cv2.circle(rgb, (int(pixpos[0]), int(pixpos[1])), minsize+growsize+5, 
-                               (255, 150, 0), 7) 
+                               (255, 150, 0), 6) 
+
+        if not self.gtsam_triang_points is None:
+            for i in range(len(self.gtsam_triang_points)):
+                pixpos = self.K.dot(self.gtsam_triang_points[i])
+                pixpos = pixpos / pixpos[2]
+                rgb = cv2.circle(rgb, (int(pixpos[0]), int(pixpos[1])), minsize+growsize+8, 
+                               (255, 0, 0), 6) 
+
 
 
         flow_vis = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
