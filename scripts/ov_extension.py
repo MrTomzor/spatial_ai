@@ -534,6 +534,7 @@ class OdomNode:
                 self.visualize_keypoints_in_space(False)
 
 
+
             # CONTROL FEATURE POPULATION - ADDING AND PRUNING
             self.control_features_population()
 
@@ -545,6 +546,11 @@ class OdomNode:
             # HAVE ENOUGH POINTS, ADD KEYFRAME
             print("ADDED NEW KEYFRAME! KF: " + str(len(self.keyframes)))
             new_kf = KeyFrame(closest_time_odom_msg, self.new_img_stamp, T_odom)
+
+            # ADD SLAM POINTS INTO THIS KEYFRAME (submap)
+            new_kf.slam_points = self.slam_points
+            self.slam_points = None
+
             self.keyframes.append(new_kf)
 
             # STORE THE PIXELPOSITIONS OF ALL CURRENT POINTS FOR THIS GIVEN KEYFRAME 
@@ -661,17 +667,26 @@ class OdomNode:
         point_cloud.header.stamp = rospy.Time.now()
         point_cloud.header.frame_id = 'global'  # Set the frame ID according to your robot's configuration
 
-        kps = self.slam_points.T
-        if kps is None:
-            return
 
-        for i in range(self.slam_points.shape[0]):
-            # if kps[2, i] > 0:
-            point1 = Point32()
-            point1.x = kps[0, i] 
-            point1.y = kps[1, i] 
-            point1.z = kps[2, i] 
-            point_cloud.points.append(point1)
+        for k in range(len(self.keyframes)):
+            kps = self.keyframes[k].slam_points
+            if kps is None:
+                return
+            for i in range(kps.shape[0]):
+                # if kps[2, i] > 0:
+                point1 = Point32()
+                point1.x = kps[i, 0] 
+                point1.y = kps[i, 1] 
+                point1.z = kps[i, 2] 
+                point_cloud.points.append(point1)
+
+        # for i in range(self.slam_points.shape[0]):
+        #     # if kps[2, i] > 0:
+        #     point1 = Point32()
+        #     point1.x = kps[0, i] 
+        #     point1.y = kps[1, i] 
+        #     point1.z = kps[2, i] 
+        #     point_cloud.points.append(point1)
 
         self.slam_pcl_pub.publish(point_cloud)
 
