@@ -24,7 +24,7 @@ from cv_bridge import CvBridge
 import cv2
 import numpy as np
 import time
-from visualization_msgs.msg import Marker
+from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Point
 from sensor_msgs.msg import PointCloud
 from geometry_msgs.msg import Point32
@@ -92,12 +92,13 @@ class KeyFrame:
         self.T_odom = T_odom
 
 class SphereMap:
-    def __init__(self, init_radius):
-        self.points = np.array([0,0,0])
-        self.radii = np.array([init_radius])
+    def __init__(self, init_radius, min_radius):
+        self.points = np.array([0,0,0]).reshape((1,3))
+        # self.radii = np.array([init_radius])
+        self.radii = np.array([init_radius]).reshape((1,1))
         self.connections = np.array([[]])
 
-        self.min_radius = 0.4
+        self.min_radius = min_radius
         self.max_radius = init_radius
     
     def update_in_fov(self, cam_T, visible_obstacle_pts, cam_K):
@@ -113,13 +114,15 @@ class OdomNode:
         self.prev_time = None
         self.proper_triang = False
 
+        self.spheremap = None
         self.keyframes = []
         self.noprior_triangulation_points = None
         self.odomprior_triangulation_points = None
 
         self.slam_points = None
         self.slam_pcl_pub = rospy.Publisher('extended_slam_points', PointCloud, queue_size=10)
- 
+
+        self.spheremap_spheres_pub = rospy.Publisher('spheres', MarkerArray, queue_size=10)
 
         self.kp_pub = rospy.Publisher('tracked_features_img', Image, queue_size=1)
         self.depth_pub = rospy.Publisher('estim_depth_img', Image, queue_size=1)
@@ -297,7 +300,7 @@ class OdomNode:
 
         obstacle_mesh = trimesh.Trimesh(vertices=final_points.T, faces = tri.simplices)
 
-        max_sphere_sampling_z = 30
+        max_sphere_sampling_z = 60
 
         n_sampled = 20
         sampling_pts = np.random.rand(n_sampled, 2)  # Random points in [0, 1] range for x and y
@@ -325,23 +328,32 @@ class OdomNode:
         invK = np.linalg.inv(self.K)
         sampling_pts = invK @ sampling_pts
         rand_z = np.random.rand(1, n_sampled) * max_sphere_sampling_z
-        sampling_pts = rand_z * sampling_pts / sampling_pts[2, :]
         print("SPHERE SAMPLING PTS:" )
         print(sampling_pts)
 
 
         # FILTER PTS - CHECK THAT THE MAX DIST IS NOT BEHIND THE OBSTACLE MESH BY RAYCASTING
         # TODO
+        ray_hit_pts, index_ray, index_tri = obstacle_mesh.ray.intersects_location(
+        ray_origins=np.zeros(sampling_pts.shape).T, ray_directions=sampling_pts.T)
+        print("RAYS")
+        print(index_ray)
+
+        # ray_hit_dists = np.linalg.norm(ray_hit_pts)
+
+        # MAKE THEM BE IN RAND POSITION BETWEEN CAM AND MESH HIT POSITION
+        sampling_pts =  (np.random.rand(n_sampled, 1) * ray_hit_pts).T
+        # add max sampling dist
 
 
         # print(hull.simplices)
         # print(np.unique(hull.simplices))
         orig_3dpt_indices_in_hull = np.unique(hull.simplices)
-        # CONSTRUCT HULL MESH
+        # CONSTRUCT HULL MESH FROM 3D POINTS OF CONVEX 2D HULL OF PROJECTED POINTS
         hullmesh_pts = final_points[:, np.unique(hull.simplices)]
         orig_pts = np.zeros((3, 1))
-        print(hullmesh_pts.shape)
-        print(orig_pts.shape)
+        # print(hullmesh_pts.shape)
+        # print(orig_pts.shape)
         hullmesh_pts = np.concatenate((hullmesh_pts, orig_pts), axis=1)
         zero_pt_index = hullmesh_pts.shape[1] - 1
 
@@ -349,27 +361,64 @@ class OdomNode:
         fov_hull = ConvexHull(hullmesh_pts.T)
 
         uniq_idxs_in_hull = np.unique(fov_hull.simplices)
-        # print(fov_hull.simplices)
         simplices_reindexing = {uniq_idxs_in_hull[i]:i for i in range(uniq_idxs_in_hull.size)}
         simplices_reindexed = [[simplices_reindexing[orig[0]], simplices_reindexing[orig[1]], simplices_reindexing[orig[2]]] for orig in fov_hull.simplices]
-        # print(simplices_reindexed)
-        # print(fov_hull.points.shape[0])
+
+        # CONSTRUCT FOV MESH AND QUERY
         fov_mesh = trimesh.Trimesh(vertices=fov_hull.points, faces = simplices_reindexed)
+        fov_mesh_query = trimesh.proximity.ProximityQuery(fov_mesh)
 
-        # CONSTRUCT OBSTACLE POINT MESH
-        sdf_tri_mesh = trimesh.proximity.ProximityQuery(obstacle_mesh)
-        points = np.array([[0,0,5], [0, 0, 10], [0, 0, 15], [0, 0, 20], [0, 0, 25]])
+        # CONSTRUCT OBSTACLE POINT MESH AND QUERY
+        obstacle_mesh_query = trimesh.proximity.ProximityQuery(obstacle_mesh)
+
+        # TRY ADDING NEW SPHERES AT SAMPLED POSITIONS
+        new_spheres_fov_dists = np.abs(fov_mesh_query.signed_distance(sampling_pts.T))
+        new_spheres_obs_dists = np.abs(obstacle_mesh_query.signed_distance(sampling_pts.T))
         
-        print("DISTS:")
-        print(sdf_tri_mesh.signed_distance(points))
+        init_rad = 0.5
+        min_rad = init_rad
+        if self.spheremap is None:
+            self.spheremap = SphereMap(init_rad, min_rad)
 
-        # CHECK DIST AGAINST FOV MESH (is mesh formed by camera pos and the obstacles (NARROWER THAN FOV)
-        distances_from_fov = self.get_distances_from_fov_borders(points)
+        mindists = np.minimum(new_spheres_obs_dists, new_spheres_fov_dists)
+        new_sphere_idxs = mindists > min_rad
+
+        n_spheres_to_add = np.sum(new_sphere_idxs)
+        print("PUTATIVE SPHERES THAT PASSED FIRST RADIUS CHECKS: " + str(n_spheres_to_add))
+        if n_spheres_to_add == 0:
+            return
+
+        # print(mindists.shape)
+        # print(mindists[new_sphere_idxs].shape)
+
+        # TRANSFORM POINTS FROM CAM ORIGIN TO SPHEREMAP ORIGIN! - DRAW OUT!
+        self.spheremap.points = np.concatenate((self.spheremap.points, sampling_pts[:, new_sphere_idxs].T))
+        self.spheremap.radii = np.concatenate((self.spheremap.radii.flatten(), mindists[new_sphere_idxs].flatten()))
+
+        # mindists = np.min(new_spheres_fov_dists , new_spheres_obs_dists )
+        # print("MINDISTS:")
+        # print(new_spheres_fov_dists )
+        # print(new_spheres_obs_dists )
+
+        # points = np.array([[0,0,5], [0, 0, 10], [0, 0, 15], [0, 0, 20], [0, 0, 25]])
+        
+        # print("DISTS:")
+        # print(obstacle_mesh_query.signed_distance(points))
+
+        # # CHECK DIST AGAINST FOV MESH (is mesh formed by camera pos and the obstacles (NARROWER THAN FOV)
+        # distances_from_fov = self.get_distances_from_fov_borders(points)
+
+
+        # CHECK RADII OF EXISTING SPHERES AGAINST THE FOV MESH (IF PROJECTED TO CAM)
 
         # pixpos = self.K @
 
         comp_time = time.time() - comp_start_time
         print("SPHEREMAP integration time: " + str((comp_time) * 1000) +  " ms")
+
+        # VISUALIZE CURRENT SPHERES
+        self.visualize_spheremap()
+
 
     def visualize_depth(self, pixpos, tri):
         rgb = np.repeat(copy.deepcopy(self.new_frame)[:, :, np.newaxis], 3, axis=2)
@@ -854,6 +903,46 @@ class OdomNode:
             self.kp_pcl_pub_invdepth.publish(point_cloud)
         else:
             self.kp_pcl_pub.publish(point_cloud)
+
+    def visualize_spheremap(self):
+        if self.spheremap is None:
+            return
+
+        marker_array = MarkerArray()
+
+        # point_cloud = PointCloud()
+        # point_cloud.header.stamp = rospy.Time.now()
+        # point_cloud.header.frame_id = 'global'  # Set the frame ID according to your robot's configuration
+
+
+        for i in range(self.spheremap.points.shape[0]):
+            marker = Marker()
+            marker.header.frame_id = "cam0"  # Change this frame_id if necessary
+            marker.header.stamp = rospy.Time.now()
+            marker.type = Marker.SPHERE
+            marker.action = Marker.ADD
+            marker.id = i
+
+            # Set the position (sphere center)
+            marker.pose.position.x = self.spheremap.points[i][0]
+            marker.pose.position.y = self.spheremap.points[i][1]
+            marker.pose.position.z = self.spheremap.points[i][2]
+
+            # Set the scale (sphere radius)
+            marker.scale.x = 2 * self.spheremap.radii[i]
+            marker.scale.y = 2 * self.spheremap.radii[i]
+            marker.scale.z = 2 * self.spheremap.radii[i]
+
+            marker.color.a = 0.6
+            marker.color.r = 0.0
+            marker.color.g = 1.0
+            marker.color.b = 0.0
+
+            # Add the marker to the MarkerArray
+            marker_array.markers.append(marker)
+
+        self.spheremap_spheres_pub.publish(marker_array)
+
     def decomp_essential_mat(self, E, q1, q2):
         """
         Decompose the Essential matrix
