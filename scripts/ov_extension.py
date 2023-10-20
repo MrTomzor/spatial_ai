@@ -5,6 +5,7 @@ import rospy
 from sensor_msgs.msg import Image, CompressedImage, PointCloud2
 import sensor_msgs.point_cloud2 as pc2
 from scipy.spatial.transform import Rotation
+import scipy
 # import pcl
 
 from nav_msgs.msg import Odometry
@@ -91,7 +92,9 @@ class OdomNode:
         self.noprior_triangulation_points = None
         self.odomprior_triangulation_points = None
 
-        self.localmap_points = None
+        self.slam_points = None
+        self.slam_pcl_pub = rospy.Publisher('extended_slam_points', PointCloud, queue_size=10)
+ 
 
         self.kp_pub = rospy.Publisher('tracked_features_img', Image, queue_size=1)
         self.marker_pub = rospy.Publisher('/vo_odom', Marker, queue_size=10)
@@ -164,8 +167,8 @@ class OdomNode:
         # print(stamp)
         # print("FOUND")
         # print(msg.header.stamp)
-        if not bestmsg is None:
-            print("found msg with time" + str(msg.header.stamp.to_sec()) + " for time " + str(stamp.to_sec()) +" tdif: " + str(final_tdif))
+        # if not bestmsg is None:
+            # print("found msg with time" + str(msg.header.stamp.to_sec()) + " for time " + str(stamp.to_sec()) +" tdif: " + str(final_tdif))
         return bestmsg
 
     def odometry_callback(self, msg):
@@ -175,6 +178,7 @@ class OdomNode:
 
     def points_slam_callback(self, msg):
         print("N POINTS IN SLAMPOINTS:")
+        comp_start_time = time.time()
         # print(msg.fields)
 
         # pc = ros_numpy.numpify(data)
@@ -193,8 +197,61 @@ class OdomNode:
             x, y, z = point
             pc_list.append([x, y, z])
 
+        n_new_points = len(pc_list)
+        n_old_points = 0
         point_cloud_array = np.array(pc_list, dtype=np.float32)
-        print(point_cloud_array.shape)
+
+        # self.slam_points = point_cloud_array
+        print("PCL MSG")
+        # print(msg.header.frame_id)
+        # print(self.slam_points)
+
+        if self.slam_points is None and n_new_points > 0:
+            self.slam_points = point_cloud_array
+        elif not self.slam_points is None:
+            print("PCL:")
+            print(point_cloud_array.shape)
+            # print(point_cloud_array)
+            print("SPCL:")
+            print(self.slam_points.shape)
+            # print(self.slam_points)
+
+            # FILTER AND ADD
+            mindist = 1
+            mindist2 = mindist * mindist
+            # self.slam_points = np.concatenate((self.slam_points, point_cloud_array))
+
+
+            print("ADDED NEW")
+            self.slam_points = np.concatenate((self.slam_points, point_cloud_array))
+            distances = scipy.spatial.distance_matrix(self.slam_points, self.slam_points)
+            print("HAVE DISTMATRIX")
+            far_enough = distances > mindist2
+            keep = np.array([False for i in range(self.slam_points.shape[0])])
+            for i in range(self.slam_points.shape[0]):
+                far_enough[i,i] = True
+                keep[i] = np.all(far_enough[:, i])
+            # idxs = np.any(distances > mindist2)
+            print("HAVE KEEP")
+            self.slam_points = self.slam_points[keep, :]
+            print("HAVE NEW PTS")
+
+            # n_old_points = self.slam_points.shape[0]
+            # pts_to_add = []
+            # for i in range(n_new_points):
+            #     print(str(i) + " out of " + str(n_new_points))
+            #     for j in range(self.slam_points.shape[0]):
+            #         deltavec = self.slam_points[j, :] - point_cloud_array[i, :]
+            #         mag2 = deltavec.dot(deltavec)
+            #         if mag2 > mindist2:
+            #             # print(point_cloud_array[i, :].shape)
+            #             self.slam_points = np.concatenate((self.slam_points, point_cloud_array[i, :].reshape(1, 3)))
+            #             # pts_to_add.append(
+
+        print("PCL MSG DONE")
+        comp_time = time.time() - comp_start_time
+        print("PCL time: " + str((comp_time) * 1000) +  " ms")
+                    
 
 
     def control_features_population(self):
@@ -506,205 +563,10 @@ class OdomNode:
         # VISUALIZE FEATURES
         vis = self.visualize_tracking()
         self.kp_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
+        self.visualize_slampoints_in_space()
 
         comp_time = time.time() - comp_start_time
         print("computation time: " + str((comp_time) * 1000) +  " ms")
-
-    def pose_estim_gtsam(self):
-        measurement_noise = gtsam.noiseModel.Isotropic.Sigma(
-            2, 1.0)  # two pixel in u and v
-
-        # K = gtsam.Cal3_S2(50.0, 50.0, 0.0, 50.0, 50.0)
-        # K = gtsam.Cal3_S2(self.K[0,0], self.K[0,0], 0.0, self.width, self.height)
-        K = gtsam.Cal3_S2(self.K[0,0], self.K[0,0], 0.0, self.width/2, self.height/2)
-        # self.K = np.array([642.8495341420769, 0, 400, 0, 644.5958939934509, 300, 0, 0, 1]).reshape((3,3))
-
-        # Create an iSAM2 object. Unlike iSAM1, which performs periodic batch steps
-        # to maintain proper linearization and efficient variable ordering, iSAM2
-        # performs partial relinearization/reordering at each step. A parameter
-        # structure is available that allows the user to set various properties, such
-        # as the relinearization threshold and type of linear solver. For this
-        # example, we we set the relinearization threshold small so the iSAM2 result
-        # will approach the batch result.
-        parameters = gtsam.ISAM2Params()
-        parameters.setRelinearizeThreshold(0.01)
-        parameters.relinearizeSkip = 1
-        isam = gtsam.ISAM2(parameters)
-
-        # Create a Factor Graph and Values to hold the new data
-        graph = gtsam.NonlinearFactorGraph()
-        initial_estimate = gtsam.Values()
-
-        n_current_features = self.px_cur.shape[0]
-        optim_steps = self.tracking_history_len + 1
-        print("OPTIM STEPS: " + str(optim_steps))
-
-        landmark_index = -1
-
-        first_landmark_first_frame_pix = None
-        min_parallax_pixels = 10
-        landmark_idxs_to_feature_idxs = []
-        # Add factors for each landmark observation
-
-        # shuffle landmark idxs to not take just the first ones in top left corner
-        landmark_selection_idxs = np.arange(n_current_features)
-        np.random.shuffle(landmark_selection_idxs)
-
-        self.last_tried_landmarks_pxs = None
-
-        for k in range(n_current_features):
-            i = landmark_selection_idxs[k]
-
-            # CHECK IF OLD ENOUGH HISTORY
-            if len(self.tracking_stats[i].prev_points) < self.tracking_history_len :
-                continue
-            # CHECK IF ENOUGH PARALLAX
-            parallax_pix = np.linalg.norm(self.px_cur[i, :] - self.tracking_stats[i].prev_points[-1])
-            if parallax_pix < min_parallax_pixels:
-                continue
-            # # MAX N LANDMARKS
-            # if landmark_index > 5:
-            #     break
-
-            landmark_index += 1
-            landmark_idxs_to_feature_idxs.append(i)
-
-            # Add current observation
-            current_pt = self.px_cur[i, :]
-            graph.push_back(gtsam.GenericProjectionFactorCal3_S2(
-                current_pt, measurement_noise, X(optim_steps-1), L(landmark_index), K))
-
-            print("PREV PTS LEN: " + str(len(self.tracking_stats[i].prev_points)))
-            # Add previous observations
-            for j in range(len(self.tracking_stats[i].prev_points)):
-               current_pt = self.tracking_stats[i].prev_points[-j-1]
-               current_pt = np.array([current_pt[0], current_pt[1]], dtype=np.float64)
-
-               graph.push_back(gtsam.GenericProjectionFactorCal3_S2(
-                   current_pt, measurement_noise, X(optim_steps-2-j), L(landmark_index), K))
-            if landmark_index == 0:
-               current_pt = self.tracking_stats[i].prev_points[-1]
-               first_landmark_first_frame_pix = np.array([current_pt[0], current_pt[1]], dtype=np.float64)
-
-
-        print("NUM OPTIMIZED LANDMARKS:" + str(landmark_index+1))
-        if landmark_index < 3:
-            print("NOT ENOUGH USABLE LANDMARKS, RETURNING")
-            return 1
-
-        self.last_tried_landmarks_pxs = self.px_cur[landmark_idxs_to_feature_idxs]
-
-        # Add a prior on pose x0
-        # pose_noise = gtsam.noiseModel.Diagonal.Sigmas(0.1 * np.array(
-        #     # [0.1, 0.1, 0.1, 0.3, 0.3, 0.3]))  # 30cm std on x,y,z 0.1 rad on roll,pitch,yaw
-        #     [0.3, 0.3, 0.3, 0.1, 0.1, 0.1]))  # 30cm std on x,y,z 0.1 rad on roll,pitch,yaw
-        # prior_first_pose = gtsam.Pose3()
-        # print("PRIOR FIRST POSE:")
-        # print(prior_first_pose)
-        # graph.push_back(gtsam.PriorFactorPose3(X(0), prior_first_pose, pose_noise))
-
-        # Add a prior final pose - set it as 0
-        pose_noise = gtsam.noiseModel.Diagonal.Sigmas(np.array(
-            # [0.1, 0.1, 0.1, 0.3, 0.3, 0.3]))  # 30cm std on x,y,z 0.1 rad on roll,pitch,yaw
-            [0.3, 0.3, 0.3, 0.1, 0.1, 0.1]))  # 30cm std on x,y,z 0.1 rad on roll,pitch,yaw
-        prior_first_pose = gtsam.Pose3()
-        print("POSE PRIOR:")
-        print(prior_first_pose)
-        graph.push_back(gtsam.PriorFactorPose3(X(optim_steps-1), prior_first_pose, pose_noise))
-
-
-        # Add a prior on landmark l0
-        # TODO try projecting keypoint from first frame with camera matrix! scale will be off but whatever
-
-        point_noise = gtsam.noiseModel.Isotropic.Sigma(3, 0.1)
-
-        # ADD PRIOR ON FIRST LANDMARK FROM ITS TRIANG POSITION
-        l0_triang_point = self.triangulated_points[:, landmark_selection_idxs[0]]
-        graph.push_back(gtsam.PriorFactorPoint3(
-            L(0), gtsam.Point3(l0_triang_point[0], l0_triang_point[1], l0_triang_point[2]), point_noise))  # add directly to graph
-
-        # Add initial guesses to all observed landmarks
-        for i in range(landmark_index+1):
-            triang_point = self.triangulated_points[:, landmark_selection_idxs[i]]
-            initial_estimate.insert(L(i), gtsam.Point3(triang_point[0], triang_point[1], triang_point[2]))
-            #AND PRIOR
-            # graph.push_back(gtsam.PriorFactorPoint3(
-            #     L(i), gtsam.Point3(triang_point[0], triang_point[1], triang_point[2]), point_noise))  # add directly to graph
-
-        # Add initial guess for previous pose (from triangulation) as 0
-        initial_estimate.insert(X(optim_steps-1), prior_first_pose)
-
-        # Add initial guess for previous pose (from triangulation) as 0
-        second_to_last_pose = gtsam.Pose3(gtsam.Rot3(self.last_triangulation_R.T), gtsam.Point3(-self.last_triangulation_t))
-        initial_estimate.insert(X(optim_steps-2), second_to_last_pose)
-
-        # for all other x, set the pose estimate as the second-to-last as well
-        for i in range(optim_steps-2):
-            initial_estimate.insert(X(optim_steps-3-i), second_to_last_pose)
-            # initial_estimate.insert(X(i), prior_first_pose.compose(gtsam.Pose3(
-            #     gtsam.Rot3.Rodrigues(0, 0, 0), gtsam.Point3(0, 0, 0.1 * i))))
-            # initial_estimate.insert(X(i), gtsam.Pose3().compose(gtsam.Pose3(
-            #     gtsam.Rot3.Rodrigues(-0.1, 0.2, 0.25), gtsam.Point3(0.05, -0.10, 0.20))))
-
-        # print("INITIAL ESTIM:")
-        # print(initial_estimate)
-        # print("GRAPH:")
-        # print(graph)
-
-        # Update iSAM with the new factors
-        # isam.update(graph, initial_estimate)
-        # isam.update()
-        # isam.update()
-        # isam.update()
-        # isam.update()
-        # isam.update()
-        # isam.update()
-        # isam.update()
-        # result = isam.calculateEstimate()
-
-        params = gtsam.DoglegParams()
-        # params.setVerbosity('VALUES')
-        params.setVerbosity('TERMINATION')
-        optimizer = DoglegOptimizer(graph, initial_estimate, params)
-        print('Optimizing:')
-        result = optimizer.optimize()
-
-        # Each call to iSAM2 update(*) performs one iteration of the iterative nonlinear solver.
-        # If accuracy is desired at the expense of time, update(*) can be called additional
-        # times to perform multiple optimizer iterations every step.
-        # isam.update()
-        print("yeehaw")
-        # current_estimate = isam.calculateEstimate()
-        # print("****************************************************")
-        # print("Frame", i, ":")
-        # for j in range(i + 1):
-        #     print(X(j), ":", current_estimate.atPose3(X(j)))
-
-        print("RESULTING LAST TWO POSES:")
-        print( result.atPose3(X(optim_steps-1)))
-        print( result.atPose3(X(optim_steps-2)))
-        print("INITIAL LAST TWO POSES:")
-        print(prior_first_pose)
-        print(second_to_last_pose)
-
-        self.gtsam_triang_points = []
-        for j in range(landmark_index+1):
-            # print(L(j), ":", current_estimate.atPoint3(L(j)))
-            pt = result.atPoint3(L(j))
-            self.gtsam_triang_points.append(pt)
-
-            print("L" + str(j) + " - INITIALE ESTIMATE POINT:")
-            triang_point = self.triangulated_points[:, landmark_selection_idxs[j]]
-            print(triang_point)
-
-            print("RESULTING POINT:")
-            print(pt)
-
-        # # visual_ISAM2_plot(current_estimate)
-
-        # # Clear the factor graph and values for the next iteration
-        graph.resize(0)
-        initial_estimate.clear()
 
 
     def visualize_tracking(self):
@@ -794,6 +656,25 @@ class OdomNode:
         flow_vis = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         return flow_vis
 
+    def visualize_slampoints_in_space(self):
+        point_cloud = PointCloud()
+        point_cloud.header.stamp = rospy.Time.now()
+        point_cloud.header.frame_id = 'global'  # Set the frame ID according to your robot's configuration
+
+        kps = self.slam_points.T
+        if kps is None:
+            return
+
+        for i in range(self.slam_points.shape[0]):
+            # if kps[2, i] > 0:
+            point1 = Point32()
+            point1.x = kps[0, i] 
+            point1.y = kps[1, i] 
+            point1.z = kps[2, i] 
+            point_cloud.points.append(point1)
+
+        self.slam_pcl_pub.publish(point_cloud)
+
     def visualize_keypoints_in_space(self, use_invdepth):
         point_cloud = PointCloud()
         point_cloud.header.stamp = rospy.Time.now()
@@ -807,10 +688,6 @@ class OdomNode:
         if kps is None:
             return
 
-        # for i in range(kps.shape[1]):
-        print("KPS:")
-        print(kps.shape)
-        print(self.tracking_stats.shape)
         for i in range(self.tracking_stats.shape[0]):
             # if kps[2, i] > 0:
             scaling_factor = 1
