@@ -6,7 +6,17 @@ from sensor_msgs.msg import Image, CompressedImage, PointCloud2
 import sensor_msgs.point_cloud2 as pc2
 from scipy.spatial.transform import Rotation
 import scipy
+from scipy.spatial import Delaunay
+from scipy.spatial import ConvexHull
 # import pcl
+import inspect
+# import shapely
+# from shapely.geometry import Point2D
+# from shapely.geometry.polygon import Polygon
+from shapely import geometry
+
+import trimesh
+import rtree
 
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import PoseWithCovarianceStamped
@@ -81,6 +91,21 @@ class KeyFrame:
         self.img_timestamp = img_timestamp
         self.T_odom = T_odom
 
+class SphereMap:
+    def __init__(self, init_radius):
+        self.points = np.array([0,0,0])
+        self.radii = np.array([init_radius])
+        self.connections = np.array([[]])
+
+        self.min_radius = 0.4
+        self.max_radius = init_radius
+    
+    def update_in_fov(self, cam_T, visible_obstacle_pts, cam_K):
+        # visible_obstacle_pts = visible obstacle points, position is relative to current pose of camera
+        # cam_T = transformation from origin of spheremap to current camera pose
+        # cam_K = projection matrix of cam
+        print("UPDATINGI IN FOV")
+
 class OdomNode:
     def __init__(self):
         self.bridge = CvBridge()
@@ -97,6 +122,7 @@ class OdomNode:
  
 
         self.kp_pub = rospy.Publisher('tracked_features_img', Image, queue_size=1)
+        self.depth_pub = rospy.Publisher('estim_depth_img', Image, queue_size=1)
         self.marker_pub = rospy.Publisher('/vo_odom', Marker, queue_size=10)
         self.kp_pcl_pub = rospy.Publisher('tracked_features_space', PointCloud, queue_size=10)
         self.kp_pcl_pub_invdepth = rospy.Publisher('tracked_features_space_invdepth', PointCloud, queue_size=10)
@@ -116,6 +142,8 @@ class OdomNode:
         # Load calib
         self.K = np.array([642.8495341420769, 0, 400, 0, 644.5958939934509, 300, 0, 0, 1]).reshape((3,3))
         # self.K = np.array([, 644.5958939934509, 400.0503960299562, 300.5824096896595]).reshape((3,3))
+        self.imu_to_cam_T = np.array( [[0, -1, 0, 0], [0, 0, -1, 0], [1, 0, 0, 0.5], [0.0, 0.0, 0.0, 1.0]])
+        print("IMUTOCAM", self.imu_to_cam_T)
 
         # self.K = np.array([642.8495341420769, 644.5958939934509, 400.0503960299562, 300.5824096896595]).reshape((3,3))
         self.P = np.zeros((3,4))
@@ -176,51 +204,17 @@ class OdomNode:
         if len(self.odom_buffer) > self.odom_buffer_maxlen:
             self.odom_buffer.pop(0)
 
-    def points_slam_callback(self, msg):
-        print("N POINTS IN SLAMPOINTS:")
+    def integrate_slam_points_to_keyframe(self, point_cloud_array ):
         comp_start_time = time.time()
-        # print(msg.fields)
 
-        # pc = ros_numpy.numpify(data)
-        # points=np.zeros((pc.shape[0],3))
-        # points[:,0]=pc['x']
-        # points[:,1]=pc['y']
-        # points[:,2]=pc['z']
-        # p = pcl.PointCloud(np.array(points, dtype=np.float32))
+        n_new_points = point_cloud_array.size
 
-        # print(p)
-
-        pc_data = pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)
-        pc_list = []
-
-        for point in pc_data:
-            x, y, z = point
-            pc_list.append([x, y, z])
-
-        n_new_points = len(pc_list)
-        n_old_points = 0
-        point_cloud_array = np.array(pc_list, dtype=np.float32)
-
-        # self.slam_points = point_cloud_array
-        print("PCL MSG")
-        # print(msg.header.frame_id)
-        # print(self.slam_points)
+        mindist = 1
+        mindist2 = mindist * mindist
 
         if self.slam_points is None and n_new_points > 0:
             self.slam_points = point_cloud_array
         elif not self.slam_points is None:
-            print("PCL:")
-            print(point_cloud_array.shape)
-            # print(point_cloud_array)
-            print("SPCL:")
-            print(self.slam_points.shape)
-            # print(self.slam_points)
-
-            # FILTER AND ADD
-            mindist = 1
-            mindist2 = mindist * mindist
-            # self.slam_points = np.concatenate((self.slam_points, point_cloud_array))
-
 
             print("ADDED NEW")
             self.slam_points = np.concatenate((self.slam_points, point_cloud_array))
@@ -236,22 +230,161 @@ class OdomNode:
             self.slam_points = self.slam_points[keep, :]
             print("HAVE NEW PTS")
 
-            # n_old_points = self.slam_points.shape[0]
-            # pts_to_add = []
-            # for i in range(n_new_points):
-            #     print(str(i) + " out of " + str(n_new_points))
-            #     for j in range(self.slam_points.shape[0]):
-            #         deltavec = self.slam_points[j, :] - point_cloud_array[i, :]
-            #         mag2 = deltavec.dot(deltavec)
-            #         if mag2 > mindist2:
-            #             # print(point_cloud_array[i, :].shape)
-            #             self.slam_points = np.concatenate((self.slam_points, point_cloud_array[i, :].reshape(1, 3)))
-            #             # pts_to_add.append(
-
         print("PCL MSG DONE")
         comp_time = time.time() - comp_start_time
-        print("PCL time: " + str((comp_time) * 1000) +  " ms")
+        print("PCL integration time: " + str((comp_time) * 1000) +  " ms")
                     
+    def get_distances_from_fov_borders(self, points):
+        # vec1 = 
+        invK = self.K
+        ul = self.K
+
+    def points_slam_callback(self, msg):
+        print("PCL MSG")
+
+        pc_data = pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)
+        pc_list = []
+
+        for point in pc_data:
+            x, y, z = point
+            pc_list.append([x, y, z])
+
+        point_cloud_array = np.array(pc_list, dtype=np.float32)
+
+        # INTEGRATE
+        self.integrate_slam_points_to_keyframe(point_cloud_array)
+
+        # ---SPHEREMAP STUFF
+        if len(pc_list) == 0:
+            return
+
+        comp_start_time = time.time()
+        # TRANSFORM SLAM PTS TO IMAGE AND COMPUTE THEIR PIXPOSITIONS
+        if len(self.odom_buffer) == 0:
+            return
+        odom_T = self.odom_msg_to_transformation_matrix(self.odom_buffer[-1])
+        hom = np.concatenate((point_cloud_array.T, np.full((1, point_cloud_array.shape[0]), 1)))
+        pts_in_global_to_cam_T = (self.imu_to_cam_T @ np.linalg.inv(odom_T))
+        # print("ODOM T")
+        print(odom_T)
+        # print("FINAL T")
+        print(pts_in_global_to_cam_T)
+        # print("HOM SHAPE")
+        print(hom.shape)
+        transformed = (self.imu_to_cam_T @ np.linalg.inv(odom_T)) @ hom
+        transformed = transformed / transformed [3, :] # unhomogenize
+
+        # print("HAVE UNHOM TRANSFORMED.T:")
+        # print(transformed.T)
+
+        positive_z_idxs = transformed[2, :] > 0
+        # print("TRANSFORMED, PTS WITH POSITIVE Z:" + str(np.sum(positive_z_idxs)) + "/" + str(transformed.shape[1]))
+        final_points = transformed[:3, positive_z_idxs]
+
+        pixpos = self.K @ final_points 
+        pixpos = pixpos / pixpos[2, :]
+        pixpos = pixpos[:2, :].T
+        # print("HAVE PIXPOS:")
+        # print(pixpos.T)
+
+        # COMPUTE DELAUNAY TRIANG OF VISIBLE SLAM POINTS
+        print("HAVE DELAUNAY:")
+        tri = Delaunay(pixpos)
+        print(tri.simplices)
+
+        vis = self.visualize_depth(pixpos, tri)
+        self.depth_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
+
+        obstacle_mesh = trimesh.Trimesh(vertices=final_points.T, faces = tri.simplices)
+
+        max_sphere_sampling_z = 30
+
+        n_sampled = 20
+        sampling_pts = np.random.rand(n_sampled, 2)  # Random points in [0, 1] range for x and y
+        sampling_pts = sampling_pts   * [self.width, self.height]
+
+        # CHECK THE SAMPLING DIRS ARE INSIDE THE 2D CONVEX HULL OF 3D POINTS
+        hull = ConvexHull(pixpos)
+        # print(inspect.getmembers(hull))
+
+        print("POLY")
+        polygon = geometry.Polygon(hull.points)
+
+        inhull = np.array([polygon.contains(geometry.Point(p[0], p[1])) for p in sampling_pts])
+        print(inhull)
+        if not np.any(inhull):
+            print("NONE IN HULL")
+            return
+        sampling_pts = sampling_pts[inhull, :]
+
+        n_sampled = sampling_pts.shape[0]
+
+        # NOW PROJECT THEM TO 3D SPACE
+        sampling_pts = np.concatenate((sampling_pts.T, np.full((1, n_sampled), 1)))
+
+        invK = np.linalg.inv(self.K)
+        sampling_pts = invK @ sampling_pts
+        rand_z = np.random.rand(1, n_sampled) * max_sphere_sampling_z
+        sampling_pts = rand_z * sampling_pts / sampling_pts[2, :]
+        print("SPHERE SAMPLING PTS:" )
+        print(sampling_pts)
+
+
+        # FILTER PTS - CHECK THAT THE MAX DIST IS NOT BEHIND THE OBSTACLE MESH BY RAYCASTING
+        # TODO
+
+
+        # print(hull.simplices)
+        # print(np.unique(hull.simplices))
+        orig_3dpt_indices_in_hull = np.unique(hull.simplices)
+        # CONSTRUCT HULL MESH
+        hullmesh_pts = final_points[:, np.unique(hull.simplices)]
+        orig_pts = np.zeros((3, 1))
+        print(hullmesh_pts.shape)
+        print(orig_pts.shape)
+        hullmesh_pts = np.concatenate((hullmesh_pts, orig_pts), axis=1)
+        zero_pt_index = hullmesh_pts.shape[1] - 1
+
+        # FUCK IT JUST DO CONV HULL OF THESE 3D PTS(just start and hull pts)
+        fov_hull = ConvexHull(hullmesh_pts.T)
+
+        uniq_idxs_in_hull = np.unique(fov_hull.simplices)
+        # print(fov_hull.simplices)
+        simplices_reindexing = {uniq_idxs_in_hull[i]:i for i in range(uniq_idxs_in_hull.size)}
+        simplices_reindexed = [[simplices_reindexing[orig[0]], simplices_reindexing[orig[1]], simplices_reindexing[orig[2]]] for orig in fov_hull.simplices]
+        # print(simplices_reindexed)
+        # print(fov_hull.points.shape[0])
+        fov_mesh = trimesh.Trimesh(vertices=fov_hull.points, faces = simplices_reindexed)
+
+        # CONSTRUCT OBSTACLE POINT MESH
+        sdf_tri_mesh = trimesh.proximity.ProximityQuery(obstacle_mesh)
+        points = np.array([[0,0,5], [0, 0, 10], [0, 0, 15], [0, 0, 20], [0, 0, 25]])
+        
+        print("DISTS:")
+        print(sdf_tri_mesh.signed_distance(points))
+
+        # CHECK DIST AGAINST FOV MESH (is mesh formed by camera pos and the obstacles (NARROWER THAN FOV)
+        distances_from_fov = self.get_distances_from_fov_borders(points)
+
+        # pixpos = self.K @
+
+        comp_time = time.time() - comp_start_time
+        print("SPHEREMAP integration time: " + str((comp_time) * 1000) +  " ms")
+
+    def visualize_depth(self, pixpos, tri):
+        rgb = np.repeat(copy.deepcopy(self.new_frame)[:, :, np.newaxis], 3, axis=2)
+
+        for i in range(len(tri.simplices)):
+            a = pixpos[tri.simplices[i][0], :].astype(int)
+            b = pixpos[tri.simplices[i][1], :].astype(int)
+            c = pixpos[tri.simplices[i][2], :].astype(int)
+
+            rgb = cv2.line(rgb, (a[0], a[1]), (b[0], b[1]), (255, 0, 0), 3)
+            rgb = cv2.line(rgb, (a[0], a[1]), (c[0], c[1]), (255, 0, 0), 3)
+            rgb = cv2.line(rgb, (c[0], c[1]), (b[0], b[1]), (255, 0, 0), 3)
+
+        res = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+        return res
 
 
     def control_features_population(self):
@@ -373,6 +506,16 @@ class OdomNode:
             self.px_cur = np.array([x.pt for x in self.px_cur], dtype=np.float32)
 
         
+    def odom_msg_to_transformation_matrix(self, closest_time_odom_msg):
+        odom_p = np.array([closest_time_odom_msg.pose.pose.position.x, closest_time_odom_msg.pose.pose.position.y, closest_time_odom_msg.pose.pose.position.z])
+        odom_q = np.array([closest_time_odom_msg.pose.pose.orientation.x, closest_time_odom_msg.pose.pose.orientation.y,
+            closest_time_odom_msg.pose.pose.orientation.z, closest_time_odom_msg.pose.pose.orientation.w])
+        T_odom = np.eye(4)
+        # print("R:")
+        # print(Rotation.from_quat(odom_q).as_matrix())
+        T_odom[:3,:3] = Rotation.from_quat(odom_q).as_matrix()
+        T_odom[:3, 3] = odom_p
+        return T_odom
 
     def image_callback(self, msg):
         if self.node_offline:
@@ -437,16 +580,7 @@ class OdomNode:
             print("ATTEMPTING TO ADD NEW KEYFRAME! " + str(len(self.keyframes)) + ", dist: " + str(dist_since_last_keyframe) + ", time: " + str(time_since_last_keyframe))
 
             # NUMPIFY THE CURRENT ODOMETRY TRANSFORMATION MATRIX
-            odom_p = np.array([closest_time_odom_msg.pose.pose.position.x, closest_time_odom_msg.pose.pose.position.y, closest_time_odom_msg.pose.pose.position.z])
-            odom_q = np.array([closest_time_odom_msg.pose.pose.orientation.x, closest_time_odom_msg.pose.pose.orientation.y,
-                closest_time_odom_msg.pose.pose.orientation.z, closest_time_odom_msg.pose.pose.orientation.w])
-            T_odom = np.eye(4)
-            print("R:")
-            print(Rotation.from_quat(odom_q).as_matrix())
-            T_odom[:3,:3] = Rotation.from_quat(odom_q).as_matrix()
-            T_odom[:3, 3] = odom_p
-            print("CURRENT ODOM POSE: ")
-            print(T_odom)
+            T_odom = self.odom_msg_to_transformation_matrix(closest_time_odom_msg)
 
             # IF YOU CAN - FIRST TRIANGULATE WITHOUT SCALE! - JUST TO DISCARD OUTLIERS
             can_triangulate = not self.px_cur is None
