@@ -191,6 +191,12 @@ class OdomNode:
 
         self.tracked_features = []
 
+    def getPixelPositions(self, pts):
+        # pts = 3D points u wish to project
+        pixpos = self.K @ pts 
+        pixpos = pixpos / pixpos[2, :]
+        return pixpos[:2, :].T
+
     def get_closest_time_odom_msg(self, stamp):
         bestmsg = None
         besttimedif = 0
@@ -281,9 +287,10 @@ class OdomNode:
         positive_z_idxs = transformed[2, :] > 0
         final_points = transformed[:, positive_z_idxs]
 
-        pixpos = self.K @ final_points 
-        pixpos = pixpos / pixpos[2, :]
-        pixpos = pixpos[:2, :].T
+        pixpos = self.getPixelPositions(final_points)
+        # pixpos = self.K @ final_points 
+        # pixpos = pixpos / pixpos[2, :]
+        # pixpos = pixpos[:2, :].T
 
         # COMPUTE DELAUNAY TRIANG OF VISIBLE SLAM POINTS
         print("HAVE DELAUNAY:")
@@ -295,6 +302,34 @@ class OdomNode:
 
         # CONSTRUCT OBSTACLE MESH
         obstacle_mesh = trimesh.Trimesh(vertices=final_points.T, faces = tri.simplices)
+
+        # CONSTRUCT POLYGON OF PIXPOSs OF VISIBLE SLAM PTS
+        hull = ConvexHull(pixpos)
+        print("POLY")
+        img_polygon = geometry.Polygon(hull.points)
+
+        # CONSTRUCT HULL MESH FROM 3D POINTS OF CONVEX 2D HULL OF PROJECTED POINTS
+        hullmesh_pts = final_points[:, np.unique(hull.simplices)]
+        orig_pts = np.zeros((3, 1))
+        # print(hullmesh_pts.shape)
+        # print(orig_pts.shape)
+        hullmesh_pts = np.concatenate((hullmesh_pts, orig_pts), axis=1)
+        zero_pt_index = hullmesh_pts.shape[1] - 1
+
+        # FUCK IT JUST DO CONV HULL OF THESE 3D PTS(just start and hull pts)
+        fov_hull = ConvexHull(hullmesh_pts.T)
+
+        uniq_idxs_in_hull = np.unique(fov_hull.simplices)
+        simplices_reindexing = {uniq_idxs_in_hull[i]:i for i in range(uniq_idxs_in_hull.size)}
+        simplices_reindexed = [[simplices_reindexing[orig[0]], simplices_reindexing[orig[1]], simplices_reindexing[orig[2]]] for orig in fov_hull.simplices]
+
+        # CONSTRUCT FOV MESH AND QUERY
+        fov_mesh = trimesh.Trimesh(vertices=fov_hull.points, faces = simplices_reindexed)
+        fov_mesh_query = trimesh.proximity.ProximityQuery(fov_mesh)
+
+        # CONSTRUCT OBSTACLE POINT MESH AND QUERY
+        obstacle_mesh_query = trimesh.proximity.ProximityQuery(obstacle_mesh)
+
 
         # ---UPDATE AND PRUNING STEP
         T_current_cam_to_orig = np.eye(4)
@@ -317,32 +352,55 @@ class OdomNode:
             print("FINAL MATRIX")
             print(T_current_cam_to_orig)
 
-            # project sphere points
+            # project sphere points to current camera frame
             transformed_old_points  = transformPoints(self.spheremap.points, T_current_cam_to_orig)
-            # print(" OLD IN SPHEREMAP ORIGIN")
-            # print(self.spheremap.points)
-            # print(" OLD IN CURRENT FRAME")
-            # print(transformed_old_points.T)
 
             print("TRANSFORMED EXISTING SPHERE POINTS TO CURRENT CAMERA FRAME!")
-            positive_z_idxs_old = transformed_old_points[:, 2] > 0
 
-            print("POSITIVE Z:" + str(np.sum(positive_z_idxs_old)) + "/" + str(n_spheres_old))
+            # Filter out spheres with z below zero or above the max z of obstacle points
+            # TODO - use dist rather than z for checking
+            max_vis_z = np.max(final_points[2, :])
+            print(max_vis_z )
+            z_ok_idxs = np.logical_and(transformed_old_points[:, 2] > 0, transformed_old_points[:, 2] <= max_vis_z)
+
+            z_ok_points = transformed_old_points[z_ok_idxs , :] # remove spheres with negative z
+            worked_sphere_idxs = np.arange(n_spheres_old)[z_ok_idxs ]
+            print("POSITIVE Z AND NOT BEHIND OBSTACLE MESH:" + str(np.sum(z_ok_idxs )) + "/" + str(n_spheres_old))
+
+            # check the ones that are projected into the 2D hull
+            old_pixpos = self.getPixelPositions(z_ok_points.T)
+            inhull = np.array([img_polygon.contains(geometry.Point(old_pixpos[i, 0], old_pixpos[i, 1])) for i in range(old_pixpos.shape[0])])
+
+            if np.any(inhull):
+                # remove spheres not projecting to conv hull in 2D
+                visible_old_points = z_ok_points[inhull]
+                worked_sphere_idxs = worked_sphere_idxs[inhull]
+                print("IN HULL: " + str(worked_sphere_idxs.size))
+
+                # get mesh distances for these updatable spheres
+                old_spheres_fov_dists = np.abs(fov_mesh_query.signed_distance(visible_old_points))
+                old_spheres_obs_dists = np.abs(obstacle_mesh_query.signed_distance(visible_old_points))
+                upperbound_combined = np.minimum(old_spheres_fov_dists, old_spheres_obs_dists)
+
+                should_decrease_radius = old_spheres_obs_dists < self.spheremap.radii[worked_sphere_idxs]
+                could_increase_radius = upperbound_combined > self.spheremap.radii[worked_sphere_idxs]
+
+                for i in range(worked_sphere_idxs.size):
+                    if should_decrease_radius[i]:
+                        self.spheremap.radii[worked_sphere_idxs[i]] = old_spheres_obs_dists[i]
+                    elif could_increase_radius[i]:
+                        self.spheremap.radii[worked_sphere_idxs[i]] = upperbound_combined[i]
+
 
         # ---EXPANSION STEP
         max_sphere_sampling_z = 60
 
         n_sampled = 20
         sampling_pts = np.random.rand(n_sampled, 2)  # Random points in [0, 1] range for x and y
-        sampling_pts = sampling_pts   * [self.width, self.height]
+        sampling_pts = sampling_pts * [self.width, self.height]
 
         # CHECK THE SAMPLING DIRS ARE INSIDE THE 2D CONVEX HULL OF 3D POINTS
-        hull = ConvexHull(pixpos)
-
-        print("POLY")
-        polygon = geometry.Polygon(hull.points)
-
-        inhull = np.array([polygon.contains(geometry.Point(p[0], p[1])) for p in sampling_pts])
+        inhull = np.array([img_polygon .contains(geometry.Point(p[0], p[1])) for p in sampling_pts])
         print(inhull)
         if not np.any(inhull):
             print("NONE IN HULL")
@@ -372,27 +430,6 @@ class OdomNode:
 
 
         orig_3dpt_indices_in_hull = np.unique(hull.simplices)
-        # CONSTRUCT HULL MESH FROM 3D POINTS OF CONVEX 2D HULL OF PROJECTED POINTS
-        hullmesh_pts = final_points[:, np.unique(hull.simplices)]
-        orig_pts = np.zeros((3, 1))
-        # print(hullmesh_pts.shape)
-        # print(orig_pts.shape)
-        hullmesh_pts = np.concatenate((hullmesh_pts, orig_pts), axis=1)
-        zero_pt_index = hullmesh_pts.shape[1] - 1
-
-        # FUCK IT JUST DO CONV HULL OF THESE 3D PTS(just start and hull pts)
-        fov_hull = ConvexHull(hullmesh_pts.T)
-
-        uniq_idxs_in_hull = np.unique(fov_hull.simplices)
-        simplices_reindexing = {uniq_idxs_in_hull[i]:i for i in range(uniq_idxs_in_hull.size)}
-        simplices_reindexed = [[simplices_reindexing[orig[0]], simplices_reindexing[orig[1]], simplices_reindexing[orig[2]]] for orig in fov_hull.simplices]
-
-        # CONSTRUCT FOV MESH AND QUERY
-        fov_mesh = trimesh.Trimesh(vertices=fov_hull.points, faces = simplices_reindexed)
-        fov_mesh_query = trimesh.proximity.ProximityQuery(fov_mesh)
-
-        # CONSTRUCT OBSTACLE POINT MESH AND QUERY
-        obstacle_mesh_query = trimesh.proximity.ProximityQuery(obstacle_mesh)
 
         # TRY ADDING NEW SPHERES AT SAMPLED POSITIONS
         new_spheres_fov_dists = np.abs(fov_mesh_query.signed_distance(sampling_pts.T))
