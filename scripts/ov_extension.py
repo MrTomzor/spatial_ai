@@ -125,19 +125,23 @@ class SphereMap:
             if not np.any(intersecting):
                 self.connections[idx] = None
             else:
-                newconn = np.where(intersecting)
+                newconn = np.where(intersecting)[0]
+                # print("NEWC")
                 # print(newconn)
                 # print(self.connections.shape)
                 # print(self.connections.shape)
                 self.connections[idx] = newconn
+            # print("PREV AND NEW CONNS:")
+            # print(prev_connections)
+            # print(self.connections[idx])
 
             # DETACH FROM OLD CONNS
             if not prev_connections is None:
-                detached_sphere_idxs = [x for x in prev_connections[0]] #was in old
+                detached_sphere_idxs = [x for x in prev_connections] #was in old
                 # print("DETACHED IDXS 1:")
                 # print(detached_sphere_idxs )
                 if not self.connections[idx] is None:
-                    for remain_conn in self.connections[idx][0]: #is in new
+                    for remain_conn in self.connections[idx]: #is in new
                         if remain_conn in detached_sphere_idxs: #was in old
                             # print("REM CON")
                             # print(remain_conn)
@@ -146,8 +150,12 @@ class SphereMap:
                 # print("DETACHED IDXS:")
                 # print(detached_sphere_idxs )
 
-                for det_idx in detached_sphere_idxs :
-                    self.connections[det_idxs].remove(idx)
+                for det_idx in detached_sphere_idxs:
+                    # print("CON")
+                    # print(self.connections[det_idx])
+                    # print(self.connections[det_idx][0])
+                    # self.connections[det_idx][0].remove(idx)
+                    self.connections[det_idx] = np.setdiff1d(self.connections[det_idx], np.array([idx], dtype=int))
 
         return
 
@@ -351,7 +359,7 @@ class OdomNode:
         # COMPUTE DELAUNAY TRIANG OF VISIBLE SLAM POINTS
         print("HAVE DELAUNAY:")
         tri = Delaunay(pixpos)
-        print(tri.simplices)
+        # print(tri.simplices)
 
         vis = self.visualize_depth(pixpos, tri)
         self.depth_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
@@ -459,8 +467,8 @@ class OdomNode:
                 shouldkeep[toosmall_idxs] = False
                 shouldkeep = shouldkeep .flatten()
 
-                print("SHOULDKEEP:")
-                print(shouldkeep)
+                # print("SHOULDKEEP:")
+                # print(shouldkeep)
 
                 worked_sphere_idxs = worked_sphere_idxs[np.logical_not(idx_picker)].flatten()
 
@@ -471,7 +479,7 @@ class OdomNode:
                 # FIRST DESTROY CONNECTIONS TO THE PRUNED SPHERES
                 for i in range(toosmall_idxs.size):
                     idx = toosmall_idxs[i]
-                    if not self.spheremap.connections[idx] is None:
+                    if (not self.spheremap.connections[idx] is None) and (not len(self.spheremap.connections[idx]) == 0):
                         for j in range(len(self.spheremap.connections[idx])):
                             if len(self.spheremap.connections[idx][j]) == 1: #ASSUMING the other sphere has at least 1 connection, which should be to this node
                                 self.spheremap.connections[idx][j] = None
@@ -1125,7 +1133,7 @@ class OdomNode:
                 # p2 = trpt[1, :]
 
                 p1 = pts[i, :]
-                p2 = pts[self.spheremap.connections[i][j], :][0]
+                p2 = pts[self.spheremap.connections[i][j], :]
                 # print(p1)
                 # print(p2)
                 point1.x = p1[0]
