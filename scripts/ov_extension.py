@@ -58,6 +58,13 @@ STAGE_DEFAULT_FRAME = 2
 kMinNumFeature = 200
 kMaxNumFeature = 2000
 
+def transformPoints(pts, T):
+    # pts = Nx3 matrix, T = transformation matrix to apply
+    res = np.concatenate((pts.T, np.full((1, pts.shape[0]), 1)))
+    res = T @ res 
+    res = res / res[3, :] # unhomogenize
+    return res.T
+
 # LKPARAMS
 lk_params = dict(winSize  = (31, 31),
                  maxLevel = 3,
@@ -145,7 +152,7 @@ class OdomNode:
         # Load calib
         self.K = np.array([642.8495341420769, 0, 400, 0, 644.5958939934509, 300, 0, 0, 1]).reshape((3,3))
         # self.K = np.array([, 644.5958939934509, 400.0503960299562, 300.5824096896595]).reshape((3,3))
-        self.imu_to_cam_T = np.array( [[0, -1, 0, 0], [0, 0, -1, 0], [1, 0, 0, 0.5], [0.0, 0.0, 0.0, 1.0]])
+        self.imu_to_cam_T = np.array( [[0, -1, 0, 0], [0, 0, -1, 0], [1, 0, 0, 0], [0.0, 0.0, 0.0, 1.0]])
         print("IMUTOCAM", self.imu_to_cam_T)
 
         # self.K = np.array([642.8495341420769, 644.5958939934509, 400.0503960299562, 300.5824096896595]).reshape((3,3))
@@ -265,30 +272,20 @@ class OdomNode:
         # TRANSFORM SLAM PTS TO IMAGE AND COMPUTE THEIR PIXPOSITIONS
         if len(self.odom_buffer) == 0:
             return
-        odom_T = self.odom_msg_to_transformation_matrix(self.odom_buffer[-1])
-        hom = np.concatenate((point_cloud_array.T, np.full((1, point_cloud_array.shape[0]), 1)))
-        pts_in_global_to_cam_T = (self.imu_to_cam_T @ np.linalg.inv(odom_T))
-        # print("ODOM T")
-        print(odom_T)
-        # print("FINAL T")
-        print(pts_in_global_to_cam_T)
-        # print("HOM SHAPE")
-        print(hom.shape)
-        transformed = (self.imu_to_cam_T @ np.linalg.inv(odom_T)) @ hom
+        T_global_to_imu = self.odom_msg_to_transformation_matrix(self.odom_buffer[-1])
+        transformed = transformPoints(point_cloud_array, (self.imu_to_cam_T @ np.linalg.inv(T_global_to_imu))).T
+
+        # hom = np.concatenate((point_cloud_array.T, np.full((1, point_cloud_array.shape[0]), 1)))
+        # transformed = (self.imu_to_cam_T @ np.linalg.inv(T_global_to_imu)) @ hom
+
         transformed = transformed / transformed [3, :] # unhomogenize
 
-        # print("HAVE UNHOM TRANSFORMED.T:")
-        # print(transformed.T)
-
         positive_z_idxs = transformed[2, :] > 0
-        # print("TRANSFORMED, PTS WITH POSITIVE Z:" + str(np.sum(positive_z_idxs)) + "/" + str(transformed.shape[1]))
         final_points = transformed[:3, positive_z_idxs]
 
         pixpos = self.K @ final_points 
         pixpos = pixpos / pixpos[2, :]
         pixpos = pixpos[:2, :].T
-        # print("HAVE PIXPOS:")
-        # print(pixpos.T)
 
         # COMPUTE DELAUNAY TRIANG OF VISIBLE SLAM POINTS
         print("HAVE DELAUNAY:")
@@ -298,8 +295,43 @@ class OdomNode:
         vis = self.visualize_depth(pixpos, tri)
         self.depth_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
 
+        # CONSTRUCT OBSTACLE MESH
         obstacle_mesh = trimesh.Trimesh(vertices=final_points.T, faces = tri.simplices)
 
+        # ---UPDATE AND PRUNING STEP
+        T_current_cam_to_orig = np.eye(4)
+        if not self.spheremap is None:
+            # transform existing sphere points to current camera frame
+            # T_spheremap_orig_to_current_cam = self.imu_to_cam_T @ T_global_to_imu @ np.linalg.inv(self.spheremap.T_global_to_own_origin) 
+            # T_current_cam_to_orig = np.linalg.inv(T_spheremap_orig_to_current_cam)
+            # T_spheremap_orig_to_current_cam = np.linalg.inv(self.imu_to_cam_T)
+            # print("T DELTA ODOM")
+            # print(T_delta_odom)
+            # print("GLOBAL TO OWN ORIGIN")
+            # print(self.spheremap.T_global_to_own_origin)
+            # print("ORIG TO NOW")
+            # print(T_spheremap_orig_to_current_cam )
+            n_spheres_old = self.spheremap.points.shape[0]
+
+            T_delta_odom = np.linalg.inv(self.spheremap.T_global_to_imu_at_start) @ T_global_to_imu
+            T_current_cam_to_orig = self.imu_to_cam_T @ T_delta_odom @ np.linalg.inv(self.imu_to_cam_T)
+
+            print("FINAL MATRIX")
+            print(T_current_cam_to_orig)
+
+            # project sphere points
+            transformed_old_points  = transformPoints(self.spheremap.points, T_current_cam_to_orig)
+            # print(" OLD IN SPHEREMAP ORIGIN")
+            # print(self.spheremap.points)
+            # print(" OLD IN CURRENT FRAME")
+            # print(transformed_old_points.T)
+
+            print("TRANSFORMED EXISTING SPHERE POINTS TO CURRENT CAMERA FRAME!")
+            positive_z_idxs_old = transformed_old_points[:, 2] > 0
+
+            print("POSITIVE Z:" + str(np.sum(positive_z_idxs_old)) + "/" + str(n_spheres_old))
+
+        # ---EXPANSION STEP
         max_sphere_sampling_z = 60
 
         n_sampled = 20
@@ -308,7 +340,6 @@ class OdomNode:
 
         # CHECK THE SAMPLING DIRS ARE INSIDE THE 2D CONVEX HULL OF 3D POINTS
         hull = ConvexHull(pixpos)
-        # print(inspect.getmembers(hull))
 
         print("POLY")
         polygon = geometry.Polygon(hull.points)
@@ -331,23 +362,17 @@ class OdomNode:
         print("SPHERE SAMPLING PTS:" )
         print(sampling_pts)
 
-
         # FILTER PTS - CHECK THAT THE MAX DIST IS NOT BEHIND THE OBSTACLE MESH BY RAYCASTING
-        # TODO
         ray_hit_pts, index_ray, index_tri = obstacle_mesh.ray.intersects_location(
         ray_origins=np.zeros(sampling_pts.shape).T, ray_directions=sampling_pts.T)
         print("RAYS")
         print(index_ray)
 
-        # ray_hit_dists = np.linalg.norm(ray_hit_pts)
-
         # MAKE THEM BE IN RAND POSITION BETWEEN CAM AND MESH HIT POSITION
         sampling_pts =  (np.random.rand(n_sampled, 1) * ray_hit_pts).T
-        # add max sampling dist
+        # TODO - add max sampling dist
 
 
-        # print(hull.simplices)
-        # print(np.unique(hull.simplices))
         orig_3dpt_indices_in_hull = np.unique(hull.simplices)
         # CONSTRUCT HULL MESH FROM 3D POINTS OF CONVEX 2D HULL OF PROJECTED POINTS
         hullmesh_pts = final_points[:, np.unique(hull.simplices)]
@@ -379,6 +404,8 @@ class OdomNode:
         min_rad = init_rad
         if self.spheremap is None:
             self.spheremap = SphereMap(init_rad, min_rad)
+            self.spheremap.T_global_to_own_origin = T_global_to_imu @ self.imu_to_cam_T
+            self.spheremap.T_global_to_imu_at_start = T_global_to_imu
 
         mindists = np.minimum(new_spheres_obs_dists, new_spheres_fov_dists)
         new_sphere_idxs = mindists > min_rad
