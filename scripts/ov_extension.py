@@ -63,7 +63,7 @@ def transformPoints(pts, T):
     res = np.concatenate((pts.T, np.full((1, pts.shape[0]), 1)))
     res = T @ res 
     res = res / res[3, :] # unhomogenize
-    return res.T
+    return res[:3, :].T
 
 # LKPARAMS
 lk_params = dict(winSize  = (31, 31),
@@ -278,10 +278,8 @@ class OdomNode:
         # hom = np.concatenate((point_cloud_array.T, np.full((1, point_cloud_array.shape[0]), 1)))
         # transformed = (self.imu_to_cam_T @ np.linalg.inv(T_global_to_imu)) @ hom
 
-        transformed = transformed / transformed [3, :] # unhomogenize
-
         positive_z_idxs = transformed[2, :] > 0
-        final_points = transformed[:3, positive_z_idxs]
+        final_points = transformed[:, positive_z_idxs]
 
         pixpos = self.K @ final_points 
         pixpos = pixpos / pixpos[2, :]
@@ -419,7 +417,12 @@ class OdomNode:
         # print(mindists[new_sphere_idxs].shape)
 
         # TRANSFORM POINTS FROM CAM ORIGIN TO SPHEREMAP ORIGIN! - DRAW OUT!
-        self.spheremap.points = np.concatenate((self.spheremap.points, sampling_pts[:, new_sphere_idxs].T))
+        new_sphere_locations_in_spheremap_origin = transformPoints(sampling_pts[:, new_sphere_idxs].T, T_current_cam_to_orig)
+        print(new_sphere_locations_in_spheremap_origin.shape)
+        print(self.spheremap.points.shape)
+        self.spheremap.points = np.concatenate((self.spheremap.points, new_sphere_locations_in_spheremap_origin))
+
+        # self.spheremap.points = np.concatenate((self.spheremap.points, sampling_pts[:, new_sphere_idxs].T))
         self.spheremap.radii = np.concatenate((self.spheremap.radii.flatten(), mindists[new_sphere_idxs].flatten()))
 
         # mindists = np.min(new_spheres_fov_dists , new_spheres_obs_dists )
@@ -442,9 +445,12 @@ class OdomNode:
 
         comp_time = time.time() - comp_start_time
         print("SPHEREMAP integration time: " + str((comp_time) * 1000) +  " ms")
+        comp_start_time = time.time()
 
         # VISUALIZE CURRENT SPHERES
-        self.visualize_spheremap()
+        self.visualize_spheremap(T_current_cam_to_orig)
+        comp_time = time.time() - comp_start_time
+        print("SPHEREMAP visualization time: " + str((comp_time) * 1000) +  " ms")
 
 
     def visualize_depth(self, pixpos, tri):
@@ -931,7 +937,7 @@ class OdomNode:
         else:
             self.kp_pcl_pub.publish(point_cloud)
 
-    def visualize_spheremap(self):
+    def visualize_spheremap(self, T_current_cam_to_orig):
         if self.spheremap is None:
             return
 
@@ -940,7 +946,7 @@ class OdomNode:
         # point_cloud = PointCloud()
         # point_cloud.header.stamp = rospy.Time.now()
         # point_cloud.header.frame_id = 'global'  # Set the frame ID according to your robot's configuration
-
+        pts = transformPoints(self.spheremap.points, np.linalg.inv(T_current_cam_to_orig))
 
         for i in range(self.spheremap.points.shape[0]):
             marker = Marker()
@@ -951,9 +957,9 @@ class OdomNode:
             marker.id = i
 
             # Set the position (sphere center)
-            marker.pose.position.x = self.spheremap.points[i][0]
-            marker.pose.position.y = self.spheremap.points[i][1]
-            marker.pose.position.z = self.spheremap.points[i][2]
+            marker.pose.position.x = pts[i][0]
+            marker.pose.position.y = pts[i][1]
+            marker.pose.position.z = pts[i][2]
 
             # Set the scale (sphere radius)
             marker.scale.x = 2 * self.spheremap.radii[i]
