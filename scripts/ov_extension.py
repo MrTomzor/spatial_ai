@@ -101,13 +101,69 @@ class KeyFrame:
 class SphereMap:
     def __init__(self, init_radius, min_radius):
         self.points = np.array([0,0,0]).reshape((1,3))
-        # self.radii = np.array([init_radius])
         self.radii = np.array([init_radius]).reshape((1,1))
-        self.connections = np.array([[]])
+        self.connections = np.array([None], dtype=object)
+        print("INIT CONNS:")
+        print(self.connections)
 
         self.min_radius = min_radius
         self.max_radius = init_radius
     
+    def updateConnections(self, worked_sphere_idxs):
+        print("UPDATING CONNECTIONS FOR " + str(worked_sphere_idxs.size) + " SPHERES")
+        # print("N SPHERES:")
+        # print(self.points.shape[0])
+        # print("CURRENT CONNS:")
+        # print(self.connections)
+        for idx in worked_sphere_idxs:
+            # print("UPDATING FOR")
+            # print(idx)
+            prev_connections = self.connections[idx]
+            intersecting = self.getIntersectingSpheres(self.points[idx, :], self.radii[idx])
+            intersecting[idx] = False
+            # print("NEWCONN:")
+            if not np.any(intersecting):
+                self.connections[idx] = None
+            else:
+                newconn = np.where(intersecting)
+                # print(newconn)
+                # print(self.connections.shape)
+                # print(self.connections.shape)
+                self.connections[idx] = newconn
+
+            # DETACH FROM OLD CONNS
+            if not prev_connections is None:
+                detached_sphere_idxs = [x for x in prev_connections[0]] #was in old
+                # print("DETACHED IDXS 1:")
+                # print(detached_sphere_idxs )
+                if not self.connections[idx] is None:
+                    for remain_conn in self.connections[idx][0]: #is in new
+                        if remain_conn in detached_sphere_idxs: #was in old
+                            # print("REM CON")
+                            # print(remain_conn)
+                            detached_sphere_idxs.remove(remain_conn)
+
+                # print("DETACHED IDXS:")
+                # print(detached_sphere_idxs )
+
+                for det_idx in detached_sphere_idxs :
+                    self.connections[det_idxs].remove(idx)
+
+        return
+
+    def getIntersectingSpheres(self, position, radius):
+        distvectors = self.points - position
+
+        # rad2 = radius * radius
+        # norms2 = np.sum(np.multiply(distvectors,distvectors), 1)
+        # intersecting_idxs = norms2
+
+        norms = np.linalg.norm(distvectors, axis=1)
+
+        intersecting = norms < self.radii + radius
+        # print("FOUND INTERSECTIONS: " + str(np.sum(intersecting)))
+        return intersecting 
+
     def update_in_fov(self, cam_T, visible_obstacle_pts, cam_K):
         # visible_obstacle_pts = visible obstacle points, position is relative to current pose of camera
         # cam_T = transformation from origin of spheremap to current camera pose
@@ -370,12 +426,17 @@ class OdomNode:
             # check the ones that are projected into the 2D hull
             old_pixpos = self.getPixelPositions(z_ok_points.T)
             inhull = np.array([img_polygon.contains(geometry.Point(old_pixpos[i, 0], old_pixpos[i, 1])) for i in range(old_pixpos.shape[0])])
+            
+            print("OLD PTS IN HULL:" + str(np.sum(inhull)) + "/" + str(z_ok_points.shape[0]))
+            if not np.any(inhull):
+                print("PIXPOS:")
+                print(old_pixpos)
 
             if np.any(inhull):
                 # remove spheres not projecting to conv hull in 2D
                 visible_old_points = z_ok_points[inhull]
                 worked_sphere_idxs = worked_sphere_idxs[inhull]
-                print("IN HULL: " + str(worked_sphere_idxs.size))
+                # print("IN HULL: " + str(worked_sphere_idxs.size))
 
                 # get mesh distances for these updatable spheres
                 old_spheres_fov_dists = np.abs(fov_mesh_query.signed_distance(visible_old_points))
@@ -390,6 +451,38 @@ class OdomNode:
                         self.spheremap.radii[worked_sphere_idxs[i]] = old_spheres_obs_dists[i]
                     elif could_increase_radius[i]:
                         self.spheremap.radii[worked_sphere_idxs[i]] = upperbound_combined[i]
+
+                # FIND WHICH SMALL SPHERES TO PRUNE AND STOP WORKING WITH THEM, BUT REMEMBER INDICES TO KILL THEM IN THE END
+                idx_picker = self.spheremap.radii[worked_sphere_idxs[i]] < self.spheremap.min_radius
+                toosmall_idxs = worked_sphere_idxs[idx_picker]
+                shouldkeep = np.full((n_spheres_old , 1), True)
+                shouldkeep[toosmall_idxs] = False
+                shouldkeep = shouldkeep .flatten()
+
+                print("SHOULDKEEP:")
+                print(shouldkeep)
+
+                worked_sphere_idxs = worked_sphere_idxs[np.logical_not(idx_picker)].flatten()
+
+                # RE-CHECK CONNECTIONS
+                self.spheremap.updateConnections(worked_sphere_idxs)
+
+                # AT THE END, PRUNE THE EXISTING SPHERES THAT BECAME TOO SMALL (delete their pos, radius and conns)
+                # FIRST DESTROY CONNECTIONS TO THE PRUNED SPHERES
+                for i in range(toosmall_idxs.size):
+                    idx = toosmall_idxs[i]
+                    if not self.spheremap.connections[idx] is None:
+                        for j in range(len(self.spheremap.connections[idx])):
+                            if len(self.spheremap.connections[idx][j]) == 1: #ASSUMING the other sphere has at least 1 connection, which should be to this node
+                                self.spheremap.connections[idx][j] = None
+                            else:
+                                self.spheremap.connections[idx][j] = [x for x in self.spheremap.connections[idx][j] if x != idx]
+
+                # THEN KILL THE SPHERES
+                self.spheremap.points = self.spheremap.points[shouldkeep, :]
+                self.spheremap.radii = self.spheremap.radii[shouldkeep]
+                self.spheremap.connections = self.spheremap.connections[shouldkeep]
+
 
 
         # ---EXPANSION STEP
@@ -457,10 +550,10 @@ class OdomNode:
         new_sphere_locations_in_spheremap_origin = transformPoints(sampling_pts[:, new_sphere_idxs].T, T_current_cam_to_orig)
         print(new_sphere_locations_in_spheremap_origin.shape)
         print(self.spheremap.points.shape)
-        self.spheremap.points = np.concatenate((self.spheremap.points, new_sphere_locations_in_spheremap_origin))
 
-        # self.spheremap.points = np.concatenate((self.spheremap.points, sampling_pts[:, new_sphere_idxs].T))
+        self.spheremap.points = np.concatenate((self.spheremap.points, new_sphere_locations_in_spheremap_origin))
         self.spheremap.radii = np.concatenate((self.spheremap.radii.flatten(), mindists[new_sphere_idxs].flatten()))
+        self.spheremap.connections = np.concatenate((self.spheremap.connections.flatten(), np.array([None for i in range(n_spheres_to_add)], dtype=object).flatten()))
 
         # mindists = np.min(new_spheres_fov_dists , new_spheres_obs_dists )
         # print("MINDISTS:")
@@ -983,7 +1076,8 @@ class OdomNode:
         # point_cloud = PointCloud()
         # point_cloud.header.stamp = rospy.Time.now()
         # point_cloud.header.frame_id = 'global'  # Set the frame ID according to your robot's configuration
-        pts = transformPoints(self.spheremap.points, np.linalg.inv(T_current_cam_to_orig))
+        T_vis = np.linalg.inv(T_current_cam_to_orig)
+        pts = transformPoints(self.spheremap.points, T_vis)
 
         for i in range(self.spheremap.points.shape[0]):
             marker = Marker()
@@ -1003,13 +1097,46 @@ class OdomNode:
             marker.scale.y = 2 * self.spheremap.radii[i]
             marker.scale.z = 2 * self.spheremap.radii[i]
 
-            marker.color.a = 0.6
+            marker.color.a = 0.1
             marker.color.r = 0.0
             marker.color.g = 1.0
             marker.color.b = 0.0
 
             # Add the marker to the MarkerArray
             marker_array.markers.append(marker)
+
+        line_marker = Marker()
+        line_marker.header.frame_id = "cam0"  # Set your desired frame_id
+        line_marker.type = Marker.LINE_LIST
+        line_marker.action = Marker.ADD
+        line_marker.scale.x = 0.2  # Line width
+        line_marker.color.a = 1.0  # Alpha
+
+        for i in range(self.spheremap.connections.shape[0]):
+            if self.spheremap.connections[i] is None:
+                continue
+            for j in range(len(self.spheremap.connections[i])):
+                point1 = Point()
+                point2 = Point()
+                # trpt = transformPoints(np.array([[self.spheremap.points[i, :]], self.spheremap.points[self.spheremap.connections[i][j], :]]), T_vis)
+                # p1 = self.spheremap.points[i, :]
+                # p2 = self.spheremap.points[self.spheremap.connections[i][j], :][0]
+                # p1 = trpt[0, :]
+                # p2 = trpt[1, :]
+
+                p1 = pts[i, :]
+                p2 = pts[self.spheremap.connections[i][j], :][0]
+                # print(p1)
+                # print(p2)
+                point1.x = p1[0]
+                point1.y = p1[1]
+                point1.z = p1[2]
+                point2.x = p2[0]
+                point2.y = p2[1]
+                point2.z = p2[2]
+                line_marker.points.append(point1)
+                line_marker.points.append(point2)
+        marker_array.markers.append(line_marker)
 
         self.spheremap_spheres_pub.publish(marker_array)
 
