@@ -168,6 +168,9 @@ class SphereMap:
         # shouldkeep = shouldkeep.flatten()
         n_remove = 0
 
+        # SORT FROM SMALLEST TO BIGGEST
+        worked_sphere_idxs = worked_sphere_idxs[np.argsort(self.radii[worked_sphere_idxs])]
+
         for idx in worked_sphere_idxs:
             # fg = connectedNodesFormFullGraph()
             conns = self.connections[idx]
@@ -186,11 +189,22 @@ class SphereMap:
             distvectors = self.points[conns, :] - pos
             norms = np.linalg.norm(distvectors, axis=1)
             others_radii = self.radii[conns]
+            print("RAD:")
             peeking_dists = (norms - others_radii) + radius
 
-            peek_thresh = 0.1
+            peek_thresh = 2
             ratio_thresh = 1
-            if np.any(np.logical_and(peeking_dists < peek_thresh, others_radii > ratio_thresh * radius)):
+            pdt = peeking_dists < peek_thresh
+            trsh = others_radii > ratio_thresh * radius
+            print("P")
+            print(norms )
+            print(peeking_dists )
+            print(radius)
+
+            print("PDT")
+            print(pdt)
+            print(trsh)
+            if np.any(np.logical_and(pdt, trsh)):
                 shouldkeep[idx] = False
                 n_remove += 1
         print("REMOVING REDUNDANT: " + str(n_remove))
@@ -423,15 +437,11 @@ class OdomNode:
         point_cloud_array = np.array(pc_list, dtype=np.float32)
 
         # OpenVINS outputs always some point at origin, and it is not really useful for us, breaks hull shit
-        print(point_cloud_array.shape)
         nonzero_pts = np.array(np.linalg.norm(point_cloud_array, axis=1) > 0)
-        print(nonzero_pts )
-        print(nonzero_pts.shape )
         if not np.any(nonzero_pts):
             print("NO POINTS?")
             return
         point_cloud_array = point_cloud_array[nonzero_pts, :]
-        print(point_cloud_array.shape)
 
         #TODO - solve what to do with this in future
 
@@ -568,12 +578,12 @@ class OdomNode:
 
                 worked_sphere_idxs = worked_sphere_idxs[np.logical_not(idx_picker)].flatten()
 
-                self.spheremap.consistencyCheck()
+                # self.spheremap.consistencyCheck()
                 # RE-CHECK CONNECTIONS
                 self.spheremap.updateConnections(worked_sphere_idxs)
 
                 # AT THE END, PRUNE THE EXISTING SPHERES THAT BECAME TOO SMALL (delete their pos, radius and conns)
-                self.spheremap.consistencyCheck()
+                # self.spheremap.consistencyCheck()
                 self.spheremap.removeIfRedundant(worked_sphere_idxs)
 
                 # self.spheremap.removeNodes(np.where(idx_picker)[0])
@@ -644,32 +654,9 @@ class OdomNode:
         self.spheremap.points = np.concatenate((self.spheremap.points, new_sphere_locations_in_spheremap_origin))
         self.spheremap.radii = np.concatenate((self.spheremap.radii.flatten(), mindists[new_sphere_idxs].flatten()))
         self.spheremap.connections = np.concatenate((self.spheremap.connections.flatten(), np.array([None for i in range(n_spheres_to_add)], dtype=object).flatten()))
-        # print("KOCKA" + str(self.n_frames))
-        # print(self.spheremap.connections)
 
-        # for i in range(self.spheremap.connections.shape[0]):
-        #     if not self.spheremap.connections[i] is None:
-        #         if self.spheremap.connections[i][0] is None:
-        #             print("FOUND THE NONE NONE!")
-        #             return
-
-        # mindists = np.min(new_spheres_fov_dists , new_spheres_obs_dists )
-        # print("MINDISTS:")
-        # print(new_spheres_fov_dists )
-        # print(new_spheres_obs_dists )
-
-        # points = np.array([[0,0,5], [0, 0, 10], [0, 0, 15], [0, 0, 20], [0, 0, 25]])
-        
-        # print("DISTS:")
-        # print(obstacle_mesh_query.signed_distance(points))
-
-        # # CHECK DIST AGAINST FOV MESH (is mesh formed by camera pos and the obstacles (NARROWER THAN FOV)
-        # distances_from_fov = self.get_distances_from_fov_borders(points)
-
-
-        # CHECK RADII OF EXISTING SPHERES AGAINST THE FOV MESH (IF PROJECTED TO CAM)
-
-        # pixpos = self.K @
+        new_idxs = np.arange(self.spheremap.radii.size)[self.spheremap.radii.size - n_spheres_to_add : self.spheremap.radii.size]
+        self.spheremap.removeIfRedundant(new_idxs)
 
         comp_time = time.time() - comp_start_time
         print("SPHEREMAP integration time: " + str((comp_time) * 1000) +  " ms")
@@ -680,7 +667,7 @@ class OdomNode:
         comp_time = time.time() - comp_start_time
         print("SPHEREMAP visualization time: " + str((comp_time) * 1000) +  " ms")
 
-        self.node_offline = not self.spheremap.consistencyCheck()
+        # self.node_offline = not self.spheremap.consistencyCheck()
 
 
     def visualize_depth(self, pixpos, tri):
