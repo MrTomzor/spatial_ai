@@ -417,14 +417,28 @@ class OdomNode:
             x, y, z = point
             pc_list.append([x, y, z])
 
+        if len(pc_list) == 0:
+            return
+
         point_cloud_array = np.array(pc_list, dtype=np.float32)
+
+        # OpenVINS outputs always some point at origin, and it is not really useful for us, breaks hull shit
+        print(point_cloud_array.shape)
+        nonzero_pts = np.array(np.linalg.norm(point_cloud_array, axis=1) > 0)
+        print(nonzero_pts )
+        print(nonzero_pts.shape )
+        if not np.any(nonzero_pts):
+            print("NO POINTS?")
+            return
+        point_cloud_array = point_cloud_array[nonzero_pts, :]
+        print(point_cloud_array.shape)
+
+        #TODO - solve what to do with this in future
 
         # INTEGRATE
         self.integrate_slam_points_to_keyframe(point_cloud_array)
 
         # ---SPHEREMAP STUFF
-        if len(pc_list) == 0:
-            return
 
         comp_start_time = time.time()
         # TRANSFORM SLAM PTS TO IMAGE AND COMPUTE THEIR PIXPOSITIONS
@@ -949,12 +963,12 @@ class OdomNode:
                             else:
                                 self.tracking_stats[i].invdepth_mean = (self.tracking_stats[i].invdepth_mean * self.invdepth_meas_sigma2 + invdepth_meas * self.tracking_stats[i].invdepth_sigma2) / (self.invdepth_meas_sigma2 + self.tracking_stats[i].invdepth_sigma2) 
                                 self.tracking_stats[i].invdepth_sigma2 = self.invdepth_meas_sigma2 * self.tracking_stats[i].invdepth_sigma2 / (self.invdepth_meas_sigma2 + self.tracking_stats[i].invdepth_sigma2)
-                            print("--MEAS INDEX: " + str(self.tracking_stats[i].invdepth_measurements))
-                            print("MEAS MEAS: " + str(invdepth_meas) )
-                            print("ESTIM MEAN: " + str(self.tracking_stats[i].invdepth_mean) )
-                            print("ESTIM COV: " + str(self.tracking_stats[i].invdepth_sigma2) )
+                            # print("--MEAS INDEX: " + str(self.tracking_stats[i].invdepth_measurements))
+                            # print("MEAS MEAS: " + str(invdepth_meas) )
+                            # print("ESTIM MEAN: " + str(self.tracking_stats[i].invdepth_mean) )
+                            # print("ESTIM COV: " + str(self.tracking_stats[i].invdepth_sigma2) )
                             avg = np.mean(np.array([x for x in self.tracking_stats[i].invdepth_buffer]))
-                            print("ESTIM AVG: " + str(avg) )
+                            # print("ESTIM AVG: " + str(avg) )
                             self.tracking_stats[i].invdepth_measurements += 1
                             self.proper_triang = True
 
