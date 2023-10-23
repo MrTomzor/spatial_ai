@@ -189,7 +189,7 @@ class SphereMap:
             peeking_dists = (norms - others_radii) + radius
 
             peek_thresh = 0.1
-            ratio_thresh = 2
+            ratio_thresh = 1
             if np.any(np.logical_and(peeking_dists < peek_thresh, others_radii > ratio_thresh * radius)):
                 shouldkeep[idx] = False
                 n_remove += 1
@@ -202,37 +202,19 @@ class SphereMap:
     
     def updateConnections(self, worked_sphere_idxs):
         print("UPDATING CONNECTIONS FOR " + str(worked_sphere_idxs.size) + " SPHERES")
-        # print("N SPHERES:")
-        # print(self.points.shape[0])
-        # print("CURRENT CONNS:")
-        # print(self.connections)
         for idx in worked_sphere_idxs:
-            # print("FOR NODE " + str(idx))
             prev_connections = self.connections[idx]
             intersecting = self.getIntersectingSpheres(self.points[idx, :], self.radii[idx])
             intersecting[idx] = False
-            # print("PREVCONNS:")
-            # print(prev_connections)
             if not np.any(intersecting):
                 self.connections[idx] = None
             else:
                 newconn = np.where(intersecting)[0]
-                # print("NEWC")
-                # print(newconn)
-                # print(newconn.flatten())
-                # print(self.connections.shape)
-                # print(self.connections.shape)
                 self.connections[idx] = newconn.flatten()
-            # print("PREV AND NEW CONNS:")
-            # print(prev_connections)
-            # print(self.connections[idx])
 
             # FOR X2 THAT USED TO BE CONNECTED TO X1 AND ARE NOT ANYMORE, REMOVE X1 FROM X2s CONNECTIONS
-            #ITS HERE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!111
             if not prev_connections is None:
                 detached_sphere_idxs = [x for x in prev_connections.flatten()] #was in old
-                # print("DETACHED IDXS 1:")
-                # print(detached_sphere_idxs )
                 if not self.connections[idx] is None:
                     for remain_conn in self.connections[idx]: #is in new
                         if remain_conn in detached_sphere_idxs: #was in old
@@ -241,15 +223,7 @@ class SphereMap:
                             detached_sphere_idxs.remove(remain_conn)
 
                 if len(detached_sphere_idxs) > 0:
-                    # print("DETACHED IDXS:")
-                    # print(detached_sphere_idxs )
-                    # print("PREV CONS:")
-                    # print(prev_connections )
-                    # print("NOW CON:")
-                    # print(self.connections[idx] )
-
                     for det_idx in detached_sphere_idxs:
-                        # print(det_idx)
                         if not det_idx is None:
                             # WARNING! THIS FUCKER RETURNS [None]
                             dif = np.setdiff1d(self.connections[det_idx], np.array([idx], dtype=int))
@@ -320,7 +294,7 @@ class OdomNode:
         self.odom_buffer = []
         self.odom_buffer_maxlen = 1000
         self.sub_odom = rospy.Subscriber('/ov_msckf/odomimu', Odometry, self.odometry_callback, queue_size=10000)
-        self.sub_slam_points = rospy.Subscriber('/ov_msckf/points_slam', PointCloud2, self.points_slam_callback, queue_size=10000)
+        self.sub_slam_points = rospy.Subscriber('/ov_msckf/points_slam', PointCloud2, self.points_slam_callback, queue_size=3)
         # self.sub_odom = rospy.Subscriber('/ov_msckf/poseimu', PoseWithCovarianceStamped, self.odometry_callback, queue_size=10000)
 
         self.tf_broadcaster = tf.TransformBroadcaster()
@@ -528,7 +502,7 @@ class OdomNode:
             print(T_current_cam_to_orig)
 
             # project sphere points to current camera frame
-            transformed_old_points  = transformPoints(self.spheremap.points, T_current_cam_to_orig)
+            transformed_old_points  = transformPoints(self.spheremap.points, np.linalg.inv(T_current_cam_to_orig))
 
             print("TRANSFORMED EXISTING SPHERE POINTS TO CURRENT CAMERA FRAME!")
 
@@ -547,9 +521,6 @@ class OdomNode:
             inhull = np.array([img_polygon.contains(geometry.Point(old_pixpos[i, 0], old_pixpos[i, 1])) for i in range(old_pixpos.shape[0])])
             
             print("OLD PTS IN HULL:" + str(np.sum(inhull)) + "/" + str(z_ok_points.shape[0]))
-            # if not np.any(inhull):
-                # print("PIXPOS:")
-                # print(old_pixpos)
 
             if np.any(inhull):
                 # remove spheres not projecting to conv hull in 2D
