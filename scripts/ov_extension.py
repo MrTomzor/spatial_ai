@@ -103,11 +103,25 @@ class SphereMap:
         self.points = np.array([0,0,0]).reshape((1,3))
         self.radii = np.array([init_radius]).reshape((1,1))
         self.connections = np.array([None], dtype=object)
-        print("INIT CONNS:")
-        print(self.connections)
 
         self.min_radius = min_radius
         self.max_radius = init_radius
+
+    def consistencyCheck(self):
+        print("CONSISTENCY CHECK")
+        n_nodes = self.points.shape[0]
+        for i in range(n_nodes):
+            conns = self.connections[i]
+            if conns is None:
+                continue
+            for c in conns:
+                otherconns = self.connections[c]
+                if otherconns is None or i not in otherconns:
+                    print("ERROR! CONNECTION INCONSISTENCY AT NODE INDEX " + str(i) + " AND " + str(c))
+                    print(conns)
+                    print(otherconns)
+                    return False
+        return True
 
     def removeNodes(self, toosmall_idxs):
         # FIRST DESTROY CONNECTIONS TO THE PRUNED SPHERES
@@ -120,7 +134,10 @@ class SphereMap:
                     if otherconn.size == 1: #ASSUMING the other sphere has at least 1 connection, which should be to this node
                         self.connections[other_idx] = None
                     else:
-                        self.connections[other_idx] = np.array([x for x in self.connections[idx][j] if x != idx]).flatten()
+                        # print("KOKOT")
+                        # print(self.connections[idx][j])
+                        # print(self.connections[idx][j].shape)
+                        self.connections[other_idx] = np.array([x for x in self.connections[other_idx] if x != idx]).flatten()
 
         shouldkeep = np.full((self.points.shape[0] , 1), True)
         shouldkeep[toosmall_idxs] = False
@@ -141,9 +158,6 @@ class SphereMap:
 
         # GO THRU ALL SURVIVING NODES AND REMAP THEIR CONNECTION INDICES
         for i in range(self.radii.size):
-            # self.connections = self.connections[shouldkeep].flatten()
-            print("REMAPIN")
-            print(self.connections[i] )
             if not self.connections[i] is None and self.connections[i].size > 0 and not self.connections[i][0] is None:
                 self.connections[i] = index_remapping[self.connections[i]].flatten()
 
@@ -161,16 +175,17 @@ class SphereMap:
                 continue
 
             # dont take into account the ones decided for deletion
-            conns = np.array([c for c in conns if shouldkeep[c]])
-            if conns.size == 0:
+            conns = ([c for c in conns if shouldkeep[c]])
+            if len(conns)== 0:
                 continue
+            conns = np.array(conns, dtype=int)
 
             pos = self.points[idx]
             radius = self.radii[idx] 
 
             distvectors = self.points[conns, :] - pos
             norms = np.linalg.norm(distvectors, axis=1)
-            others_radii = self.radii[conns, :]
+            others_radii = self.radii[conns]
             peeking_dists = (norms - others_radii) + radius
 
             peek_thresh = 0.1
@@ -180,7 +195,10 @@ class SphereMap:
                 n_remove += 1
         print("REMOVING REDUNDANT: " + str(n_remove))
         if n_remove > 0:
-            self.removeNodes(np.where(np.logical_not(shouldkeep))[0])
+            remove_idxs = np.where(np.logical_not(shouldkeep))[0]
+            print(remove_idxs)
+            print(remove_idxs.shape)
+            self.removeNodes(remove_idxs)
     
     def updateConnections(self, worked_sphere_idxs):
         print("UPDATING CONNECTIONS FOR " + str(worked_sphere_idxs.size) + " SPHERES")
@@ -189,19 +207,19 @@ class SphereMap:
         # print("CURRENT CONNS:")
         # print(self.connections)
         for idx in worked_sphere_idxs:
-            # print("UPDATING FOR")
-            # print(idx)
+            # print("FOR NODE " + str(idx))
             prev_connections = self.connections[idx]
             intersecting = self.getIntersectingSpheres(self.points[idx, :], self.radii[idx])
             intersecting[idx] = False
-            # print("NEWCONN:")
+            # print("PREVCONNS:")
+            # print(prev_connections)
             if not np.any(intersecting):
                 self.connections[idx] = None
             else:
                 newconn = np.where(intersecting)[0]
-                print("NEWC")
-                print(newconn)
-                print(newconn.flatten())
+                # print("NEWC")
+                # print(newconn)
+                # print(newconn.flatten())
                 # print(self.connections.shape)
                 # print(self.connections.shape)
                 self.connections[idx] = newconn.flatten()
@@ -209,7 +227,7 @@ class SphereMap:
             # print(prev_connections)
             # print(self.connections[idx])
 
-            # DETACH FROM OLD CONNS
+            # FOR X2 THAT USED TO BE CONNECTED TO X1 AND ARE NOT ANYMORE, REMOVE X1 FROM X2s CONNECTIONS
             #ITS HERE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!111
             if not prev_connections is None:
                 detached_sphere_idxs = [x for x in prev_connections.flatten()] #was in old
@@ -223,26 +241,41 @@ class SphereMap:
                             detached_sphere_idxs.remove(remain_conn)
 
                 if len(detached_sphere_idxs) > 0:
-                    print("DETACHED IDXS:")
-                    print(detached_sphere_idxs )
-                    print("PREV CONS:")
-                    print(prev_connections )
-                    print("NOW CON:")
-                    print(self.connections[idx] )
+                    # print("DETACHED IDXS:")
+                    # print(detached_sphere_idxs )
+                    # print("PREV CONS:")
+                    # print(prev_connections )
+                    # print("NOW CON:")
+                    # print(self.connections[idx] )
 
                     for det_idx in detached_sphere_idxs:
                         # print(det_idx)
                         if not det_idx is None:
                             # WARNING! THIS FUCKER RETURNS [None]
                             dif = np.setdiff1d(self.connections[det_idx], np.array([idx], dtype=int))
-                            print("DIFF")
-                            print(dif)
+                            # print("DIFF")
+                            # print(dif)
                             if len(dif) == 1 and dif[0] is None:
                                 self.connections[det_idx] = None
                             else:
                                 self.connections[det_idx] = dif.flatten()
                         else:
                             print("WARN! DET IDX IS NONE")
+
+            # FOR X2 THAT WERE NOT CONNECTED TO X1 AND NOW ARE, ADD X1 TO THEIR CONNS
+            # WARNING! THIS FUCKER RETURNS [None]
+            not_in_old_yes_in_new = np.setdiff1d(self.connections[idx], prev_connections)
+            if not_in_old_yes_in_new.size > 0 and not not_in_old_yes_in_new[0] is None:
+                for j in not_in_old_yes_in_new:
+                    if self.connections[j] is None:
+                        self.connections[j] = np.array([idx])
+                    else:
+                        print(self.connections[j].shape)
+                        self.connections[j] = np.concatenate((self.connections[j], np.array([idx])))
+
+
+            # print("NEWCONNS:")
+            # print(self.connections[idx])
 
         return
 
@@ -258,12 +291,6 @@ class SphereMap:
         intersecting = norms < self.radii + radius
         # print("FOUND INTERSECTIONS: " + str(np.sum(intersecting)))
         return intersecting 
-
-    # def update_in_fov(self, cam_T, visible_obstacle_pts, cam_K):
-    #     # visible_obstacle_pts = visible obstacle points, position is relative to current pose of camera
-    #     # cam_T = transformation from origin of spheremap to current camera pose
-    #     # cam_K = projection matrix of cam
-    #     print("UPDATINGI IN FOV")
 
 class OdomNode:
     def __init__(self):
@@ -439,9 +466,6 @@ class OdomNode:
         final_points = transformed[:, positive_z_idxs]
 
         pixpos = self.getPixelPositions(final_points)
-        # pixpos = self.K @ final_points 
-        # pixpos = pixpos / pixpos[2, :]
-        # pixpos = pixpos[:2, :].T
 
         # COMPUTE DELAUNAY TRIANG OF VISIBLE SLAM POINTS
         print("HAVE DELAUNAY:")
@@ -523,9 +547,9 @@ class OdomNode:
             inhull = np.array([img_polygon.contains(geometry.Point(old_pixpos[i, 0], old_pixpos[i, 1])) for i in range(old_pixpos.shape[0])])
             
             print("OLD PTS IN HULL:" + str(np.sum(inhull)) + "/" + str(z_ok_points.shape[0]))
-            if not np.any(inhull):
-                print("PIXPOS:")
-                print(old_pixpos)
+            # if not np.any(inhull):
+                # print("PIXPOS:")
+                # print(old_pixpos)
 
             if np.any(inhull):
                 # remove spheres not projecting to conv hull in 2D
@@ -559,10 +583,13 @@ class OdomNode:
 
                 worked_sphere_idxs = worked_sphere_idxs[np.logical_not(idx_picker)].flatten()
 
+                self.spheremap.consistencyCheck()
                 # RE-CHECK CONNECTIONS
                 self.spheremap.updateConnections(worked_sphere_idxs)
 
                 # AT THE END, PRUNE THE EXISTING SPHERES THAT BECAME TOO SMALL (delete their pos, radius and conns)
+                self.spheremap.consistencyCheck()
+                self.spheremap.removeIfRedundant(worked_sphere_idxs)
 
                 # self.spheremap.removeNodes(np.where(idx_picker)[0])
 
@@ -576,7 +603,7 @@ class OdomNode:
 
         # CHECK THE SAMPLING DIRS ARE INSIDE THE 2D CONVEX HULL OF 3D POINTS
         inhull = np.array([img_polygon .contains(geometry.Point(p[0], p[1])) for p in sampling_pts])
-        print(inhull)
+        # print(inhull)
         if not np.any(inhull):
             print("NONE IN HULL")
             return
@@ -590,14 +617,10 @@ class OdomNode:
         invK = np.linalg.inv(self.K)
         sampling_pts = invK @ sampling_pts
         rand_z = np.random.rand(1, n_sampled) * max_sphere_sampling_z
-        print("SPHERE SAMPLING PTS:" )
-        print(sampling_pts)
 
         # FILTER PTS - CHECK THAT THE MAX DIST IS NOT BEHIND THE OBSTACLE MESH BY RAYCASTING
         ray_hit_pts, index_ray, index_tri = obstacle_mesh.ray.intersects_location(
         ray_origins=np.zeros(sampling_pts.shape).T, ray_directions=sampling_pts.T)
-        print("RAYS")
-        print(index_ray)
 
         # MAKE THEM BE IN RAND POSITION BETWEEN CAM AND MESH HIT POSITION
         sampling_pts =  (np.random.rand(n_sampled, 1) * ray_hit_pts).T
@@ -671,6 +694,8 @@ class OdomNode:
         self.visualize_spheremap(T_current_cam_to_orig)
         comp_time = time.time() - comp_start_time
         print("SPHEREMAP visualization time: " + str((comp_time) * 1000) +  " ms")
+
+        self.node_offline = not self.spheremap.consistencyCheck()
 
 
     def visualize_depth(self, pixpos, tri):
