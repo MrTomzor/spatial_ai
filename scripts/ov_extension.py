@@ -123,6 +123,34 @@ class SphereMap:
                     return False
         return True
 
+    def wouldPruningNodeMakeConnectedNodesNotFullGraph(self, idx):
+        conns = self.connections[idx]
+        if conns is None:
+            return False
+        if conns.size == 1:
+            return False
+
+        print("WP FOR NODE " + str(idx) + " WITH CONNS " + str(len(conns)))
+
+        frontier = [conns[0]]
+        visited = [conns[0], idx]
+        while len(frontier) > 0:
+            print("FRONTIER: ")
+            print(frontier)
+            popped = frontier.pop()
+            # visited.append(popped)
+            popped_conns = self.connections[popped]
+            for c in popped_conns:
+                if (not c in visited) and c in conns:
+                    frontier.append(c)
+                    visited.append(c)
+        print("VISITED AT END: ")
+        print(visited)
+        if len(visited) == conns.size + 1:
+            return False
+        return True
+
+
     def removeNodes(self, toosmall_idxs):
         # FIRST DESTROY CONNECTIONS TO THE PRUNED SPHERES
         for i in range(toosmall_idxs.size):
@@ -189,22 +217,27 @@ class SphereMap:
             distvectors = self.points[conns, :] - pos
             norms = np.linalg.norm(distvectors, axis=1)
             others_radii = self.radii[conns]
-            print("RAD:")
+            # print("RAD:")
             peeking_dists = (norms - others_radii) + radius
 
             peek_thresh = 2
             ratio_thresh = 1
-            pdt = peeking_dists < peek_thresh
+            # pdt = peeking_dists < peek_thresh
+            magic = norms < ((others_radii + radius) / 2) * 0.9
             trsh = others_radii > ratio_thresh * radius
-            print("P")
-            print(norms )
-            print(peeking_dists )
-            print(radius)
+            # print("P")
+            # print(norms )
+            # print(peeking_dists )
+            # print(radius)
 
-            print("PDT")
-            print(pdt)
-            print(trsh)
-            if np.any(np.logical_and(pdt, trsh)):
+            # print("MAGIC")
+            # print(magic)
+            # print(trsh)
+            wp = self.wouldPruningNodeMakeConnectedNodesNotFullGraph(idx)
+            # print(wp)
+
+            if (not wp) and np.any(magic):
+            # if np.any(np.logical_and(pdt, trsh)):
                 shouldkeep[idx] = False
                 n_remove += 1
         print("REMOVING REDUNDANT: " + str(n_remove))
