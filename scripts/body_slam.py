@@ -102,7 +102,10 @@ class Tracked2DPoint:
         self.active = True
 
     def addObservation(self, pt, keyframe_id):
-        self.last_observed_keyframe_id = np.max(keyframe_id, self.last_observed_keyframe_id)
+        # self.last_observed_keyframe_id = np.max(keyframe_id, self.last_observed_keyframe_id)
+        # self.last_observed_keyframe_id = np.max(keyframe_id, self.last_observed_keyframe_id)
+        if self.last_observed_keyframe_id < keyframe_id:
+            self.last_observed_keyframe_id = keyframe_id
         # self.keyframe_observations[keyframe_id] = [u,v]
         self.keyframe_observations[keyframe_id] = pt
 
@@ -239,6 +242,7 @@ class OdomNode:
             if new_px is None or len(new_px) == 0:
                 return
             n_new_px = len(new_px)
+            print("N FOUND IN BEGINNING: " + str(n_new_px))
 
             active_pix = np.array([x.pt for x in new_px], dtype=np.float32)
 
@@ -296,7 +300,8 @@ class OdomNode:
 
                     # self.px_cur = np.concatenate((self.px_cur, inside_points[surviving_idxs , :]))
                     # self.tracking_stats = np.concatenate((self.tracking_stats, inside_stats[surviving_idxs ]))
-                    deletion_ids = deletion_ids + [inside_ids[i] for i in idxs]
+
+                    deletion_ids = deletion_ids + [inside_ids[i] for i in idxs[(self.max_features_per_bin-1):]]
 
                     # TODO - LET THE ONES WITH MANY DEPTH MEASUREMENTS LIVE
 
@@ -344,12 +349,29 @@ class OdomNode:
         # NONDEACTIVATED POINTS ... ARENT CHANGED AT ALL! OH JUST INCREASED AGE (NUMBER OF IMGS LIVED)
         for px_id in active_ids:
             self.tracked_2d_points[px_id].age += 1
-        for del_idx in deletion_ids:
-            self.tracked_2d_points[active_ids[del_idx]].age -= 1
-            self.tracked_2d_points[active_ids[del_idx]].active = False
+        for del_id in deletion_ids:
+            # self.tracked_2d_points[active_ids[del_idx]].age -= 1
+            # self.tracked_2d_points[active_ids[del_idx]].active = False
+            self.tracked_2d_points[del_id].age -= 1
+            self.tracked_2d_points[del_id].active = False
 
 
         print("DEACTIVATED: " + str(len(deletion_ids)))
+
+        n_added = 0
+        for batch in new_px:
+            n_pts = batch.shape[0]
+            n_added += n_pts
+            # print(batch)
+
+            new_ids = range(self.next_2d_point_id, self.next_2d_point_id + n_pts)
+            self.next_2d_point_id += n_pts
+            for i in range(n_pts):
+                pt_object = Tracked2DPoint(batch[i, :], self.keyframe_idx)
+                self.tracked_2d_points[new_ids[i]] = pt_object
+
+        print("ADDED: " + str(n_added))
+
         # TODO - add the found points to dict!!!
 
         # print("CURRENT FEATURES: " + str(self.px_cur.shape[0]))
@@ -416,21 +438,22 @@ class OdomNode:
             # self.px_ref, self.px_cur, self.tracking_stats = featureTracking(self.last_frame, self.new_frame, self.px_ref, self.tracking_stats)
 
             # DO TRACKING
-            px_ref = np.array([self.tracked_2d_points[p].keyframe_observations[self.keyframe_idx] for p in self.active_2d_points_ids], dtype=np.float32)
+            px_ref = np.array([self.tracked_2d_points[p].current_pos for p in self.active_2d_points_ids], dtype=np.float32)
             print("PX REF SHAPE")
             print(px_ref.shape)
-            print(px_ref)
+            # print(px_ref)
             kp2, st, err = cv2.calcOpticalFlowPyrLK(self.last_frame, self.new_frame, px_ref, None, **lk_params)  #shape: [k,2] [k,1] [k,1]
 
             st = st.reshape(st.shape[0])
-            kp1 = px_ref[st == 1]
-            kp2 = kp2[st == 1]
+            # kp1 = px_ref[st == 1]
+            # kp2 = kp2[st == 1]
 
             # ADD OBSERVATION POSITIONS AND THIS_FRAME INDEX FOR ALL 2D POINTS IN 2D POINT DICT
             for i in range(px_ref.shape[0]):
                 pt_id = self.active_2d_points_ids[i]
                 if st[i] == 1:
                     self.tracked_2d_points[pt_id].addObservation(kp2[i], self.keyframe_idx)
+                    self.tracked_2d_points[pt_id].current_pos = kp2[i]
                 else:
                     self.tracked_2d_points[pt_id].active = False
 
@@ -520,7 +543,7 @@ class OdomNode:
         rgb = np.repeat(copy.deepcopy(self.new_frame)[:, :, np.newaxis], 3, axis=2)
         # rgb = np.repeat((self.new_frame)[:, :, np.newaxis], 3, axis=2)
 
-        px_cur = np.array([self.tracked_2d_points[p].keyframe_observations[self.keyframe_idx] for p in self.active_2d_points_ids])
+        px_cur = np.array([self.tracked_2d_points[p].current_pos for p in self.active_2d_points_ids])
         print("PX CUR SHAPE:")
         print(px_cur.shape)
         print(px_cur)
@@ -536,10 +559,11 @@ class OdomNode:
             minsize = 4
 
             for i in range(inside_pix_idxs.shape[0]):
-                size = self.tracking_stats[inidx][i].age / growsize
-                if size > growsize:
-                    size = growsize
-                size += minsize
+                # size = self.tracking_stats[inidx][i].age / growsize
+                # if size > growsize:
+                #     size = growsize
+                # size += minsize
+                size = minsize
 
                 rgb = cv2.circle(rgb, (inside_pix_idxs[i,0], inside_pix_idxs[i,1]), int(size), 
                                (255, 0, 255), -1) 
