@@ -186,7 +186,7 @@ class OdomNode:
         self.height = 600
         self.tracking_bin_width = 100
         self.min_features_per_bin = 1
-        self.max_features_per_bin = 2
+        self.max_features_per_bin = 10
         self.tracking_history_len = 4
         self.node_offline = False
         self.last_tried_landmarks_pxs = None
@@ -331,8 +331,8 @@ class OdomNode:
                     found_total += len(locally_found)
 
                     # ADD THE NEW ONES
-                    # locally_found[:, 0] += ul[0]
-                    # locally_found[:, 1] += ul[1]
+                    locally_found[:, 0] += ul[0]
+                    locally_found[:, 1] += ul[1]
                     # self.px_cur = np.concatenate((self.px_cur, locally_found))
                     new_px = new_px + [locally_found]
                 else:
@@ -472,6 +472,7 @@ class OdomNode:
         # TODO - and prev keyframe parallax condition
         if len(self.keyframes) > 0:
             time_since_last_keyframe = (self.new_img_stamp - self.keyframes[-1].img_timestamp).to_sec()
+        print("TIME SINCE LAST KF:" + str(time_since_last_keyframe ))
 
         # if self.px_ref is None or ( time_since_last_keyframe > keyframe_time_threshold and dist_since_last_keyframe > keyframe_distance_threshold):
         if time_since_last_keyframe is None or time_since_last_keyframe > keyframe_time_threshold:
@@ -498,10 +499,10 @@ class OdomNode:
                     if len(point_kfs_in_optim_kfs) > 1:
                         optim_pt_ids.append(pt_id)
 
-                print("OPTIM KF IDXS: ")
-                print(optim_kf_idxs)
-                print("OPTIM POINT IDXS: ")
-                print(optim_pt_ids)
+                # print("OPTIM KF IDXS: ")
+                # print(optim_kf_idxs)
+                # print("OPTIM POINT IDXS: ")
+                # print(optim_pt_ids)
                 self.visualBatchOptimization(optim_kf_idxs, optim_pt_ids)
 
             # CONTROL FEATURE POPULATION - ADDING AND PRUNING
@@ -546,7 +547,7 @@ class OdomNode:
         px_cur = np.array([self.tracked_2d_points[p].current_pos for p in self.active_2d_points_ids])
         print("PX CUR SHAPE:")
         print(px_cur.shape)
-        print(px_cur)
+        # print(px_cur)
 
         if not px_cur is None and px_cur.size > 0:
 
