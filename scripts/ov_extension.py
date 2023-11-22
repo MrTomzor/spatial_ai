@@ -124,8 +124,6 @@ class SphereMap:
         self.surfel_radii = None
         self.surfel_normals = None
 
-        self.submaps = [[0]]
-
         self.min_radius = min_radius
         self.max_radius = init_radius# # #}
 
@@ -157,13 +155,13 @@ class SphereMap:
         if conns.size == 1:
             return False
 
-        print("WP FOR NODE " + str(idx) + " WITH CONNS " + str(len(conns)))
+        # print("WP FOR NODE " + str(idx) + " WITH CONNS " + str(len(conns)))
 
         frontier = [conns[0]]
         visited = [conns[0], idx]
         while len(frontier) > 0:
-            print("FRONTIER: ")
-            print(frontier)
+            # print("FRONTIER: ")
+            # print(frontier)
             popped = frontier.pop()
             # visited.append(popped)
             popped_conns = self.connections[popped]
@@ -171,8 +169,8 @@ class SphereMap:
                 if (not c in visited) and c in conns:
                     frontier.append(c)
                     visited.append(c)
-        print("VISITED AT END: ")
-        print(visited)
+        # print("VISITED AT END: ")
+        # print(visited)
         if len(visited) == conns.size + 1:
             return False
         return True# # #}
@@ -321,7 +319,7 @@ class SphereMap:
                     if self.connections[j] is None:
                         self.connections[j] = np.array([idx])
                     else:
-                        print(self.connections[j].shape)
+                        # print(self.connections[j].shape)
                         self.connections[j] = np.concatenate((self.connections[j], np.array([idx])))
 
 
@@ -366,6 +364,7 @@ class SphereMapNavNode:
         self.slam_pcl_pub = rospy.Publisher('extended_slam_points', PointCloud, queue_size=10)
 
         self.spheremap_spheres_pub = rospy.Publisher('spheres', MarkerArray, queue_size=10)
+        self.recent_submaps_vis_pub = rospy.Publisher('recent_submaps_vis', MarkerArray, queue_size=10)
 
         self.kp_pub = rospy.Publisher('tracked_features_img', Image, queue_size=1)
         self.depth_pub = rospy.Publisher('estim_depth_img', Image, queue_size=1)
@@ -454,6 +453,7 @@ class SphereMapNavNode:
         T_global_to_imu = self.odom_msg_to_transformation_matrix(self.odom_buffer[-1])
         self.submap_unpredictability_signal = 0
         init_new_spheremap = False
+        memorized_transform_to_prev_map = None
         init_rad = 0.5
         min_rad = init_rad
 
@@ -468,19 +468,22 @@ class SphereMapNavNode:
                 secs_since_creation = (rospy.get_rostime() - self.spheremap.creation_time).to_sec()
 
                 # TIME BASED
-                if secs_since_creation > 10:
+                if secs_since_creation > 7:
                     split_score = max_split_score
 
                 if split_score >= max_split_score:
                     # SAVE OLD SPHEREMAP
                     # TODO give it the transform to the next ones origin from previous origin
+                    memorized_transform_to_prev_map = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_imu
                     self.current_episode_submaps.append(self.spheremap)
                     init_new_spheremap = True
+                    self.visualize_episode_submaps()
 
         if init_new_spheremap:
             # INIT NEW SPHEREMAP
             print("INFO: initing new spheremap")
             self.spheremap = SphereMap(init_rad, min_rad)
+            self.spheremap.memorized_transform_to_prev_map = memorized_transform_to_prev_map 
             # self.spheremap.T_global_to_own_origin = T_global_to_imu @ self.imu_to_cam_T
             self.spheremap.T_global_to_own_origin = T_global_to_imu 
             self.spheremap.T_global_to_imu_at_start = T_global_to_imu
@@ -696,7 +699,7 @@ class SphereMapNavNode:
         self.spheremap.updateSurfels(visible_pts_in_spheremap_frame , pixpos, tri.simplices)# # #}
 
         # VISUALIZE CURRENT SPHERES
-        self.visualize_spheremap(T_current_cam_to_orig)
+        self.visualize_spheremap()
         comp_time = time.time() - comp_start_time
         print("SPHEREMAP visualization time: " + str((comp_time) * 1000) +  " ms")
 
@@ -1247,10 +1250,34 @@ class SphereMapNavNode:
             self.kp_pcl_pub.publish(point_cloud)
 # # #}
 
-    def visualize_episode_submaps(self, T_current_cam_to_current_map_orig):# # #{
-        return
+    def visualize_episode_submaps(self):# # #{
+        # FIRST CLEAR MARKERS
+        clear_msg = MarkerArray()
+        marker = Marker()
+        marker.id = 0
+        # marker.ns = self.marker_ns
+        marker.action = Marker.DELETEALL
+        clear_msg.markers.append(marker)
+        self.spheremap_spheres_pub.publish(clear_msg)
 
-    def visualize_spheremap(self, T_current_cam_to_orig):# # #{
+        marker_array = MarkerArray()
+
+        max_maps_to_vis = 20
+
+        if max_maps_to_vis < len(self.current_episode_submaps):
+            max_maps_to_vis = self.current_episode_submaps
+
+        for i in range(max_maps_to_vis):
+            if self.current_episode_submaps[-(1+i)].memorized_transform_to_prev_map is None:
+                break
+            self.get_spheremap_marker_array(marker_array, self.current_episode_submaps[-(i+1)], self.current_episode_submaps[-(i+1)].T_global_to_own_origin, alternative_look = True, do_connections = True)
+
+        self.recent_submaps_vis_pub.publish(marker_array)
+
+        return
+# # #}
+
+    def visualize_spheremap(self):# # #{
         if self.spheremap is None:
             return
 
@@ -1265,23 +1292,20 @@ class SphereMapNavNode:
 
         marker_array = MarkerArray()
 
-        # self.get_spheremap_marker_array(marker_array, self.spheremap, T_current_cam_to_orig)
-        print("SMAP VIS")
-        print(self.spheremap.T_global_to_own_origin)
-        print(T_current_cam_to_orig)
-        # self.get_spheremap_marker_array(marker_array, self.spheremap, self.spheremap.T_global_to_own_origin @ np.linalg.inv(T_current_cam_to_orig) )
-        # self.get_spheremap_marker_array(marker_array, self.spheremap, self.spheremap.T_global_to_own_origin @ (self.imu_to_cam_T)  )
         self.get_spheremap_marker_array(marker_array, self.spheremap, self.spheremap.T_global_to_own_origin)
 
         self.spheremap_spheres_pub.publish(marker_array)
 # # #}
     
-    def get_spheremap_marker_array(self, marker_array, smap, T_inv, do_surfels=True, do_spheres=True, do_connections=True):
+    def get_spheremap_marker_array(self, marker_array, smap, T_inv, alternative_look=False, do_surfels=True, do_spheres=True, do_connections=True):
         # T_vis = np.linalg.inv(T_inv)
         T_vis = T_inv
         pts = transformPoints(smap.points, T_vis)
 
         marker_id = 0
+        if len(marker_array.markers) > 0:
+            marker_id = marker_array.markers[-1].id
+
         if do_connections:
             line_marker = Marker()
             line_marker.header.frame_id = "global"  # Set your desired frame_id
@@ -1289,6 +1313,8 @@ class SphereMapNavNode:
             line_marker.action = Marker.ADD
             line_marker.scale.x = 0.2  # Line width
             line_marker.color.a = 1.0  # Alpha
+            if alternative_look:
+                line_marker.scale.x = 0.1
 
             line_marker.id = marker_id
             marker_id += 1
@@ -1343,10 +1369,15 @@ class SphereMapNavNode:
                 marker.scale.y = 2 * smap.radii[i]
                 marker.scale.z = 2 * smap.radii[i]
 
-                marker.color.a = 0.2
+                marker.color.a = 0.15
                 marker.color.r = 0.0
                 marker.color.g = 1.0
                 marker.color.b = 0.0
+                if alternative_look:
+                    marker.color.a = 0.05
+                    marker.color.r = 0.0
+                    marker.color.g = 0.0
+                    marker.color.b = 1.0
 
                 # Add the marker to the MarkerArray
                 marker_array.markers.append(marker)
