@@ -481,7 +481,8 @@ class SphereMapNavNode:
             # INIT NEW SPHEREMAP
             print("INFO: initing new spheremap")
             self.spheremap = SphereMap(init_rad, min_rad)
-            self.spheremap.T_global_to_own_origin = T_global_to_imu @ self.imu_to_cam_T
+            # self.spheremap.T_global_to_own_origin = T_global_to_imu @ self.imu_to_cam_T
+            self.spheremap.T_global_to_own_origin = T_global_to_imu 
             self.spheremap.T_global_to_imu_at_start = T_global_to_imu
             self.spheremap.creation_time = rospy.get_rostime()
 # # #}
@@ -553,7 +554,9 @@ class SphereMapNavNode:
             n_spheres_old = self.spheremap.points.shape[0]
 
             T_delta_odom = np.linalg.inv(self.spheremap.T_global_to_imu_at_start) @ T_global_to_imu
-            T_current_cam_to_orig = self.imu_to_cam_T @ T_delta_odom @ np.linalg.inv(self.imu_to_cam_T)
+            # T_current_cam_to_orig = self.imu_to_cam_T @ T_delta_odom @ np.linalg.inv(self.imu_to_cam_T)
+
+            T_current_cam_to_orig = T_delta_odom @ np.linalg.inv(self.imu_to_cam_T)
 
             print("FINAL MATRIX")
             print(T_current_cam_to_orig)
@@ -625,7 +628,7 @@ class SphereMapNavNode:
         # ---EXPANSION STEP #{
         max_sphere_sampling_z = 60
 
-        n_sampled = 20
+        n_sampled = 50
         sampling_pts = np.random.rand(n_sampled, 2)  # Random points in [0, 1] range for x and y
         sampling_pts = sampling_pts * [self.width, self.height]
 
@@ -1251,51 +1254,44 @@ class SphereMapNavNode:
         if self.spheremap is None:
             return
 
+        # FIRST CLEAR MARKERS
+        clear_msg = MarkerArray()
+        marker = Marker()
+        marker.id = 0
+        # marker.ns = self.marker_ns
+        marker.action = Marker.DELETEALL
+        clear_msg.markers.append(marker)
+        self.spheremap_spheres_pub.publish(clear_msg)
+
         marker_array = MarkerArray()
 
-        self.get_spheremap_marker_array(marker_array, self.spheremap, T_current_cam_to_orig)
+        # self.get_spheremap_marker_array(marker_array, self.spheremap, T_current_cam_to_orig)
+        print("SMAP VIS")
+        print(self.spheremap.T_global_to_own_origin)
+        print(T_current_cam_to_orig)
+        # self.get_spheremap_marker_array(marker_array, self.spheremap, self.spheremap.T_global_to_own_origin @ np.linalg.inv(T_current_cam_to_orig) )
+        # self.get_spheremap_marker_array(marker_array, self.spheremap, self.spheremap.T_global_to_own_origin @ (self.imu_to_cam_T)  )
+        self.get_spheremap_marker_array(marker_array, self.spheremap, self.spheremap.T_global_to_own_origin)
 
         self.spheremap_spheres_pub.publish(marker_array)
 # # #}
     
     def get_spheremap_marker_array(self, marker_array, smap, T_inv, do_surfels=True, do_spheres=True, do_connections=True):
-        T_vis = np.linalg.inv(T_inv)
+        # T_vis = np.linalg.inv(T_inv)
+        T_vis = T_inv
         pts = transformPoints(smap.points, T_vis)
 
-        if do_spheres:
-            for i in range(smap.points.shape[0]):
-                marker = Marker()
-                marker.header.frame_id = "cam0"  # Change this frame_id if necessary
-                marker.header.stamp = rospy.Time.now()
-                marker.type = Marker.SPHERE
-                marker.action = Marker.ADD
-                marker.id = i
-
-                # Set the position (sphere center)
-                marker.pose.position.x = pts[i][0]
-                marker.pose.position.y = pts[i][1]
-                marker.pose.position.z = pts[i][2]
-
-                # Set the scale (sphere radius)
-                marker.scale.x = 2 * smap.radii[i]
-                marker.scale.y = 2 * smap.radii[i]
-                marker.scale.z = 2 * smap.radii[i]
-
-                marker.color.a = 0.1
-                marker.color.r = 0.0
-                marker.color.g = 1.0
-                marker.color.b = 0.0
-
-                # Add the marker to the MarkerArray
-                marker_array.markers.append(marker)
-
+        marker_id = 0
         if do_connections:
             line_marker = Marker()
-            line_marker.header.frame_id = "cam0"  # Set your desired frame_id
+            line_marker.header.frame_id = "global"  # Set your desired frame_id
             line_marker.type = Marker.LINE_LIST
             line_marker.action = Marker.ADD
             line_marker.scale.x = 0.2  # Line width
             line_marker.color.a = 1.0  # Alpha
+
+            line_marker.id = marker_id
+            marker_id += 1
 
             for i in range(smap.connections.shape[0]):
                 if smap.connections[i] is None:
@@ -1326,6 +1322,35 @@ class SphereMapNavNode:
                     line_marker.points.append(point1)
                     line_marker.points.append(point2)
             marker_array.markers.append(line_marker)
+
+        if do_spheres:
+            for i in range(smap.points.shape[0]):
+                marker = Marker()
+                marker.header.frame_id = "global"  # Change this frame_id if necessary
+                marker.header.stamp = rospy.Time.now()
+                marker.type = Marker.SPHERE
+                marker.action = Marker.ADD
+                marker.id = marker_id
+                marker_id += 1
+
+                # Set the position (sphere center)
+                marker.pose.position.x = pts[i][0]
+                marker.pose.position.y = pts[i][1]
+                marker.pose.position.z = pts[i][2]
+
+                # Set the scale (sphere radius)
+                marker.scale.x = 2 * smap.radii[i]
+                marker.scale.y = 2 * smap.radii[i]
+                marker.scale.z = 2 * smap.radii[i]
+
+                marker.color.a = 0.2
+                marker.color.r = 0.0
+                marker.color.g = 1.0
+                marker.color.b = 0.0
+
+                # Add the marker to the MarkerArray
+                marker_array.markers.append(marker)
+
         return True
 
     def decomp_essential_mat(self, E, q1, q2):# # #{
