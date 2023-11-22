@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 
+# #{ imports
+
 import rospy
+
 # from sensor_msgs.msg import Image
 from sensor_msgs.msg import Image, CompressedImage, PointCloud2
 import sensor_msgs.point_cloud2 as pc2
@@ -39,6 +42,7 @@ import tf2_ros
 import tf2_geometry_msgs  # for transforming geometry_msgs
 from geometry_msgs.msg import TransformStamped
 
+
 import gtsam
 from gtsam import DoglegOptimizer
 import gtsam.utils.plot as gtsam_plot
@@ -51,19 +55,29 @@ from mpl_toolkits.mplot3d import Axes3D  # pylint: disable=W0611
 import sys
 from termcolor import colored, cprint
 
+# #}
 
+# #{ global variables
 STAGE_FIRST_FRAME = 0
 STAGE_SECOND_FRAME = 1
 STAGE_DEFAULT_FRAME = 2
 kMinNumFeature = 200
 kMaxNumFeature = 2000
+# #}
 
+# #{ structs and util functions
 def transformPoints(pts, T):
     # pts = Nx3 matrix, T = transformation matrix to apply
     res = np.concatenate((pts.T, np.full((1, pts.shape[0]), 1)))
     res = T @ res 
     res = res / res[3, :] # unhomogenize
     return res[:3, :].T
+
+def getPixelPositions(pts, K):
+    # pts = 3D points u wish to project
+    pixpos = K @ pts 
+    pixpos = pixpos / pixpos[2, :]
+    return pixpos[:2, :].T
 
 # LKPARAMS
 lk_params = dict(winSize  = (31, 31),
@@ -97,17 +111,30 @@ class KeyFrame:
         self.odom_msg = odom_msg
         self.img_timestamp = img_timestamp
         self.T_odom = T_odom
+# #}
 
+# #{ class SphereMap
 class SphereMap:
-    def __init__(self, init_radius, min_radius):
+    def __init__(self, init_radius, min_radius):# # #{
         self.points = np.array([0,0,0]).reshape((1,3))
         self.radii = np.array([init_radius]).reshape((1,1))
         self.connections = np.array([None], dtype=object)
 
-        self.min_radius = min_radius
-        self.max_radius = init_radius
+        self.surfel_points = None
+        self.surfel_radii = None
+        self.surfel_normals = None
 
-    def consistencyCheck(self):
+        self.submaps = [[0]]
+
+        self.min_radius = min_radius
+        self.max_radius = init_radius# # #}
+
+    def updateSurfels(self, visible_points, pixpos, simplices):# # #{
+        # Compute normals measurements for the visible points, all should be pointing towards the camera
+        # What frame are the points in?
+        return True# # #}
+
+    def consistencyCheck(self):# # #{
         print("CONSISTENCY CHECK")
         n_nodes = self.points.shape[0]
         for i in range(n_nodes):
@@ -121,9 +148,9 @@ class SphereMap:
                     print(conns)
                     print(otherconns)
                     return False
-        return True
+        return True# # #}
 
-    def wouldPruningNodeMakeConnectedNodesNotFullGraph(self, idx):
+    def wouldPruningNodeMakeConnectedNodesNotFullGraph(self, idx):# # #{
         conns = self.connections[idx]
         if conns is None:
             return False
@@ -148,10 +175,10 @@ class SphereMap:
         print(visited)
         if len(visited) == conns.size + 1:
             return False
-        return True
+        return True# # #}
 
 
-    def removeNodes(self, toosmall_idxs):
+    def removeNodes(self, toosmall_idxs):# # #{
         # FIRST DESTROY CONNECTIONS TO THE PRUNED SPHERES
         for i in range(toosmall_idxs.size):
             idx = toosmall_idxs[i]
@@ -187,9 +214,10 @@ class SphereMap:
         # GO THRU ALL SURVIVING NODES AND REMAP THEIR CONNECTION INDICES
         for i in range(self.radii.size):
             if not self.connections[i] is None and self.connections[i].size > 0 and not self.connections[i][0] is None:
-                self.connections[i] = index_remapping[self.connections[i]].flatten()
+                self.connections[i] = index_remapping[self.connections[i]].flatten()# # #}
 
-    def removeIfRedundant(self, worked_sphere_idxs):
+    # #{ def removeSpheresIfRedundant(self, worked_sphere_idxs):
+    def removeSpheresIfRedundant(self, worked_sphere_idxs):
         # CHECK IF ADJACENT NODES ARE ALL CONNECTED TOGETHER - SO GRAPH IS NEVER TORN
         shouldkeep = np.full((self.points.shape[0] , 1), True)
         # shouldkeep[toosmall_idxs] = False
@@ -246,7 +274,9 @@ class SphereMap:
             print(remove_idxs)
             print(remove_idxs.shape)
             self.removeNodes(remove_idxs)
+    # #}
     
+    # #{ def updateConnections(self, worked_sphere_idxs):
     def updateConnections(self, worked_sphere_idxs):
         print("UPDATING CONNECTIONS FOR " + str(worked_sphere_idxs.size) + " SPHERES")
         for idx in worked_sphere_idxs:
@@ -299,7 +329,9 @@ class SphereMap:
             # print(self.connections[idx])
 
         return
+    # #}
 
+    # #{ def getIntersectingSpheres(self, position, radius):
     def getIntersectingSpheres(self, position, radius):
         distvectors = self.points - position
 
@@ -312,15 +344,20 @@ class SphereMap:
         intersecting = norms < self.radii + radius
         # print("FOUND INTERSECTIONS: " + str(np.sum(intersecting)))
         return intersecting 
+    # #}
+# #}
 
-class OdomNode:
-    def __init__(self):
+# #{ class SphereMapNavNode:
+class SphereMapNavNode:
+    def __init__(self):# # #{
         self.bridge = CvBridge()
         self.prev_image = None
         self.prev_time = None
         self.proper_triang = False
 
         self.spheremap = None
+        self.current_episode_submaps = []
+
         self.keyframes = []
         self.noprior_triangulation_points = None
         self.odomprior_triangulation_points = None
@@ -388,111 +425,74 @@ class OdomNode:
 
         self.n_frames = 0
 
-        self.tracked_features = []
+        self.tracked_features = []# # #}
 
-    def getPixelPositions(self, pts):
-        # pts = 3D points u wish to project
-        pixpos = self.K @ pts 
-        pixpos = pixpos / pixpos[2, :]
-        return pixpos[:2, :].T
-
-    def get_closest_time_odom_msg(self, stamp):
-        bestmsg = None
-        besttimedif = 0
-        for msg in self.odom_buffer:
-            # print(msg.header.stamp.to_sec())
-            tdif2 = np.abs((msg.header.stamp - stamp).to_nsec())
-            if bestmsg == None or tdif2 < besttimedif:
-                bestmsg = msg
-                besttimedif = tdif2
-        final_tdif = (msg.header.stamp - stamp).to_sec()
-        # print("TARGET")
-        # print(stamp)
-        # print("FOUND")
-        # print(msg.header.stamp)
-        # if not bestmsg is None:
-            # print("found msg with time" + str(msg.header.stamp.to_sec()) + " for time " + str(stamp.to_sec()) +" tdif: " + str(final_tdif))
-        return bestmsg
-
-    def odometry_callback(self, msg):
-        self.odom_buffer.append(msg)
-        if len(self.odom_buffer) > self.odom_buffer_maxlen:
-            self.odom_buffer.pop(0)
-
-    def integrate_slam_points_to_keyframe(self, point_cloud_array ):
+    def points_slam_callback(self, msg):# # #{
+        print("PCL MSG")
         comp_start_time = time.time()
 
-        n_new_points = point_cloud_array.size
-
-        mindist = 1
-        mindist2 = mindist * mindist
-
-        if self.slam_points is None and n_new_points > 0:
-            self.slam_points = point_cloud_array
-        elif not self.slam_points is None:
-
-            print("ADDED NEW")
-            self.slam_points = np.concatenate((self.slam_points, point_cloud_array))
-            distances = scipy.spatial.distance_matrix(self.slam_points, self.slam_points)
-            print("HAVE DISTMATRIX")
-            far_enough = distances > mindist2
-            keep = np.array([False for i in range(self.slam_points.shape[0])])
-            for i in range(self.slam_points.shape[0]):
-                far_enough[i,i] = True
-                keep[i] = np.all(far_enough[:, i])
-            # idxs = np.any(distances > mindist2)
-            print("HAVE KEEP")
-            self.slam_points = self.slam_points[keep, :]
-            print("HAVE NEW PTS")
-
-        print("PCL MSG DONE")
-        comp_time = time.time() - comp_start_time
-        print("PCL integration time: " + str((comp_time) * 1000) +  " ms")
-                    
-    def get_distances_from_fov_borders(self, points):
-        # vec1 = 
-        invK = self.K
-        ul = self.K
-
-    def points_slam_callback(self, msg):
-        print("PCL MSG")
-
+        # Read Points from OpenVINS# #{
         pc_data = pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)
         pc_list = []
-
         for point in pc_data:
             x, y, z = point
             pc_list.append([x, y, z])
-
         if len(pc_list) == 0:
             return
-
         point_cloud_array = np.array(pc_list, dtype=np.float32)
 
         # OpenVINS outputs always some point at origin, and it is not really useful for us, breaks hull shit
+        #TODO - solve what to do with this in future
         nonzero_pts = np.array(np.linalg.norm(point_cloud_array, axis=1) > 0)
         if not np.any(nonzero_pts):
             print("NO POINTS?")
             return
         point_cloud_array = point_cloud_array[nonzero_pts, :]
+# # #}
 
-        #TODO - solve what to do with this in future
+        # DECIDE WHETHER TO UPDATE SPHEREMAP OR INIT NEW ONE# #{
+        T_global_to_imu = self.odom_msg_to_transformation_matrix(self.odom_buffer[-1])
+        self.submap_unpredictability_signal = 0
+        init_new_spheremap = False
+        init_rad = 0.5
+        min_rad = init_rad
 
-        # INTEGRATE
-        self.integrate_slam_points_to_keyframe(point_cloud_array)
+        if self.spheremap is None:
+            init_new_spheremap = True
+        else:
+            if self.submap_unpredictability_signal > 1:
+                pass
+            else:
+                max_split_score = 100
+                split_score = 0
+                secs_since_creation = (rospy.get_rostime() - self.spheremap.creation_time).to_sec()
 
-        # ---SPHEREMAP STUFF
+                # TIME BASED
+                if secs_since_creation > 10:
+                    split_score = max_split_score
 
-        comp_start_time = time.time()
+                if split_score >= max_split_score:
+                    # SAVE OLD SPHEREMAP
+                    # TODO give it the transform to the next ones origin from previous origin
+                    self.current_episode_submaps.append(self.spheremap)
+                    init_new_spheremap = True
+
+        if init_new_spheremap:
+            # INIT NEW SPHEREMAP
+            print("INFO: initing new spheremap")
+            self.spheremap = SphereMap(init_rad, min_rad)
+            self.spheremap.T_global_to_own_origin = T_global_to_imu @ self.imu_to_cam_T
+            self.spheremap.T_global_to_imu_at_start = T_global_to_imu
+            self.spheremap.creation_time = rospy.get_rostime()
+# # #}
+
+        # ---CURRENT SPHEREMAP UPDATE WITH CURRENTLY TRIANGULATED POINTS # #{
+
         # TRANSFORM SLAM PTS TO IMAGE AND COMPUTE THEIR PIXPOSITIONS
         if len(self.odom_buffer) == 0:
+            print("WARN: ODOM BUFFER EMPY!")
             return
-        T_global_to_imu = self.odom_msg_to_transformation_matrix(self.odom_buffer[-1])
         transformed = transformPoints(point_cloud_array, (self.imu_to_cam_T @ np.linalg.inv(T_global_to_imu))).T
-
-        # hom = np.concatenate((point_cloud_array.T, np.full((1, point_cloud_array.shape[0]), 1)))
-        # transformed = (self.imu_to_cam_T @ np.linalg.inv(T_global_to_imu)) @ hom
-
         positive_z_idxs = transformed[2, :] > 0
         final_points = transformed[:, positive_z_idxs]
 
@@ -501,12 +501,11 @@ class OdomNode:
         # COMPUTE DELAUNAY TRIANG OF VISIBLE SLAM POINTS
         print("HAVE DELAUNAY:")
         tri = Delaunay(pixpos)
-        # print(tri.simplices)
-
         vis = self.visualize_depth(pixpos, tri)
         self.depth_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
 
         # CONSTRUCT OBSTACLE MESH
+        comp_mesh = time.time()
         obstacle_mesh = trimesh.Trimesh(vertices=final_points.T, faces = tri.simplices)
 
         # CONSTRUCT POLYGON OF PIXPOSs OF VISIBLE SLAM PTS
@@ -517,8 +516,6 @@ class OdomNode:
         # CONSTRUCT HULL MESH FROM 3D POINTS OF CONVEX 2D HULL OF PROJECTED POINTS
         hullmesh_pts = final_points[:, np.unique(hull.simplices)]
         orig_pts = np.zeros((3, 1))
-        # print(hullmesh_pts.shape)
-        # print(orig_pts.shape)
         hullmesh_pts = np.concatenate((hullmesh_pts, orig_pts), axis=1)
         zero_pt_index = hullmesh_pts.shape[1] - 1
 
@@ -535,6 +532,9 @@ class OdomNode:
 
         # CONSTRUCT OBSTACLE POINT MESH AND QUERY
         obstacle_mesh_query = trimesh.proximity.ProximityQuery(obstacle_mesh)
+
+        comp_time = time.time() - comp_mesh
+        print("MESHING time: " + str((comp_time) * 1000) +  " ms")
 
 
         # ---UPDATE AND PRUNING STEP
@@ -617,12 +617,12 @@ class OdomNode:
 
                 # AT THE END, PRUNE THE EXISTING SPHERES THAT BECAME TOO SMALL (delete their pos, radius and conns)
                 # self.spheremap.consistencyCheck()
-                self.spheremap.removeIfRedundant(worked_sphere_idxs)
+                self.spheremap.removeSpheresIfRedundant(worked_sphere_idxs)
 
                 # self.spheremap.removeNodes(np.where(idx_picker)[0])
 
 
-        # ---EXPANSION STEP
+        # ---EXPANSION STEP #{
         max_sphere_sampling_z = 60
 
         n_sampled = 20
@@ -660,13 +660,6 @@ class OdomNode:
         # TRY ADDING NEW SPHERES AT SAMPLED POSITIONS
         new_spheres_fov_dists = np.abs(fov_mesh_query.signed_distance(sampling_pts.T))
         new_spheres_obs_dists = np.abs(obstacle_mesh_query.signed_distance(sampling_pts.T))
-        
-        init_rad = 0.5
-        min_rad = init_rad
-        if self.spheremap is None:
-            self.spheremap = SphereMap(init_rad, min_rad)
-            self.spheremap.T_global_to_own_origin = T_global_to_imu @ self.imu_to_cam_T
-            self.spheremap.T_global_to_imu_at_start = T_global_to_imu
 
         mindists = np.minimum(new_spheres_obs_dists, new_spheres_fov_dists)
         new_sphere_idxs = mindists > min_rad
@@ -689,11 +682,15 @@ class OdomNode:
         self.spheremap.connections = np.concatenate((self.spheremap.connections.flatten(), np.array([None for i in range(n_spheres_to_add)], dtype=object).flatten()))
 
         new_idxs = np.arange(self.spheremap.radii.size)[self.spheremap.radii.size - n_spheres_to_add : self.spheremap.radii.size]
-        self.spheremap.removeIfRedundant(new_idxs)
+        self.spheremap.removeSpheresIfRedundant(new_idxs)
 
         comp_time = time.time() - comp_start_time
         print("SPHEREMAP integration time: " + str((comp_time) * 1000) +  " ms")
         comp_start_time = time.time()
+
+        # HANDLE ADDING/REMOVING VISIBLE 3D POINTS
+        visible_pts_in_spheremap_frame = transformPoints(final_points.T, T_current_cam_to_orig)
+        self.spheremap.updateSurfels(visible_pts_in_spheremap_frame , pixpos, tri.simplices)# # #}
 
         # VISUALIZE CURRENT SPHERES
         self.visualize_spheremap(T_current_cam_to_orig)
@@ -701,9 +698,66 @@ class OdomNode:
         print("SPHEREMAP visualization time: " + str((comp_time) * 1000) +  " ms")
 
         # self.node_offline = not self.spheremap.consistencyCheck()
+# # #}
 
+    def getPixelPositions(self, pts):# # #{
+        # pts = 3D points u wish to project
+        return getPixelPositions(pts, self.K)# # #}
 
-    def visualize_depth(self, pixpos, tri):
+    def get_closest_time_odom_msg(self, stamp):# # #{
+        bestmsg = None
+        besttimedif = 0
+        for msg in self.odom_buffer:
+            # print(msg.header.stamp.to_sec())
+            tdif2 = np.abs((msg.header.stamp - stamp).to_nsec())
+            if bestmsg == None or tdif2 < besttimedif:
+                bestmsg = msg
+                besttimedif = tdif2
+        final_tdif = (msg.header.stamp - stamp).to_sec()
+        # print("TARGET")
+        # print(stamp)
+        # print("FOUND")
+        # print(msg.header.stamp)
+        # if not bestmsg is None:
+            # print("found msg with time" + str(msg.header.stamp.to_sec()) + " for time " + str(stamp.to_sec()) +" tdif: " + str(final_tdif))
+        return bestmsg# # #}
+
+    def odometry_callback(self, msg):# # #{
+        self.odom_buffer.append(msg)
+        if len(self.odom_buffer) > self.odom_buffer_maxlen:
+            self.odom_buffer.pop(0)# # #}
+
+    def integrate_slam_points_to_keyframe(self, point_cloud_array ):# # #{
+        comp_start_time = time.time()
+
+        n_new_points = point_cloud_array.size
+
+        mindist = 1
+        mindist2 = mindist * mindist
+
+        if self.slam_points is None and n_new_points > 0:
+            self.slam_points = point_cloud_array
+        elif not self.slam_points is None:
+
+            print("ADDED NEW")
+            self.slam_points = np.concatenate((self.slam_points, point_cloud_array))
+            distances = scipy.spatial.distance_matrix(self.slam_points, self.slam_points)
+            print("HAVE DISTMATRIX")
+            far_enough = distances > mindist2
+            keep = np.array([False for i in range(self.slam_points.shape[0])])
+            for i in range(self.slam_points.shape[0]):
+                far_enough[i,i] = True
+                keep[i] = np.all(far_enough[:, i])
+            # idxs = np.any(distances > mindist2)
+            print("HAVE KEEP")
+            self.slam_points = self.slam_points[keep, :]
+            print("HAVE NEW PTS")
+
+        print("PCL MSG DONE")
+        comp_time = time.time() - comp_start_time
+        print("PCL integration time: " + str((comp_time) * 1000) +  " ms")# # #}
+                    
+    def visualize_depth(self, pixpos, tri):# # #{
         rgb = np.repeat(copy.deepcopy(self.new_frame)[:, :, np.newaxis], 3, axis=2)
 
         for i in range(len(tri.simplices)):
@@ -717,9 +771,9 @@ class OdomNode:
 
         res = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         return res
+# # #}
 
-
-    def control_features_population(self):
+    def control_features_population(self):# # #{
         wbins = self.width // self.tracking_bin_width
         hbins = self.height // self.tracking_bin_width
         found_total = 0
@@ -836,9 +890,9 @@ class OdomNode:
             print("ZERO FEATURES! FINDING FEATURES")
             self.px_cur = self.detector.detect(self.new_frame)
             self.px_cur = np.array([x.pt for x in self.px_cur], dtype=np.float32)
-
+# # #}
         
-    def odom_msg_to_transformation_matrix(self, closest_time_odom_msg):
+    def odom_msg_to_transformation_matrix(self, closest_time_odom_msg):# # #{
         odom_p = np.array([closest_time_odom_msg.pose.pose.position.x, closest_time_odom_msg.pose.pose.position.y, closest_time_odom_msg.pose.pose.position.z])
         odom_q = np.array([closest_time_odom_msg.pose.pose.orientation.x, closest_time_odom_msg.pose.pose.orientation.y,
             closest_time_odom_msg.pose.pose.orientation.z, closest_time_odom_msg.pose.pose.orientation.w])
@@ -847,9 +901,9 @@ class OdomNode:
         # print(Rotation.from_quat(odom_q).as_matrix())
         T_odom[:3,:3] = Rotation.from_quat(odom_q).as_matrix()
         T_odom[:3, 3] = odom_p
-        return T_odom
+        return T_odom# # #}
 
-    def image_callback(self, msg):
+    def image_callback(self, msg):# # #{
         if self.node_offline:
             return
         img = self.bridge.imgmsg_to_cv2(msg, "bgr8")
@@ -1038,10 +1092,9 @@ class OdomNode:
         self.visualize_slampoints_in_space()
 
         comp_time = time.time() - comp_start_time
-        print("computation time: " + str((comp_time) * 1000) +  " ms")
+        print("computation time: " + str((comp_time) * 1000) +  " ms")# # #}
 
-
-    def visualize_tracking(self):
+    def visualize_tracking(self):# # #{
         # rgb = np.zeros((self.new_frame.shape[0], self.new_frame.shape[1], 3), dtype=np.uint8)
         # print(self.new_frame.shape)
         rgb = np.repeat(copy.deepcopy(self.new_frame)[:, :, np.newaxis], 3, axis=2)
@@ -1120,15 +1173,17 @@ class OdomNode:
 
         # Broadcast the TF transform
         self.tf_broadcaster.sendTransformMessage(tf_msg)
+# # #}
 
-    def visualize_keypoints(self, img, kp):
+    def visualize_keypoints(self, img, kp):# # #{
         rgb = np.zeros((img.shape[0], img.shape[1], 3), dtype=np.uint8)
         for k in kp:
             rgb[int(k.pt[1]), int(k.pt[0]), 0] = 255
         flow_vis = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         return flow_vis
+# # #}
 
-    def visualize_slampoints_in_space(self):
+    def visualize_slampoints_in_space(self):# # #{
         point_cloud = PointCloud()
         point_cloud.header.stamp = rospy.Time.now()
         point_cloud.header.frame_id = 'global'  # Set the frame ID according to your robot's configuration
@@ -1155,8 +1210,9 @@ class OdomNode:
         #     point_cloud.points.append(point1)
 
         self.slam_pcl_pub.publish(point_cloud)
+# # #}
 
-    def visualize_keypoints_in_space(self, use_invdepth):
+    def visualize_keypoints_in_space(self, use_invdepth):# # #{
         point_cloud = PointCloud()
         point_cloud.header.stamp = rospy.Time.now()
         # point_cloud.header.frame_id = 'mission_origin'  # Set the frame ID according to your robot's configuration
@@ -1186,85 +1242,93 @@ class OdomNode:
             self.kp_pcl_pub_invdepth.publish(point_cloud)
         else:
             self.kp_pcl_pub.publish(point_cloud)
+# # #}
 
-    def visualize_spheremap(self, T_current_cam_to_orig):
+    def visualize_episode_submaps(self, T_current_cam_to_current_map_orig):# # #{
+        return
+
+    def visualize_spheremap(self, T_current_cam_to_orig):# # #{
         if self.spheremap is None:
             return
 
         marker_array = MarkerArray()
 
-        # point_cloud = PointCloud()
-        # point_cloud.header.stamp = rospy.Time.now()
-        # point_cloud.header.frame_id = 'global'  # Set the frame ID according to your robot's configuration
-        T_vis = np.linalg.inv(T_current_cam_to_orig)
-        pts = transformPoints(self.spheremap.points, T_vis)
-
-        for i in range(self.spheremap.points.shape[0]):
-            marker = Marker()
-            marker.header.frame_id = "cam0"  # Change this frame_id if necessary
-            marker.header.stamp = rospy.Time.now()
-            marker.type = Marker.SPHERE
-            marker.action = Marker.ADD
-            marker.id = i
-
-            # Set the position (sphere center)
-            marker.pose.position.x = pts[i][0]
-            marker.pose.position.y = pts[i][1]
-            marker.pose.position.z = pts[i][2]
-
-            # Set the scale (sphere radius)
-            marker.scale.x = 2 * self.spheremap.radii[i]
-            marker.scale.y = 2 * self.spheremap.radii[i]
-            marker.scale.z = 2 * self.spheremap.radii[i]
-
-            marker.color.a = 0.1
-            marker.color.r = 0.0
-            marker.color.g = 1.0
-            marker.color.b = 0.0
-
-            # Add the marker to the MarkerArray
-            marker_array.markers.append(marker)
-
-        line_marker = Marker()
-        line_marker.header.frame_id = "cam0"  # Set your desired frame_id
-        line_marker.type = Marker.LINE_LIST
-        line_marker.action = Marker.ADD
-        line_marker.scale.x = 0.2  # Line width
-        line_marker.color.a = 1.0  # Alpha
-
-        for i in range(self.spheremap.connections.shape[0]):
-            if self.spheremap.connections[i] is None:
-                continue
-            for j in range(len(self.spheremap.connections[i])):
-                point1 = Point()
-                point2 = Point()
-                # trpt = transformPoints(np.array([[self.spheremap.points[i, :]], self.spheremap.points[self.spheremap.connections[i][j], :]]), T_vis)
-                # p1 = self.spheremap.points[i, :]
-                # p2 = self.spheremap.points[self.spheremap.connections[i][j], :][0]
-                # p1 = trpt[0, :]
-                # p2 = trpt[1, :]
-
-                p1 = pts[i, :]
-                p2 = pts[self.spheremap.connections[i].flatten()[j], :]
-                # print(p1)
-                # print(p2)
-                # print("KURVA")
-                # print(self.spheremap.connections[i].flatten())
-                # print(self.spheremap.connections[i][j])
-                
-                point1.x = p1[0]
-                point1.y = p1[1]
-                point1.z = p1[2]
-                point2.x = p2[0]
-                point2.y = p2[1]
-                point2.z = p2[2]
-                line_marker.points.append(point1)
-                line_marker.points.append(point2)
-        marker_array.markers.append(line_marker)
+        self.get_spheremap_marker_array(marker_array, self.spheremap, T_current_cam_to_orig)
 
         self.spheremap_spheres_pub.publish(marker_array)
+# # #}
+    
+    def get_spheremap_marker_array(self, marker_array, smap, T_inv, do_surfels=True, do_spheres=True, do_connections=True):
+        T_vis = np.linalg.inv(T_inv)
+        pts = transformPoints(smap.points, T_vis)
 
-    def decomp_essential_mat(self, E, q1, q2):
+        if do_spheres:
+            for i in range(smap.points.shape[0]):
+                marker = Marker()
+                marker.header.frame_id = "cam0"  # Change this frame_id if necessary
+                marker.header.stamp = rospy.Time.now()
+                marker.type = Marker.SPHERE
+                marker.action = Marker.ADD
+                marker.id = i
+
+                # Set the position (sphere center)
+                marker.pose.position.x = pts[i][0]
+                marker.pose.position.y = pts[i][1]
+                marker.pose.position.z = pts[i][2]
+
+                # Set the scale (sphere radius)
+                marker.scale.x = 2 * smap.radii[i]
+                marker.scale.y = 2 * smap.radii[i]
+                marker.scale.z = 2 * smap.radii[i]
+
+                marker.color.a = 0.1
+                marker.color.r = 0.0
+                marker.color.g = 1.0
+                marker.color.b = 0.0
+
+                # Add the marker to the MarkerArray
+                marker_array.markers.append(marker)
+
+        if do_connections:
+            line_marker = Marker()
+            line_marker.header.frame_id = "cam0"  # Set your desired frame_id
+            line_marker.type = Marker.LINE_LIST
+            line_marker.action = Marker.ADD
+            line_marker.scale.x = 0.2  # Line width
+            line_marker.color.a = 1.0  # Alpha
+
+            for i in range(smap.connections.shape[0]):
+                if smap.connections[i] is None:
+                    continue
+                for j in range(len(smap.connections[i])):
+                    point1 = Point()
+                    point2 = Point()
+                    # trpt = transformPoints(np.array([[smap.points[i, :]], smap.points[smap.connections[i][j], :]]), T_vis)
+                    # p1 = smap.points[i, :]
+                    # p2 = smap.points[smap.connections[i][j], :][0]
+                    # p1 = trpt[0, :]
+                    # p2 = trpt[1, :]
+
+                    p1 = pts[i, :]
+                    p2 = pts[smap.connections[i].flatten()[j], :]
+                    # print(p1)
+                    # print(p2)
+                    # print("KURVA")
+                    # print(smap.connections[i].flatten())
+                    # print(smap.connections[i][j])
+                    
+                    point1.x = p1[0]
+                    point1.y = p1[1]
+                    point1.z = p1[2]
+                    point2.x = p2[0]
+                    point2.y = p2[1]
+                    point2.z = p2[2]
+                    line_marker.points.append(point1)
+                    line_marker.points.append(point2)
+            marker_array.markers.append(line_marker)
+        return True
+
+    def decomp_essential_mat(self, E, q1, q2):# # #{
         """
         Decompose the Essential matrix
 
@@ -1332,8 +1396,9 @@ class OdomNode:
         t = t * relative_scale
 
         return [R1, t]
+# # #}
 
-    @staticmethod
+    @staticmethod# # #{
     def _form_transf(R, t):
         """
         Makes a transformation matrix from the given rotation matrix and translation vector
@@ -1350,11 +1415,12 @@ class OdomNode:
         T = np.eye(4, dtype=np.float64)
         T[:3, :3] = R
         T[:3, 3] = t
-        return T
+        return T# # #}
 
+# #}
 
 if __name__ == '__main__':
     rospy.init_node('visual_odom_node')
-    optical_flow_node = OdomNode()
+    optical_flow_node = SphereMapNavNode()
     rospy.spin()
     cv2.destroyAllWindows()
