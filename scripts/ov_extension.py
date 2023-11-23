@@ -130,7 +130,51 @@ class SphereMap:
     def updateSurfels(self, visible_points, pixpos, simplices):# # #{
         # Compute normals measurements for the visible points, all should be pointing towards the camera
         # What frame are the points in?
-        return True# # #}
+        print("UPDATING SURFELS")
+        n_test_new_pts = visible_points.shape[0]
+        print("NEW SURFEL POSITIONS SEEN: " + str(n_test_new_pts))
+
+        filtering_radius = 1
+
+        pts_survived_first_mask = np.full((n_test_new_pts), True)
+        if not self.surfel_points is None:
+            n_existign_points = self.surfel_points.shape[0]
+            print("N EXISTING SURFELS: " + str(n_existign_points))
+            existing_points_distmatrix = scipy.spatial.distance_matrix(visible_points, self.surfel_points)
+            # pts_survived_first_mask = np.all(existing_points_distmatrix > filtering_radius, axis = 1)
+            pts_survived_first_mask = np.sum(existing_points_distmatrix > filtering_radius, axis=1) == n_existign_points
+            # print(np.sum(existing_points_distmatrix > filtering_radius, axis=1))
+
+            print("N SURVIVED FIRST MASK:" + str(np.sum(pts_survived_first_mask)))
+
+        pts_survived_filter_with_mappoints = visible_points[pts_survived_first_mask]
+
+        n_survived_first_filter = pts_survived_filter_with_mappoints.shape[0]
+        print("N SURVIVED FILTERING WITH OLD POINTS: " + str(n_survived_first_filter))
+
+        pts_added_mask = np.full((n_survived_first_filter), False)
+
+        self_distmatrix = scipy.spatial.distance_matrix(pts_survived_filter_with_mappoints, pts_survived_filter_with_mappoints)
+        print(self_distmatrix)
+        # ADD NEW PTS IF NOT BAD AGAINST OTHERS OR AGAINST DISTMATRIX
+        n_added = 0
+        for i in range(n_survived_first_filter):
+            if n_added == 0 or np.all(np.sum(self_distmatrix[pts_added_mask, :] > filtering_radius, axis=1) == n_survived_first_filter - 1):
+                n_added += 1
+                pts_added_mask[i] = True
+
+        print("N ADDING")
+        print(np.sum(pts_added_mask))
+        if n_added > 0:
+            if self.surfel_points is None:
+                self.surfel_points = pts_survived_filter_with_mappoints[pts_added_mask]
+            else:
+                self.surfel_points = np.concatenate((self.surfel_points, pts_survived_filter_with_mappoints[pts_added_mask]))
+
+        # existing_distmatrix = scipy.spatial.distance_matrix(visible_points, self.surfel_points)
+
+        return True
+    # # #}
 
     def consistencyCheck(self):# # #{
         print("CONSISTENCY CHECK")
@@ -173,8 +217,8 @@ class SphereMap:
         # print(visited)
         if len(visited) == conns.size + 1:
             return False
-        return True# # #}
-
+        return True
+    # # #}
 
     def removeNodes(self, toosmall_idxs):# # #{
         # FIRST DESTROY CONNECTIONS TO THE PRUNED SPHERES
@@ -345,8 +389,8 @@ class SphereMap:
     # #}
 # #}
 
-# #{ class SphereMapNavNode:
-class SphereMapNavNode:
+# #{ class NavNode:
+class NavNode:
     def __init__(self):# # #{
         self.bridge = CvBridge()
         self.prev_image = None
@@ -468,7 +512,7 @@ class SphereMapNavNode:
                 secs_since_creation = (rospy.get_rostime() - self.spheremap.creation_time).to_sec()
 
                 # TIME BASED
-                if secs_since_creation > 7:
+                if secs_since_creation > 70:
                     split_score = max_split_score
 
                 if split_score >= max_split_score:
@@ -692,11 +736,15 @@ class SphereMapNavNode:
 
         comp_time = time.time() - comp_start_time
         print("SPHEREMAP integration time: " + str((comp_time) * 1000) +  " ms")
-        comp_start_time = time.time()
 
         # HANDLE ADDING/REMOVING VISIBLE 3D POINTS
+        comp_start_time = time.time()
+
         visible_pts_in_spheremap_frame = transformPoints(final_points.T, T_current_cam_to_orig)
         self.spheremap.updateSurfels(visible_pts_in_spheremap_frame , pixpos, tri.simplices)# # #}
+
+        comp_time = time.time() - comp_start_time
+        print("SURFELS integration time: " + str((comp_time) * 1000) +  " ms")
 
         # VISUALIZE CURRENT SPHERES
         self.visualize_spheremap()
@@ -1349,6 +1397,28 @@ class SphereMapNavNode:
                     line_marker.points.append(point2)
             marker_array.markers.append(line_marker)
 
+        if do_surfels:
+            if not smap.surfel_points is None:
+                spts = transformPoints(smap.surfel_points, T_vis)
+
+                marker = Marker()
+                marker.header.frame_id = "global"  # Adjust the frame_id as needed
+                marker.type = Marker.POINTS
+                marker.action = Marker.ADD
+                marker.pose.orientation.w = 1.0
+                marker.scale.x = 1.2  # Adjust the size of the points
+                marker.scale.y = 1.2
+                marker.color.a = 1.0
+                marker.color.r = 1.0
+                marker.color.g = 0.0
+                marker.color.b = 0.0
+
+                # Convert the 3D points to Point messages
+                n_surfels = spts.shape[0]
+                points_msg = [Point(x=spts[i, 0], y=spts[i, 1], z=spts[i, 2]) for i in range(n_surfels)]
+                marker.points = points_msg
+                marker_array.markers.append(marker)
+
         if do_spheres:
             for i in range(smap.points.shape[0]):
                 marker = Marker()
@@ -1477,6 +1547,6 @@ class SphereMapNavNode:
 
 if __name__ == '__main__':
     rospy.init_node('visual_odom_node')
-    optical_flow_node = SphereMapNavNode()
+    optical_flow_node = NavNode()
     rospy.spin()
     cv2.destroyAllWindows()
