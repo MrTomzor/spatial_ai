@@ -5,6 +5,9 @@
 import rospy
 import heapq
 
+import dbow
+import rospkg
+
 # from sensor_msgs.msg import Image
 from sensor_msgs.msg import Image, CompressedImage, PointCloud2
 import sensor_msgs.point_cloud2 as pc2
@@ -67,6 +70,10 @@ kMaxNumFeature = 2000
 # #}
 
 # #{ structs and util functions
+
+def transformationMatrixToHeading(T):
+    return np.arctan2(T[0,0], T[1, 0])
+
 def transformPoints(pts, T):
     # pts = Nx3 matrix, T = transformation matrix to apply
     res = np.concatenate((pts.T, np.full((1, pts.shape[0]), 1)))
@@ -112,6 +119,20 @@ class KeyFrame:
         self.odom_msg = odom_msg
         self.img_timestamp = img_timestamp
         self.T_odom = T_odom
+
+class SubmapKeyframe:
+    def __init__(self, T):
+        self.pos = T[:3,3]
+        self.heading = transformationMatrixToHeading(T)
+
+    def euclid_dist(self, other_kf): 
+        return np.linalg.norm(self.pos - other_kf.pos)
+
+    def heading_dif(self, other_kf): 
+        dif = np.abs(other_kf.heading - self.heading)
+        if dif > 3.14159/2:
+            dif = 3.14159 - dif
+        return dif
 # #}
 
 # #{ class SphereMap
@@ -120,6 +141,7 @@ class SphereMap:
         self.points = np.array([0,0,0]).reshape((1,3))
         self.radii = np.array([init_radius]).reshape((1,1))
         self.connections = np.array([None], dtype=object)
+        self.visual_keyframes = []
 
         self.surfel_points = None
         self.surfel_radii = None
@@ -455,7 +477,14 @@ class NavNode:
 
         self.tf_broadcaster = tf.TransformBroadcaster()
 
-        self.orb = cv2.ORB_create(nfeatures=3000)
+        # self.orb = cv2.ORB_create(nfeatures=3000)
+        self.orb = cv2.ORB_create(nfeatures=30)
+
+        # LOAD VOCAB FOR DBOW
+        vocab_path = rospkg.RosPack().get_path('spatial_ai') + "/vision_data/vocabulary.pickle"
+        self.visual_vocab = dbow.Vocabulary.load(vocab_path)
+        self.test_db = dbow.Database(self.visual_vocab)
+
 
         # Load calib
         self.K = np.array([642.8495341420769, 0, 400, 0, 644.5958939934509, 300, 0, 0, 1]).reshape((3,3))
@@ -1090,9 +1119,48 @@ class NavNode:
         self.n_frames += 1
 
 
+        # ADD NEW VISUAL KEYFRAME IF NEW ENOUGH
+        if self.spheremap is None:
+            return
+
         # GET ODOM MSG CLOSEST TO CURRENT IMG TIMESTAMP
         closest_time_odom_msg = self.get_closest_time_odom_msg(self.new_img_stamp)
+        T_odom = self.odom_msg_to_transformation_matrix(closest_time_odom_msg)
+        T_odom_relative_to_smap_start = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_odom
 
+        new_kf = SubmapKeyframe(T_odom_relative_to_smap_start)
+
+        # CHECK IF NEW ENOUGH
+        # TODO - check in near certainly connected submaps
+        for kf in self.spheremap.visual_keyframes:
+            # TODO - scaling
+            if kf.euclid_dist(new_kf) < 5 and kf.heading_dif(new_kf) < 3.14159 /4:
+                print("KFS: not novel enough, N keyframes: " + str(len(self.spheremap.visual_keyframes)))
+                return
+
+        print("KFS: adding new visual keyframe!")
+        comp_start_time = time.time()
+        # COMPUTE DESCRIPTION AND ADD THE KF
+        kps, descs = self.orb.detectAndCompute(self.new_frame, None)
+        print(len(kps))
+        descs = [dbow.ORB.from_cv_descriptor(desc) for desc in descs]
+
+        scores = self.test_db.query(descs)
+        print("SCORES:")
+        print(scores)
+
+
+        self.test_db.add(descs)
+        self.spheremap.visual_keyframes.append(new_kf)
+
+        # TODO - get some vocab into here SOMEHOW
+        # TODO - describe, check difference from other KFs
+
+        comp_time = time.time() - comp_start_time
+        print("KFS: kf addition time: " + str((comp_time) * 1000) +  " ms")# # #}
+
+        # ---------------------------FUCK TRACKING FOR NOW
+        return
         # IF YOU CAN - TRACK
         if not self.px_ref is None:
             print("BEFORE TRACKING: " + str(self.px_ref.shape[0]))
@@ -1508,13 +1576,13 @@ class NavNode:
             return
 
         # FIRST CLEAR MARKERS
-        clear_msg = MarkerArray()
-        marker = Marker()
-        marker.id = 0
-        # marker.ns = self.marker_ns
-        marker.action = Marker.DELETEALL
-        clear_msg.markers.append(marker)
-        self.spheremap_spheres_pub.publish(clear_msg)
+        # clear_msg = MarkerArray()
+        # marker = Marker()
+        # marker.id = 0
+        # # marker.ns = self.marker_ns
+        # marker.action = Marker.DELETEALL
+        # clear_msg.markers.append(marker)
+        # self.spheremap_spheres_pub.publish(clear_msg)
 
         marker_array = MarkerArray()
 
