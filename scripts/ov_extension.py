@@ -3,6 +3,9 @@
 # #{ imports
 
 import rospy
+from std_srvs.srv import Empty as EmptySrv
+from std_srvs.srv import EmptyResponse as EmptySrvResponse
+
 import heapq
 
 import dbow
@@ -70,9 +73,11 @@ kMaxNumFeature = 2000
 # #}
 
 # #{ structs and util functions
+class EmptyClass(object):
+    pass
 
 def transformationMatrixToHeading(T):
-    return np.arctan2(T[0,0], T[1, 0])
+    return np.arctan2(T[1,0], T[0, 0])
 
 def transformPoints(pts, T):
     # pts = Nx3 matrix, T = transformation matrix to apply
@@ -124,6 +129,9 @@ class SubmapKeyframe:
     def __init__(self, T):
         self.pos = T[:3,3]
         self.heading = transformationMatrixToHeading(T)
+        print("HEADING")
+        print(T)
+        print(self.heading)
 
     def euclid_dist(self, other_kf): 
         return np.linalg.norm(self.pos - other_kf.pos)
@@ -454,6 +462,10 @@ class NavNode:
         self.noprior_triangulation_points = None
         self.odomprior_triangulation_points = None
 
+        # SRV
+        self.vocab_srv = rospy.Service("save_vocabulary", EmptySrv, self.saveCurrentVisualDatabaseToVocabFile)
+
+        # VIS PUB
         self.slam_points = None
         self.slam_pcl_pub = rospy.Publisher('extended_slam_points', PointCloud, queue_size=10)
 
@@ -467,6 +479,7 @@ class NavNode:
         self.kp_pcl_pub = rospy.Publisher('tracked_features_space', PointCloud, queue_size=10)
         self.kp_pcl_pub_invdepth = rospy.Publisher('tracked_features_space_invdepth', PointCloud, queue_size=10)
 
+        # SUB
         self.sub_cam = rospy.Subscriber('/robot1/camera1/raw', Image, self.image_callback, queue_size=10000)
 
         self.odom_buffer = []
@@ -822,6 +835,43 @@ class NavNode:
         # self.node_offline = not self.spheremap.consistencyCheck()
 # # #}
 
+    def saveCurrentVisualDatabaseToVocabFile(self, req):
+        n_words = 10
+        depth = 2
+
+        # vocab = dbow.Vocabulary()
+        vocab = EmptyClass()
+        vocab.__class__ = dbow.Vocabulary
+        
+        descriptors = []
+        n_keyframes = 0
+        # for image in images:
+        for smap in self.current_episode_submaps:
+            for kf in smap.visual_keyframes:
+                # descriptors.append(kf.descs)
+                descriptors = descriptors + kf.descs
+                n_keyframes += 1
+
+        if not self.spheremap is None:
+            for kf in self.spheremap.visual_keyframes:
+                # descriptors.append(kf.descs)
+                descriptors = descriptors + kf.descs
+                n_keyframes += 1
+        print("VOCAB N KFS:" + str(n_keyframes))
+
+        descriptors = np.array(descriptors)
+        vocab.root_node = dbow.Node(descriptors)
+        words = dbow.initialize_tree(vocab.root_node, n_words, depth)
+        vocab.words = [dbow.Word.from_node(node) for node in words]
+        for word in vocab.words:
+            word.update_weight(n_keyframes)
+
+        vocab_path = rospkg.RosPack().get_path('spatial_ai') + "/vision_data/vocabulary_tmp.pickle"
+        vocab.save(vocab_path)
+
+        print("VOCAB SAVE SUCCESS")
+        return EmptySrvResponse()
+
     def findPathAstarInSubmap(self, smap, startpoint, endpoint, maxdist_to_graph=10, min_safe_dist=0.5, max_safe_dist=3, safety_weight=1):# # #{
         print("PATHFIND: STARTING, FROM TO:")
         print(startpoint)
@@ -1144,14 +1194,16 @@ class NavNode:
         kps, descs = self.orb.detectAndCompute(self.new_frame, None)
         print(len(kps))
         descs = [dbow.ORB.from_cv_descriptor(desc) for desc in descs]
+        new_kf.descs = descs
+
+        self.test_db.add(descs)
+        self.spheremap.visual_keyframes.append(new_kf)
 
         scores = self.test_db.query(descs)
         print("SCORES:")
         print(scores)
 
 
-        self.test_db.add(descs)
-        self.spheremap.visual_keyframes.append(new_kf)
 
         # TODO - get some vocab into here SOMEHOW
         # TODO - describe, check difference from other KFs
@@ -1591,7 +1643,7 @@ class NavNode:
         self.spheremap_spheres_pub.publish(marker_array)
 # # #}
     
-    def get_spheremap_marker_array(self, marker_array, smap, T_inv, alternative_look=False, do_surfels=True, do_spheres=True, do_connections=True):# # #{
+    def get_spheremap_marker_array(self, marker_array, smap, T_inv, alternative_look=False, do_surfels=True, do_spheres=True, do_connections=True, do_keyframes=True):# # #{
         # T_vis = np.linalg.inv(T_inv)
         T_vis = T_inv
         pts = transformPoints(smap.points, T_vis)
@@ -1664,6 +1716,49 @@ class NavNode:
                 points_msg = [Point(x=spts[i, 0], y=spts[i, 1], z=spts[i, 2]) for i in range(n_surfels)]
                 marker.points = points_msg
                 marker_array.markers.append(marker)
+
+        if do_keyframes:
+            n_kframes = len(smap.visual_keyframes)
+            if n_kframes > 0:
+                kframes_pts = np.array([kf.pos for kf in smap.visual_keyframes])
+                kframes_pts = transformPoints(kframes_pts, T_vis)
+                for i in range(n_kframes):
+                    marker = Marker()
+                    marker.header.frame_id = "global"  # Change this frame_id if necessary
+                    marker.header.stamp = rospy.Time.now()
+                    marker.type = Marker.ARROW
+                    marker.action = Marker.ADD
+                    marker.id = marker_id
+                    marker_id += 1
+
+                    # # Set the position (sphere center)
+                    # marker.pose.position.x = kframes_pts[i][0]
+                    # marker.pose.position.y = kframes_pts[i][1]
+                    # marker.pose.position.z = kframes_pts[i][2]
+
+                    # Set the scale
+                    marker.scale.x = 0.8
+                    marker.scale.y = 2.2
+                    marker.scale.z = 1.5
+
+                    marker.color.a = 1
+                    marker.color.r = 0.0
+                    marker.color.g = 0.0
+                    marker.color.b = 0.0
+                    if alternative_look:
+                        marker.color.r = 1.0
+                        marker.color.g = 0.0
+                        marker.color.b = 1.0
+
+                    arrowlen = 4
+                    map_heading = transformationMatrixToHeading(T_vis)
+                    xbonus = arrowlen * np.cos(smap.visual_keyframes[i].heading + map_heading)
+                    ybonus = arrowlen * np.sin(smap.visual_keyframes[i].heading + map_heading)
+                    points_msg = [Point(x=kframes_pts[i][0], y=kframes_pts[i][1], z=kframes_pts[i][2]), Point(x=kframes_pts[i][0]+xbonus, y=kframes_pts[i][1]+ybonus, z=kframes_pts[i][2])]
+                    marker.points = points_msg
+
+                    # Add the marker to the MarkerArray
+                    marker_array.markers.append(marker)
 
         if do_spheres:
             for i in range(smap.points.shape[0]):
