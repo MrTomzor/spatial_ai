@@ -3,6 +3,7 @@
 # #{ imports
 
 import rospy
+import heapq
 
 # from sensor_msgs.msg import Image
 from sensor_msgs.msg import Image, CompressedImage, PointCloud2
@@ -130,32 +131,32 @@ class SphereMap:
     def updateSurfels(self, visible_points, pixpos, simplices):# # #{
         # Compute normals measurements for the visible points, all should be pointing towards the camera
         # What frame are the points in?
-        print("UPDATING SURFELS")
+        # print("UPDATING SURFELS")
         n_test_new_pts = visible_points.shape[0]
-        print("NEW SURFEL POSITIONS SEEN: " + str(n_test_new_pts))
+        # print("NEW SURFEL POSITIONS SEEN: " + str(n_test_new_pts))
 
         filtering_radius = 1
 
         pts_survived_first_mask = np.full((n_test_new_pts), True)
         if not self.surfel_points is None:
             n_existign_points = self.surfel_points.shape[0]
-            print("N EXISTING SURFELS: " + str(n_existign_points))
+            # print("N EXISTING SURFELS: " + str(n_existign_points))
             existing_points_distmatrix = scipy.spatial.distance_matrix(visible_points, self.surfel_points)
             # pts_survived_first_mask = np.all(existing_points_distmatrix > filtering_radius, axis = 1)
             pts_survived_first_mask = np.sum(existing_points_distmatrix > filtering_radius, axis=1) == n_existign_points
             # print(np.sum(existing_points_distmatrix > filtering_radius, axis=1))
 
-            print("N SURVIVED FIRST MASK:" + str(np.sum(pts_survived_first_mask)))
+            # print("N SURVIVED FIRST MASK:" + str(np.sum(pts_survived_first_mask)))
 
         pts_survived_filter_with_mappoints = visible_points[pts_survived_first_mask]
 
         n_survived_first_filter = pts_survived_filter_with_mappoints.shape[0]
-        print("N SURVIVED FILTERING WITH OLD POINTS: " + str(n_survived_first_filter))
+        # print("N SURVIVED FILTERING WITH OLD POINTS: " + str(n_survived_first_filter))
 
         pts_added_mask = np.full((n_survived_first_filter), False)
 
         self_distmatrix = scipy.spatial.distance_matrix(pts_survived_filter_with_mappoints, pts_survived_filter_with_mappoints)
-        print(self_distmatrix)
+        # print(self_distmatrix)
         # ADD NEW PTS IF NOT BAD AGAINST OTHERS OR AGAINST DISTMATRIX
         n_added = 0
         for i in range(n_survived_first_filter):
@@ -163,8 +164,8 @@ class SphereMap:
                 n_added += 1
                 pts_added_mask[i] = True
 
-        print("N ADDING")
-        print(np.sum(pts_added_mask))
+        # print("N ADDING")
+        # print(np.sum(pts_added_mask))
         if n_added > 0:
             if self.surfel_points is None:
                 self.surfel_points = pts_survived_filter_with_mappoints[pts_added_mask]
@@ -191,6 +192,33 @@ class SphereMap:
                     print(otherconns)
                     return False
         return True# # #}
+
+    def labelSpheresByConnectivity(self):
+        n_nodes = self.points.shape[0]
+        self.connectivity_labels = np.full((n_nodes), -1)
+
+        seg_id = 0
+        for i in range(n_nodes):
+            if self.connectivity_labels[i] < 0:
+                # FLOODFILL INDEX
+                openset = [i]
+                self.connectivity_labels[i] = seg_id
+                
+                n_labeled = 1
+                while len(openset) > 0:
+                    expansion_node = openset.pop()
+                    conns = self.connections[expansion_node]
+                    if conns is None:
+                        continue
+                    for conn_id in conns:
+                        if self.connectivity_labels[conn_id] < 0:
+                            self.connectivity_labels[conn_id] = seg_id
+                            openset.append(conn_id)
+                            n_labeled += 1
+                # print("SEG SIZE: "  +str(n_labeled))
+                seg_id += 1
+
+        print("DISCONNECTED REGIONS: " + str(seg_id))
 
     def wouldPruningNodeMakeConnectedNodesNotFullGraph(self, idx):# # #{
         conns = self.connections[idx]
@@ -409,6 +437,7 @@ class NavNode:
 
         self.spheremap_spheres_pub = rospy.Publisher('spheres', MarkerArray, queue_size=10)
         self.recent_submaps_vis_pub = rospy.Publisher('recent_submaps_vis', MarkerArray, queue_size=10)
+        self.path_planning_vis_pub = rospy.Publisher('path_planning_vis', MarkerArray, queue_size=10)
 
         self.kp_pub = rospy.Publisher('tracked_features_img', Image, queue_size=1)
         self.depth_pub = rospy.Publisher('estim_depth_img', Image, queue_size=1)
@@ -587,6 +616,7 @@ class NavNode:
 
         # ---UPDATE AND PRUNING STEP
         T_current_cam_to_orig = np.eye(4)
+        T_delta_odom  = np.eye(4)
         if not self.spheremap is None:
             # transform existing sphere points to current camera frame
             # T_spheremap_orig_to_current_cam = self.imu_to_cam_T @ T_global_to_imu @ np.linalg.inv(self.spheremap.T_global_to_own_origin) 
@@ -714,6 +744,7 @@ class NavNode:
         mindists = np.minimum(new_spheres_obs_dists, new_spheres_fov_dists)
         new_sphere_idxs = mindists > min_rad
 
+        n_spheres_before_adding = self.spheremap.points.shape[0]
         n_spheres_to_add = np.sum(new_sphere_idxs)
         print("PUTATIVE SPHERES THAT PASSED FIRST RADIUS CHECKS: " + str(n_spheres_to_add))
         if n_spheres_to_add == 0:
@@ -731,8 +762,13 @@ class NavNode:
         self.spheremap.radii = np.concatenate((self.spheremap.radii.flatten(), mindists[new_sphere_idxs].flatten()))
         self.spheremap.connections = np.concatenate((self.spheremap.connections.flatten(), np.array([None for i in range(n_spheres_to_add)], dtype=object).flatten()))
 
+        self.spheremap.updateConnections(np.arange(n_spheres_before_adding, n_spheres_before_adding+n_spheres_to_add))
+
         new_idxs = np.arange(self.spheremap.radii.size)[self.spheremap.radii.size - n_spheres_to_add : self.spheremap.radii.size]
         self.spheremap.removeSpheresIfRedundant(new_idxs)
+
+        self.spheremap.labelSpheresByConnectivity()
+        # # #}
 
         comp_time = time.time() - comp_start_time
         print("SPHEREMAP integration time: " + str((comp_time) * 1000) +  " ms")
@@ -741,7 +777,7 @@ class NavNode:
         comp_start_time = time.time()
 
         visible_pts_in_spheremap_frame = transformPoints(final_points.T, T_current_cam_to_orig)
-        self.spheremap.updateSurfels(visible_pts_in_spheremap_frame , pixpos, tri.simplices)# # #}
+        self.spheremap.updateSurfels(visible_pts_in_spheremap_frame , pixpos, tri.simplices)
 
         comp_time = time.time() - comp_start_time
         print("SURFELS integration time: " + str((comp_time) * 1000) +  " ms")
@@ -751,7 +787,105 @@ class NavNode:
         comp_time = time.time() - comp_start_time
         print("SPHEREMAP visualization time: " + str((comp_time) * 1000) +  " ms")
 
+        # TRY PATHFINDING TO START OF CURRENT SPHEREMAP
+        pathfindres = self.findPathAstarInSubmap(self.spheremap, T_delta_odom[:3, 3], np.array([0,0,0]))
+
         # self.node_offline = not self.spheremap.consistencyCheck()
+# # #}
+
+    def findPathAstarInSubmap(self, smap, startpoint, endpoint, maxdist_to_graph=10, min_safe_dist=0.5, max_safe_dist=3, safety_weight=1):# # #{
+        print("PATHFIND: STARTING, FROM TO:")
+        print(startpoint)
+        print(endpoint)
+
+        if smap.points is None: 
+            print("PATHFIND: MAP IS EMPTY!!!")
+            return None
+
+        # FIND NEAREST NODES TO START AND END
+        dist_from_startpoint = np.linalg.norm((smap.points - startpoint), axis=1) - smap.radii
+        start_node_index = np.argmin(dist_from_startpoint)
+        start_seg_id = smap.connectivity_labels[start_node_index]
+
+        # ONLY CONSIDER GOAL POINTS IN THE SAME CONNECTIVITY REGION
+        seg_mask = smap.connectivity_labels == start_seg_id
+        mask_idxs = np.where(seg_mask)[0]
+        # print(mask_idxs)
+        # dist_from_endpoint = np.linalg.norm((smap.points - endpoint), axis=1) - smap.radii
+        dist_from_endpoint = np.linalg.norm((smap.points[seg_mask, :] - endpoint), axis=1) - smap.radii[seg_mask]
+        end_node_index_masked = np.argmin(dist_from_endpoint)
+        # print(end_node_index_masked)
+        end_node_index = mask_idxs[end_node_index_masked]
+        # print(end_node_index)
+
+        if(dist_from_startpoint[start_node_index ] > maxdist_to_graph or dist_from_endpoint[end_node_index_masked] > maxdist_to_graph):
+            print("PATHFIND: start or end too far form graph!")
+            print(dist_from_startpoint[start_node_index])
+            print(dist_from_endpoint[end_node_index_masked])
+            return None
+        print("PATHFIND: node indices:")
+        print(start_node_index)
+        print(end_node_index)
+        print("PATHFIND: node segments:")
+        print(start_seg_id)
+        print(smap.connectivity_labels[end_node_index])
+
+        goal_node_pt = smap.points[end_node_index]
+        open_set = []
+        # closed_set = set()
+        closed_set = {start_node_index: None}
+
+        # Priority queue for efficient retrieval of the node with the lowest total cost
+        heapq.heappush(open_set, (0, start_node_index, None))
+
+        # Dictionary to store the cost of reaching each node from the start
+        g_score = {start_node_index: 0}
+
+        # Dictionary to store the estimated total cost from start to goal passing through the node
+        startned_dist = np.linalg.norm(smap.points[start_node_index] - goal_node_pt)
+        print("PATHFIND: startnend dist:" + str(startned_dist))
+        f_score = {start_node_index: startned_dist }
+
+        path = []
+        while open_set:
+            current_f, current_index, parent = heapq.heappop(open_set)
+            # print("POPPED: " + str(current_index) + " F: " + str(current_f))
+
+            if current_index == end_node_index:
+                path = [current_index]
+                while not parent is None:
+                    path.append(parent)
+                    current_index = parent
+                    parent = closed_set[current_index]
+                break
+
+            # closed_set.add(current_index)
+
+            conns = smap.connections[current_index]
+            # print("CONNS:")
+            # print(conns)
+            if conns is None:
+                continue
+
+            for neighbor_index in conns:
+                euclid_dist = np.linalg.norm(smap.points[current_index] - smap.points[neighbor_index])
+                tentative_g = g_score[current_index] + euclid_dist
+
+                if neighbor_index not in g_score or tentative_g < g_score[neighbor_index]:
+                    g_score[neighbor_index] = tentative_g
+                    f_score[neighbor_index] = tentative_g + np.linalg.norm(smap.points[neighbor_index] - goal_node_pt)
+                    heapq.heappush(open_set, (f_score[neighbor_index], neighbor_index, current_index))
+                    closed_set[neighbor_index] = current_index
+
+        print("PATHFIND: RES PATH: ")
+        print(path)
+        print("N CLOSED NODES: " + str(len(closed_set.keys())))
+
+        self.visualize_trajectory(smap.points[np.array(path), :], smap.T_global_to_own_origin, startpoint, endpoint)
+
+        if len(path) == 0:
+            return None
+        return path
 # # #}
 
     def getPixelPositions(self, pts):# # #{
@@ -780,36 +914,6 @@ class NavNode:
         self.odom_buffer.append(msg)
         if len(self.odom_buffer) > self.odom_buffer_maxlen:
             self.odom_buffer.pop(0)# # #}
-
-    def integrate_slam_points_to_keyframe(self, point_cloud_array ):# # #{
-        comp_start_time = time.time()
-
-        n_new_points = point_cloud_array.size
-
-        mindist = 1
-        mindist2 = mindist * mindist
-
-        if self.slam_points is None and n_new_points > 0:
-            self.slam_points = point_cloud_array
-        elif not self.slam_points is None:
-
-            print("ADDED NEW")
-            self.slam_points = np.concatenate((self.slam_points, point_cloud_array))
-            distances = scipy.spatial.distance_matrix(self.slam_points, self.slam_points)
-            print("HAVE DISTMATRIX")
-            far_enough = distances > mindist2
-            keep = np.array([False for i in range(self.slam_points.shape[0])])
-            for i in range(self.slam_points.shape[0]):
-                far_enough[i,i] = True
-                keep[i] = np.all(far_enough[:, i])
-            # idxs = np.any(distances > mindist2)
-            print("HAVE KEEP")
-            self.slam_points = self.slam_points[keep, :]
-            print("HAVE NEW PTS")
-
-        print("PCL MSG DONE")
-        comp_time = time.time() - comp_start_time
-        print("PCL integration time: " + str((comp_time) * 1000) +  " ms")# # #}
                     
     def visualize_depth(self, pixpos, tri):# # #{
         rgb = np.repeat(copy.deepcopy(self.new_frame)[:, :, np.newaxis], 3, axis=2)
@@ -1298,15 +1402,89 @@ class NavNode:
             self.kp_pcl_pub.publish(point_cloud)
 # # #}
 
+    def visualize_trajectory(self,points_untransformed , T_vis, start=None, goal=None):# # #{
+        marker_array = MarkerArray()
+        print(points_untransformed.shape)
+        pts = transformPoints(points_untransformed, T_vis)
+
+        marker_id = 0
+        if not start is None:
+            start = transformPoints(start.reshape((1,3)), T_vis)
+            goal = transformPoints(goal.reshape((1,3)), T_vis)
+
+            marker = Marker()
+            marker.header.frame_id = "global"  # Change this frame_id if necessary
+            marker.header.stamp = rospy.Time.now()
+            marker.type = Marker.CUBE
+            marker.action = Marker.ADD
+            marker.id = marker_id
+            marker_id += 1
+
+            # Set the position (sphere center)
+            marker.pose.position.x = start[0, 0]
+            marker.pose.position.y = start[0, 1]
+            marker.pose.position.z = start[0, 2]
+
+            marker.scale.x = 2
+            marker.scale.y = 2
+            marker.scale.z = 2
+
+            marker.color.a = 0.9
+            marker.color.r = 1.0
+            marker.color.g = 0.0
+            marker.color.b = 0.0
+            marker_array.markers.append(marker)
+
+            marker.pose.position.x = goal[0, 0]
+            marker.pose.position.y = goal[0, 1]
+            marker.pose.position.z = goal[0, 2]
+            # marker_array.markers.append(copy.deepcopy(marker))
+            marker_array.markers.append(marker)
+
+        # VISUALIZE START AND GOAL
+        if not points_untransformed is None:
+            line_marker = Marker()
+            line_marker = Marker()
+            line_marker.header.frame_id = "global"  # Set your desired frame_id
+            line_marker.type = Marker.LINE_LIST
+            line_marker.action = Marker.ADD
+            line_marker.scale.x = 0.5  # Line width
+            line_marker.color.a = 1.0  # Alpha
+            line_marker.color.r = 1.0  
+            line_marker.color.b = 1.0  
+
+            line_marker.id = marker_id
+            marker_id += 1
+
+            for i in range(pts.shape[0]-1):
+                point1 = Point()
+                point2 = Point()
+
+                p1 = pts[i, :]
+                p2 = pts[i+1, :]
+                
+                point1.x = p1[0]
+                point1.y = p1[1]
+                point1.z = p1[2]
+                point2.x = p2[0]
+                point2.y = p2[1]
+                point2.z = p2[2]
+                line_marker.points.append(point1)
+                line_marker.points.append(point2)
+            marker_array.markers.append(line_marker)
+
+        self.path_planning_vis_pub .publish(marker_array)
+# # #}
+
     def visualize_episode_submaps(self):# # #{
         # FIRST CLEAR MARKERS
-        clear_msg = MarkerArray()
-        marker = Marker()
-        marker.id = 0
-        # marker.ns = self.marker_ns
-        marker.action = Marker.DELETEALL
-        clear_msg.markers.append(marker)
-        self.spheremap_spheres_pub.publish(clear_msg)
+        # clear_msg = MarkerArray()
+        # marker = Marker()
+        # marker.id = 0
+        # # marker.ns = self.marker_ns
+        # marker.action = Marker.DELETEALL
+        # clear_msg.markers.append(marker)
+        # self.spheremap_spheres_pub.publish(clear_msg)
 
         marker_array = MarkerArray()
 
@@ -1345,7 +1523,7 @@ class NavNode:
         self.spheremap_spheres_pub.publish(marker_array)
 # # #}
     
-    def get_spheremap_marker_array(self, marker_array, smap, T_inv, alternative_look=False, do_surfels=True, do_spheres=True, do_connections=True):
+    def get_spheremap_marker_array(self, marker_array, smap, T_inv, alternative_look=False, do_surfels=True, do_spheres=True, do_connections=True):# # #{
         # T_vis = np.linalg.inv(T_inv)
         T_vis = T_inv
         pts = transformPoints(smap.points, T_vis)
@@ -1453,6 +1631,7 @@ class NavNode:
                 marker_array.markers.append(marker)
 
         return True
+    # # #}
 
     def decomp_essential_mat(self, E, q1, q2):# # #{
         """
