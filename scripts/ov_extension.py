@@ -150,6 +150,7 @@ class SphereMap:
         self.radii = np.array([init_radius]).reshape((1,1))
         self.connections = np.array([None], dtype=object)
         self.visual_keyframes = []
+        self.traveled_context_distance = 0
 
         self.surfel_points = None
         self.surfel_radii = None
@@ -472,6 +473,7 @@ class NavNode:
         self.spheremap_spheres_pub = rospy.Publisher('spheres', MarkerArray, queue_size=10)
         self.recent_submaps_vis_pub = rospy.Publisher('recent_submaps_vis', MarkerArray, queue_size=10)
         self.path_planning_vis_pub = rospy.Publisher('path_planning_vis', MarkerArray, queue_size=10)
+        self.visual_similarity_vis_pub = rospy.Publisher('visual_similarity_vis', MarkerArray, queue_size=10)
 
         self.kp_pub = rospy.Publisher('tracked_features_img', Image, queue_size=1)
         self.depth_pub = rospy.Publisher('estim_depth_img', Image, queue_size=1)
@@ -480,6 +482,7 @@ class NavNode:
         self.kp_pcl_pub_invdepth = rospy.Publisher('tracked_features_space_invdepth', PointCloud, queue_size=10)
 
         # SUB
+        # self.sub_cam = rospy.Subscriber('/robot1/camera1/image', Image, self.image_callback, queue_size=10000)
         self.sub_cam = rospy.Subscriber('/robot1/camera1/raw', Image, self.image_callback, queue_size=10000)
 
         self.odom_buffer = []
@@ -497,6 +500,8 @@ class NavNode:
         vocab_path = rospkg.RosPack().get_path('spatial_ai') + "/vision_data/vocabulary.pickle"
         self.visual_vocab = dbow.Vocabulary.load(vocab_path)
         self.test_db = dbow.Database(self.visual_vocab)
+        self.test_db_n_kframes = 0
+        self.test_db_indexing = {}
 
 
         # Load calib
@@ -542,6 +547,8 @@ class NavNode:
         self.tracked_features = []# # #}
 
     def points_slam_callback(self, msg):# # #{
+        if self.node_offline:
+            return
         print("PCL MSG")
         comp_start_time = time.time()
 
@@ -583,7 +590,11 @@ class NavNode:
                 secs_since_creation = (rospy.get_rostime() - self.spheremap.creation_time).to_sec()
 
                 # TIME BASED
-                if secs_since_creation > 70:
+                # if secs_since_creation > 70:
+                #     split_score = max_split_score
+
+                # CONTEXT DIST BASED
+                if self.spheremap.traveled_context_distance > 30:
                     split_score = max_split_score
 
                 if split_score >= max_split_score:
@@ -620,8 +631,8 @@ class NavNode:
         # COMPUTE DELAUNAY TRIANG OF VISIBLE SLAM POINTS
         print("HAVE DELAUNAY:")
         tri = Delaunay(pixpos)
-        vis = self.visualize_depth(pixpos, tri)
-        self.depth_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
+        # vis = self.visualize_depth(pixpos, tri)
+        # self.depth_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
 
         # CONSTRUCT OBSTACLE MESH
         comp_mesh = time.time()
@@ -836,8 +847,9 @@ class NavNode:
 # # #}
 
     def saveCurrentVisualDatabaseToVocabFile(self, req):
-        n_words = 10
-        depth = 2
+        self.node_offline = True
+        n_words = 1000
+        depth = 3
 
         # vocab = dbow.Vocabulary()
         vocab = EmptyClass()
@@ -845,19 +857,27 @@ class NavNode:
         
         descriptors = []
         n_keyframes = 0
-        # for image in images:
+        n_total_kfs = 0
+        for smap in self.current_episode_submaps:
+            for kf in smap.visual_keyframes:
+                n_total_kfs += 1
+        if not self.spheremap is None:
+            for kf in self.spheremap.visual_keyframes:
+                n_total_kfs += 1
+
+        print("VOCAB N KFS:" + str(n_keyframes))
         for smap in self.current_episode_submaps:
             for kf in smap.visual_keyframes:
                 # descriptors.append(kf.descs)
                 descriptors = descriptors + kf.descs
                 n_keyframes += 1
-
+                print("VOCAB SAVING " + str(n_keyframes) + "/" + str(n_total_kfs))
         if not self.spheremap is None:
             for kf in self.spheremap.visual_keyframes:
                 # descriptors.append(kf.descs)
                 descriptors = descriptors + kf.descs
                 n_keyframes += 1
-        print("VOCAB N KFS:" + str(n_keyframes))
+                print("VOCAB SAVING " + str(n_keyframes) + "/" + str(n_total_kfs))
 
         descriptors = np.array(descriptors)
         vocab.root_node = dbow.Node(descriptors)
@@ -1188,6 +1208,12 @@ class NavNode:
                 print("KFS: not novel enough, N keyframes: " + str(len(self.spheremap.visual_keyframes)))
                 return
 
+        if len(self.spheremap.visual_keyframes) > 0:
+            dist_bonus = new_kf.euclid_dist(self.spheremap.visual_keyframes[-1])
+            heading_bonus = new_kf.heading_dif(self.spheremap.visual_keyframes[-1])
+
+            self.spheremap.traveled_context_distance += dist_bonus + heading_bonus
+
         print("KFS: adding new visual keyframe!")
         comp_start_time = time.time()
         # COMPUTE DESCRIPTION AND ADD THE KF
@@ -1197,9 +1223,14 @@ class NavNode:
         new_kf.descs = descs
 
         self.test_db.add(descs)
+        self.test_db_n_kframes += 1
         self.spheremap.visual_keyframes.append(new_kf)
 
+        self.test_db_indexing[self.test_db_n_kframes - 1] = (len(self.current_episode_submaps), len(self.spheremap.visual_keyframes)-1) 
+
         scores = self.test_db.query(descs)
+
+        self.visualize_keyframe_scores(scores, new_kf)
         print("SCORES:")
         print(scores)
 
@@ -1596,27 +1627,77 @@ class NavNode:
         self.path_planning_vis_pub .publish(marker_array)
 # # #}
 
-    def visualize_episode_submaps(self):# # #{
-        # FIRST CLEAR MARKERS
-        # clear_msg = MarkerArray()
-        # marker = Marker()
-        # marker.id = 0
-        # # marker.ns = self.marker_ns
-        # marker.action = Marker.DELETEALL
-        # clear_msg.markers.append(marker)
-        # self.spheremap_spheres_pub.publish(clear_msg)
+    def visualize_keyframe_scores(self, scores, new_kf):# # #{
+        marker_array = MarkerArray()
 
+        new_kf_global_pos = transformPoints(new_kf.pos.reshape((1,3)), self.spheremap.T_global_to_own_origin)
+        s_min = np.min(scores[:(len(scores)-1)])
+        s_max = np.max(scores[:(len(scores)-1)])
+        scores = (scores - s_min) / (s_max-s_min)
+
+        marker_id = 0
+        for i in range(self.test_db_n_kframes - 1):
+            # assuming new_kf is the latest in the scores
+
+            smap_idx, kf_idx = self.test_db_indexing[i]
+            kf_pos_in_its_map = None
+            T_vis = None
+            if smap_idx >= len(self.current_episode_submaps):
+                kf_pos_in_its_map = self.spheremap.visual_keyframes[kf_idx].pos
+                T_vis = self.spheremap.T_global_to_own_origin
+            else:
+                # print("IDXS")
+                # print(smap_idx)
+                # print(kf_idx)
+                kf_pos_in_its_map = self.current_episode_submaps[smap_idx].visual_keyframes[kf_idx].pos
+                T_vis = self.current_episode_submaps[smap_idx].T_global_to_own_origin
+            second_kf_global_pos = transformPoints(kf_pos_in_its_map.reshape((1,3)), T_vis)
+
+            line_marker = Marker()
+            line_marker.header.frame_id = "global"  # Set your desired frame_id
+            line_marker.type = Marker.LINE_LIST
+            line_marker.action = Marker.ADD
+
+            line_marker.scale.x = 1 * scores[i]
+            line_marker.color.a = 1.0
+            line_marker.color.r = 1.0
+
+            line_marker.id = marker_id
+            marker_id += 1
+
+            point1 = Point() 
+            point2 = Point()
+
+            p1 = new_kf_global_pos
+            p2 = second_kf_global_pos 
+            
+            point1.x = p1[0, 0]
+            point1.y = p1[0, 1]
+            point1.z = p1[0, 2]
+            point2.x = p2[0, 0]
+            point2.y = p2[0, 1]
+            point2.z = p2[0, 2]
+
+            line_marker.points.append(point1)
+            line_marker.points.append(point2)
+            marker_array.markers.append(line_marker)
+
+        self.visual_similarity_vis_pub.publish(marker_array)
+        return
+    # # #}
+
+    def visualize_episode_submaps(self):# # #{
         marker_array = MarkerArray()
 
         max_maps_to_vis = 20
 
         if max_maps_to_vis < len(self.current_episode_submaps):
-            max_maps_to_vis = self.current_episode_submaps
+            max_maps_to_vis = len(self.current_episode_submaps)
 
         for i in range(max_maps_to_vis):
             if self.current_episode_submaps[-(1+i)].memorized_transform_to_prev_map is None:
                 break
-            self.get_spheremap_marker_array(marker_array, self.current_episode_submaps[-(i+1)], self.current_episode_submaps[-(i+1)].T_global_to_own_origin, alternative_look = True, do_connections = True)
+            self.get_spheremap_marker_array(marker_array, self.current_episode_submaps[-(i+1)], self.current_episode_submaps[-(i+1)].T_global_to_own_origin, alternative_look = True, do_connections = False, do_surfels = True)
 
         self.recent_submaps_vis_pub.publish(marker_array)
 
@@ -1643,7 +1724,7 @@ class NavNode:
         self.spheremap_spheres_pub.publish(marker_array)
 # # #}
     
-    def get_spheremap_marker_array(self, marker_array, smap, T_inv, alternative_look=False, do_surfels=True, do_spheres=True, do_connections=True, do_keyframes=True):# # #{
+    def get_spheremap_marker_array(self, marker_array, smap, T_inv, alternative_look=False, do_connections=True,  do_surfels=True, do_spheres=True, do_keyframes=True):# # #{
         # T_vis = np.linalg.inv(T_inv)
         T_vis = T_inv
         pts = transformPoints(smap.points, T_vis)
@@ -1710,6 +1791,14 @@ class NavNode:
                 marker.color.r = 1.0
                 marker.color.g = 0.0
                 marker.color.b = 0.0
+                if alternative_look:
+                    marker.color.r = 1.0
+                    marker.color.g = 0.0
+                    marker.color.b = 1.0
+
+                marker.id = marker_id
+                marker_id += 1
+
 
                 # Convert the 3D points to Point messages
                 n_surfels = spts.shape[0]
