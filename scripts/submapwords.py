@@ -90,10 +90,13 @@ def sift_3d(pts, normals, n_horiz_bins = 6, n_vert_bins = 3):
     return result / np.linalg.norm(result)
     
 
-num_points = 1000
+num_points = 10000
 # mesh = trimesh.Trimesh(vertices=[[0, 0, 0], [0, 0, 1], [0, 1, 0]],
 #                        faces=[[0, 1, 2]])
 mesh = trimesh.load('Bunny.stl')
+# mesh = trimesh.load('Normandy.stl')
+# mesh = trimesh.load('House.stl')
+# mesh = trimesh.load('Minecraft.stl')
 
 
 points, normals = sample_mesh(mesh, num_points)
@@ -107,12 +110,14 @@ cs = time.time()
 
 # kmeans = KMeans(n_clusters=100, random_state=0).fit(points)
 
-n_clusters = 20
+# n_clusters = 60
+n_clusters = 100
 
 codebook, distortion = scipy.cluster.vq.kmeans(points, n_clusters, iter=2)
 kdtree = KDTree(codebook)
 pts_cluster_idxs = kdtree.query(points)[1]
 print(pts_cluster_idxs)
+
 
 # print(sift_3d(points, normals))
 
@@ -122,12 +127,14 @@ print(pts_cluster_idxs)
 # ax = fig.add_subplot(111, projection='3d')
 
 
+# COMPUTE DESCRIPTORS
 n_horiz_bins = 20
 n_vert_bins = 5
+# n_horiz_bins = 8
+# n_vert_bins = 3
+
 desc_size = n_vert_bins * n_horiz_bins
-
 descriptors = []
-
 for i in range(n_clusters):
     pts_mask = pts_cluster_idxs == i
     if not np.any(pts_mask):
@@ -139,42 +146,78 @@ for i in range(n_clusters):
 descriptors = np.array(descriptors)
 dif = scipy.spatial.distance_matrix(descriptors, descriptors)
 maxdist = np.max(dif.flatten())
+
+# VOCAB COMPUTATION
+print("COMPUTING VOCAB")
+n_vocab_clusters = 5
+vocab_centroids, distortion = scipy.cluster.vq.kmeans(descriptors, n_vocab_clusters, iter=20)
+vocab_tree = KDTree(vocab_centroids)
+
+
+
 max_linewidth = 5
-
-for i in range(n_clusters):
-    print("CLUSTER " + str(i))
-    pts_mask = pts_cluster_idxs == i
-    if not np.any(pts_mask):
-        print("EMPTTY CLUSTER!")
-        continue
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-
-    ax.scatter(points[pts_mask, 0], points[pts_mask, 1], points[pts_mask, 2], marker='x')
-    # ax.scatter(codebook[i, 0], codebook[i, 1], codebook[i,2], c='r')
-
-    ax.scatter(codebook[:, 0], codebook[:, 1], codebook[:,2], c='r')
-
-    print(np.sort(dif[i,:]))
-    for j in range(n_clusters):
-        if j == i:
-            continue
-
-        relative_maxdist = np.max(dif[i, :])
-        # lw = max_linewidth * (1 - (dif[i,j] / maxdist))
-        lw = max_linewidth * (1 - (dif[i,j] / relative_maxdist))
-        point1 = codebook[i, :]
-        point2 = codebook[j, :]
-        ax.plot([point1[0], point2[0]], [point1[1], point2[1]], [point1[2], point2[2]], c='r', linewidth = lw)
-
-    plt.show()
-
 ctime = (time.time() - cs)
 print("COMP TIME: " + str(ctime * 1000) + " ms")
 
+
+# VIS VOCAB
+word_idxs = vocab_tree.query(descriptors)[1]
+present_words = np.unique(word_idxs)
+
+fig = plt.figure()
+ax = plt.axes(projection='3d')
+
+for word in present_words:
+
+    cluster_mask = word_idxs == word
+    not_mask = np.logical_not(cluster_mask )
+    ax.scatter(codebook[cluster_mask, 0], codebook[cluster_mask, 1], codebook[cluster_mask, 2], marker='x', s=50)
+
+    # ax.scatter(codebook[cluster_mask, 0], codebook[cluster_mask, 1], codebook[cluster_mask, 2], marker='x', c='b')
+    # ax.scatter(codebook[not_mask, 0], codebook[not_mask, 1], codebook[not_mask, 2], marker='x', c='c', alpha=0.2)
+
+    # plt.show()
+plt.show()
+
+
+# VIS SIMILARITY
+# for i in range(n_clusters):
+#     print("CLUSTER " + str(i))
+#     pts_mask = pts_cluster_idxs == i
+#     if not np.any(pts_mask):
+#         print("EMPTTY CLUSTER!")
+#         continue
+#     fig = plt.figure()
+#     # ax = fig.add_subplot(111, projection='3d')
+#     ax = plt.axes(projection='3d')
+
+#     ax.scatter(points[pts_mask, 0], points[pts_mask, 1], points[pts_mask, 2], marker='x', c='b')
+#     not_mask = np.logical_not(pts_mask)
+#     ax.scatter(points[not_mask, 0], points[not_mask, 1], points[not_mask, 2], marker='x', c='c', alpha=0.2)
+
+#     # ax.scatter(codebook[:, 0], codebook[:, 1], codebook[:,2], c='r')
+
+#     print(np.sort(dif[i,:]))
+#     for j in range(n_clusters):
+#         if j == i:
+#             continue
+
+#         relative_maxdist = np.max(dif[i, :])
+#         # lw = max_linewidth * (1 - (dif[i,j] / maxdist))
+#         lw = max_linewidth * (1 - (dif[i,j] / relative_maxdist))
+#         point1 = codebook[i, :]
+#         point2 = codebook[j, :]
+#         ax.plot([point1[0], point2[0]], [point1[1], point2[1]], [point1[2], point2[2]], c='r', linewidth = lw)
+#         # ax.scatter(codebook[j, 0], codebook[j, 1], codebook[j,2], c='r', s=lw*3)
+
+#     # ax.auto_scale_xyz()
+
+#     plt.show()
+
+
+
 # ax.scatter(points[:, 0], points[:, 1], points[:, 2], marker='x')
 # ax.scatter(codebook[:, 0], codebook[:, 1], codebook[:,2], c='r')
-plt.show()
 
 # downsampled_points, original_indices = downsample_pointcloud(points, num_points // downsample_factor)
 # print(original_indices)
