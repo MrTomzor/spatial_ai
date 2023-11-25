@@ -481,14 +481,38 @@ class NavNode:
         self.kp_pcl_pub = rospy.Publisher('tracked_features_space', PointCloud, queue_size=10)
         self.kp_pcl_pub_invdepth = rospy.Publisher('tracked_features_space_invdepth', PointCloud, queue_size=10)
 
-        # SUB
-        # self.sub_cam = rospy.Subscriber('/robot1/camera1/image', Image, self.image_callback, queue_size=10000)
-        self.sub_cam = rospy.Subscriber('/robot1/camera1/raw', Image, self.image_callback, queue_size=10000)
+        # --Load calib
+        # UNITY
+        # self.K = np.array([642.8495341420769, 0, 400, 0, 644.5958939934509, 300, 0, 0, 1]).reshape((3,3))
+        # self.imu_to_cam_T = np.array( [[0, -1, 0, 0], [0, 0, -1, 0], [1, 0, 0, 0], [0.0, 0.0, 0.0, 1.0]])
+        # self.width = 800
+        # self.height = 600
+        # ov_slampoints_topic = '/ov_msckf/points_slam'
+        # img_topic = '/robot1/camera1/raw'
+        # odom_topic = '/ov_msckf/odomimu'
+
+        # BLUEFOX UAV
+        self.K = np.array([227.4, 0, 376, 0, 227.4, 240, 0, 0, 1]).reshape((3,3))
+        # self.imu_to_cam_T = np.array( [[0, -1, 0, 0], [0, 0, -1, 0], [1, 0, 0, 0], [0.0, 0.0, 0.0, 1.0]])
+        self.imu_to_cam_T = np.eye(4)
+        self.width = 752
+        self.height = 480
+        ov_slampoints_topic = '/ov_msckf/points_slam'
+        img_topic = '/uav1/vio/camera/image_raw'
+        odom_topic = '/ov_msckf/odomimu'
+
+        print("IMUTOCAM", self.imu_to_cam_T)
+        self.P = np.zeros((3,4))
+        self.P[:3, :3] = self.K
+        print(self.P)
+
+        # --SUB
+        self.sub_cam = rospy.Subscriber(img_topic, Image, self.image_callback, queue_size=10000)
 
         self.odom_buffer = []
         self.odom_buffer_maxlen = 1000
-        self.sub_odom = rospy.Subscriber('/ov_msckf/odomimu', Odometry, self.odometry_callback, queue_size=10000)
-        self.sub_slam_points = rospy.Subscriber('/ov_msckf/points_slam', PointCloud2, self.points_slam_callback, queue_size=3)
+        self.sub_odom = rospy.Subscriber(odom_topic, Odometry, self.odometry_callback, queue_size=10000)
+        self.sub_slam_points = rospy.Subscriber(ov_slampoints_topic, PointCloud2, self.points_slam_callback, queue_size=3)
         # self.sub_odom = rospy.Subscriber('/ov_msckf/poseimu', PoseWithCovarianceStamped, self.odometry_callback, queue_size=10000)
 
         self.tf_broadcaster = tf.TransformBroadcaster()
@@ -504,16 +528,6 @@ class NavNode:
         self.test_db_indexing = {}
 
 
-        # Load calib
-        self.K = np.array([642.8495341420769, 0, 400, 0, 644.5958939934509, 300, 0, 0, 1]).reshape((3,3))
-        # self.K = np.array([, 644.5958939934509, 400.0503960299562, 300.5824096896595]).reshape((3,3))
-        self.imu_to_cam_T = np.array( [[0, -1, 0, 0], [0, 0, -1, 0], [1, 0, 0, 0], [0.0, 0.0, 0.0, 1.0]])
-        print("IMUTOCAM", self.imu_to_cam_T)
-
-        # self.K = np.array([642.8495341420769, 644.5958939934509, 400.0503960299562, 300.5824096896595]).reshape((3,3))
-        self.P = np.zeros((3,4))
-        self.P[:3, :3] = self.K
-        print(self.P)
 
         # NEW
         self.new_frame = None
@@ -528,8 +542,6 @@ class NavNode:
         # self.pp = (cam.cx, cam.cy)
         self.focal = 643.3520818301457
         self.pp = (400, 300)
-        self.width = 800
-        self.height = 600
         self.tracking_bin_width = 100
         self.min_features_per_bin = 1
         self.max_features_per_bin = 2
