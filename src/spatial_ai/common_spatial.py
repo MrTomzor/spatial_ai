@@ -392,10 +392,35 @@ class SphereMap:
     # #}
 # #}
 
-class CoherentSpatialMemoryChunk:
-    def __init__(self):# # #{
+class CoherentSpatialMemoryChunk:# # #{
+    def __init__(self):
         self.submaps = []
         self.total_traveled_context_distance = 0
+
+    def mergeSubmaps(self, indices):
+        '''merges submaps into the first one and returns it'''
+        map1 = self.submaps[indices[0]]
+        for i in indices:
+            if i == indices[0]:
+                continue
+            map2 = self.submaps[i]
+
+            relative_T = np.linalg.inv(map1.T_global_to_own_origin) @ map2.T_global_to_own_origin
+            relative_rot_T = np.eye(4)
+            relative_rot_T[:3, :3] = relative_T[:3, :3]
+
+            sphere_centers_t = transformPoints(map2.points, relative_T)
+            surfel_centers_t = transformPoints(map2.surfel_points, relative_T)
+            normals_t = transformPoints(map2.surfel_normals, relative_rot_T)
+
+            map1.points = np.concatenate((map1.points, sphere_centers_t))
+            map1.surfel_points = np.concatenate((map1.surfel_points, surfel_centers_t))
+            map1.surfel_normals = np.concatenate((map1.surfel_normals, normals_t))
+
+            # TODO - handle connections of spheres
+
+        return map1
+
 
     def addSubmap(self, smap):
         self.submaps.append(smap)
@@ -412,4 +437,4 @@ class CoherentSpatialMemoryChunk:
         mem = cls.__new__(cls)
         mem.__dict__.update(cls_dict)
         return mem
-
+# # #}

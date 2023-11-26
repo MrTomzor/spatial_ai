@@ -163,7 +163,8 @@ class NavNode:
         self.width = 800
         self.height = 600
         ov_slampoints_topic = '/ov_msckf/points_slam'
-        img_topic = '/robot1/camera1/raw'
+        # img_topic = '/robot1/camera1/raw'
+        img_topic = '/robot1/camera1/image'
         odom_topic = '/ov_msckf/odomimu'
 
         # BLUEFOX UAV
@@ -195,11 +196,11 @@ class NavNode:
         self.orb = cv2.ORB_create(nfeatures=30)
 
         # LOAD VOCAB FOR DBOW
-        vocab_path = rospkg.RosPack().get_path('spatial_ai') + "/vision_data/vocabulary.pickle"
-        self.visual_vocab = dbow.Vocabulary.load(vocab_path)
-        self.test_db = dbow.Database(self.visual_vocab)
-        self.test_db_n_kframes = 0
-        self.test_db_indexing = {}
+        # vocab_path = rospkg.RosPack().get_path('spatial_ai') + "/vision_data/vocabulary.pickle"
+        # self.visual_vocab = dbow.Vocabulary.load(vocab_path)
+        # self.test_db = dbow.Database(self.visual_vocab)
+        # self.test_db_n_kframes = 0
+        # self.test_db_indexing = {}
 
 
 
@@ -281,6 +282,8 @@ class NavNode:
                 # CONTEXT DIST BASED
                 if self.spheremap.traveled_context_distance > 50:
                     split_score = max_split_score
+                else:
+                    print("TRAVELED CONTEXT DISTS: " + str(self.spheremap.traveled_context_distance))
 
                 if split_score >= max_split_score:
                     # SAVE OLD SPHEREMAP
@@ -544,7 +547,9 @@ class NavNode:
         print("SAVING EPISODE MEMORY CHUNK")
 
         fpath = rospkg.RosPack().get_path('spatial_ai') + "/memories/last_episode.pickle"
+        self.mchunk.submaps.append(self.spheremap)
         self.mchunk.save(fpath)
+        self.mchunk.submaps.pop()
 
         self.node_offline = False
         print("EPISODE SAVED TO " + str(fpath))
@@ -914,7 +919,7 @@ class NavNode:
 
         if len(self.spheremap.visual_keyframes) > 0:
             dist_bonus = new_kf.euclid_dist(self.spheremap.visual_keyframes[-1])
-            heading_bonus = new_kf.heading_dif(self.spheremap.visual_keyframes[-1])
+            heading_bonus = new_kf.heading_dif(self.spheremap.visual_keyframes[-1]) * 0.2
 
             self.spheremap.traveled_context_distance += dist_bonus + heading_bonus
 
@@ -926,17 +931,17 @@ class NavNode:
         descs = [dbow.ORB.from_cv_descriptor(desc) for desc in descs]
         new_kf.descs = descs
 
-        self.test_db.add(descs)
-        self.test_db_n_kframes += 1
+        # self.test_db.add(descs)
+        # self.test_db_n_kframes += 1
         self.spheremap.visual_keyframes.append(new_kf)
 
-        self.test_db_indexing[self.test_db_n_kframes - 1] = (len(self.mchunk.submaps), len(self.spheremap.visual_keyframes)-1) 
+        # self.test_db_indexing[self.test_db_n_kframes - 1] = (len(self.mchunk.submaps), len(self.spheremap.visual_keyframes)-1) 
 
-        scores = self.test_db.query(descs)
+        # scores = self.test_db.query(descs)
 
-        self.visualize_keyframe_scores(scores, new_kf)
-        print("SCORES:")
-        print(scores)
+        # self.visualize_keyframe_scores(scores, new_kf)
+        # print("SCORES:")
+        # print(scores)
 
 
 
