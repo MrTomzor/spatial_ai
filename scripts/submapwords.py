@@ -6,6 +6,9 @@ from sklearn.cluster import KMeans
 from scipy.spatial import KDTree
 import scipy
 import math
+import rospkg
+
+from spatial_ai.common_spatial import *
 # import open3d 
 # from open3d.geometry import uniform_down_sample
 
@@ -63,12 +66,12 @@ def sift_3d(pts, normals, n_horiz_bins = 6, n_vert_bins = 3):
     #GRAVITY ALIGNED
     phis = np.arctan2(normals[:, 1], normals[:, 0])
     total_horiz_histogram = np.histogram(phis, bins=horiz_bins)[0]
-    print(total_horiz_histogram)
+    # print(total_horiz_histogram)
 
     principial_horiz_bin_idx = np.argmax(total_horiz_histogram )
-    print("PRINCIP BIN IDX: " + str(principial_horiz_bin_idx))
+    # print("PRINCIP BIN IDX: " + str(principial_horiz_bin_idx))
     total_horiz_histogram = np.roll(total_horiz_histogram, -principial_horiz_bin_idx)
-    print(total_horiz_histogram)
+    # print(total_horiz_histogram)
 
     # thetas = np.arctan2(normals[:, 1], normals[:, 0])
     # vert_bins = np.histogram(normals[:, 2], bins = n_vert_bins, range=(-1,1))
@@ -93,91 +96,127 @@ def sift_3d(pts, normals, n_horiz_bins = 6, n_vert_bins = 3):
 num_points = 10000
 # mesh = trimesh.Trimesh(vertices=[[0, 0, 0], [0, 0, 1], [0, 1, 0]],
 #                        faces=[[0, 1, 2]])
-mesh = trimesh.load('Bunny.stl')
+
+# mesh = trimesh.load('Bunny.stl')
 # mesh = trimesh.load('Normandy.stl')
 # mesh = trimesh.load('House.stl')
 # mesh = trimesh.load('Minecraft.stl')
 
-
-points, normals = sample_mesh(mesh, num_points)
-print("sampled")
-
-import time 
-cs = time.time()
-
-# print("downsampled")
-# tree.query(points)
-
-# kmeans = KMeans(n_clusters=100, random_state=0).fit(points)
-
-# n_clusters = 60
-n_clusters = 100
-
-codebook, distortion = scipy.cluster.vq.kmeans(points, n_clusters, iter=2)
-kdtree = KDTree(codebook)
-pts_cluster_idxs = kdtree.query(points)[1]
-print(pts_cluster_idxs)
+# points, normals = sample_mesh(mesh, num_points)
 
 
-# print(sift_3d(points, normals))
+fpath = rospkg.RosPack().get_path('spatial_ai') + "/memories/last_episode.pickle"
+mchunk = CoherentSpatialMemoryChunk.load(fpath)
 
-# Plot whitened data and cluster centers in red
-
-# fig = plt.figure()
-# ax = fig.add_subplot(111, projection='3d')
-
-
-# COMPUTE DESCRIPTORS
-n_horiz_bins = 20
-n_vert_bins = 5
-# n_horiz_bins = 8
-# n_vert_bins = 3
-
-desc_size = n_vert_bins * n_horiz_bins
-descriptors = []
-for i in range(n_clusters):
-    pts_mask = pts_cluster_idxs == i
-    if not np.any(pts_mask):
-        print("EMPTTY CLUSTER!")
-        descriptors.append(np.ones((desc_size)) * 10)
-        continue
-    descriptors.append(sift_3d(None, normals[pts_mask]))
-
-descriptors = np.array(descriptors)
-dif = scipy.spatial.distance_matrix(descriptors, descriptors)
-maxdist = np.max(dif.flatten())
-
-# VOCAB COMPUTATION
-print("COMPUTING VOCAB")
-n_vocab_clusters = 5
-vocab_centroids, distortion = scipy.cluster.vq.kmeans(descriptors, n_vocab_clusters, iter=20)
-vocab_tree = KDTree(vocab_centroids)
-
-
-
-max_linewidth = 5
-ctime = (time.time() - cs)
-print("COMP TIME: " + str(ctime * 1000) + " ms")
-
-
-# VIS VOCAB
-word_idxs = vocab_tree.query(descriptors)[1]
-present_words = np.unique(word_idxs)
-
-fig = plt.figure()
-ax = plt.axes(projection='3d')
-
-for word in present_words:
-
-    cluster_mask = word_idxs == word
-    not_mask = np.logical_not(cluster_mask )
-    ax.scatter(codebook[cluster_mask, 0], codebook[cluster_mask, 1], codebook[cluster_mask, 2], marker='x', s=50)
-
-    # ax.scatter(codebook[cluster_mask, 0], codebook[cluster_mask, 1], codebook[cluster_mask, 2], marker='x', c='b')
-    # ax.scatter(codebook[not_mask, 0], codebook[not_mask, 1], codebook[not_mask, 2], marker='x', c='c', alpha=0.2)
-
-    # plt.show()
-plt.show()
+for i in range(len(mchunk.submaps)):
+    # points = mchunk.submaps[-1].surfel_points
+    # normals = mchunk.submaps[-1].surfel_normals
+    points = mchunk.submaps[i].surfel_points
+    normals = mchunk.submaps[i].surfel_normals
+    
+    print("sampled")
+    # print(np.argwhere(np.isnan(points)))
+    print("normals")
+    # print(np.argwhere(np.isnan(normals)))
+    print("normals2")
+    # print(normals)
+    
+    nan_norms = np.any(np.isnan(normals), axis = 1)
+    print("N with nans: " + str(np.sum(nan_norms)) + " / " + str(normals.shape[0]))
+    nan_normal_pts = points[nan_norms]
+    
+    points = points[np.logical_not(nan_norms)]
+    normals = normals[np.logical_not(nan_norms)]
+    
+    
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.scatter(points[:, 0], points[:, 1], points[:, 2],
+               c='b', marker='x', label='Original Points (Correspondence)')
+    ax.scatter(nan_normal_pts[:, 0], nan_normal_pts[:, 1], nan_normal_pts[:, 2],
+               c='r', marker='x', label='NAN Points (Correspondence)')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.legend()
+    plt.show()
+    
+    import time 
+    cs = time.time()
+    
+    # print("downsampled")
+    # tree.query(points)
+    
+    # kmeans = KMeans(n_clusters=100, random_state=0).fit(points)
+    
+    # n_clusters = 60
+    n_clusters = 100
+    
+    codebook, distortion = scipy.cluster.vq.kmeans(points, n_clusters, iter=2)
+    kdtree = KDTree(codebook)
+    pts_cluster_idxs = kdtree.query(points)[1]
+    print(pts_cluster_idxs)
+    
+    
+    # print(sift_3d(points, normals))
+    
+    # Plot whitened data and cluster centers in red
+    
+    # fig = plt.figure()
+    # ax = fig.add_subplot(111, projection='3d')
+    
+    
+    # COMPUTE DESCRIPTORS
+    n_horiz_bins = 20
+    n_vert_bins = 5
+    # n_horiz_bins = 8
+    # n_vert_bins = 3
+    
+    desc_size = n_vert_bins * n_horiz_bins
+    descriptors = []
+    for i in range(n_clusters):
+        pts_mask = pts_cluster_idxs == i
+        if not np.any(pts_mask):
+            print("EMPTTY CLUSTER!")
+            descriptors.append(np.ones((desc_size)) * 10)
+            continue
+        descriptors.append(sift_3d(None, normals[pts_mask]))
+    
+    descriptors = np.array(descriptors)
+    dif = scipy.spatial.distance_matrix(descriptors, descriptors)
+    maxdist = np.max(dif.flatten())
+    
+    # VOCAB COMPUTATION
+    print("COMPUTING VOCAB")
+    n_vocab_clusters = 10
+    vocab_centroids, distortion = scipy.cluster.vq.kmeans(descriptors, n_vocab_clusters, iter=20)
+    vocab_tree = KDTree(vocab_centroids)
+    
+    
+    
+    max_linewidth = 5
+    ctime = (time.time() - cs)
+    print("COMP TIME: " + str(ctime * 1000) + " ms")
+    
+    
+    # VIS VOCAB
+    word_idxs = vocab_tree.query(descriptors)[1]
+    present_words = np.unique(word_idxs)
+    
+    fig = plt.figure()
+    ax = plt.axes(projection='3d')
+    
+    for word in present_words:
+    
+        cluster_mask = word_idxs == word
+        not_mask = np.logical_not(cluster_mask )
+        ax.scatter(codebook[cluster_mask, 0], codebook[cluster_mask, 1], codebook[cluster_mask, 2], marker='x', s=50)
+    
+        # ax.scatter(codebook[cluster_mask, 0], codebook[cluster_mask, 1], codebook[cluster_mask, 2], marker='x', c='b')
+        # ax.scatter(codebook[not_mask, 0], codebook[not_mask, 1], codebook[not_mask, 2], marker='x', c='c', alpha=0.2)
+    
+        # plt.show()
+    plt.show()
 
 
 # VIS SIMILARITY
