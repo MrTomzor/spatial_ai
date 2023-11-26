@@ -11,6 +11,9 @@ import heapq
 import dbow
 import rospkg
 
+from sklearn.cluster import KMeans
+from scipy.spatial import KDTree
+
 # from sensor_msgs.msg import Image
 from sensor_msgs.msg import Image, CompressedImage, PointCloud2
 import sensor_msgs.point_cloud2 as pc2
@@ -164,8 +167,8 @@ class SphereMap:
         # What frame are the points in?
         # print("UPDATING SURFELS")
         n_test_new_pts = visible_points.shape[0]
-        # print("NEW SURFEL POSITIONS SEEN: " + str(n_test_new_pts))
 
+        # TODO do based on map scale!!!
         filtering_radius = 1
 
         pts_survived_first_mask = np.full((n_test_new_pts), True)
@@ -185,9 +188,8 @@ class SphereMap:
         # print("N SURVIVED FILTERING WITH OLD POINTS: " + str(n_survived_first_filter))
 
         pts_added_mask = np.full((n_survived_first_filter), False)
-
         self_distmatrix = scipy.spatial.distance_matrix(pts_survived_filter_with_mappoints, pts_survived_filter_with_mappoints)
-        # print(self_distmatrix)
+
         # ADD NEW PTS IF NOT BAD AGAINST OTHERS OR AGAINST DISTMATRIX
         n_added = 0
         for i in range(n_survived_first_filter):
@@ -195,15 +197,63 @@ class SphereMap:
                 n_added += 1
                 pts_added_mask[i] = True
 
-        # print("N ADDING")
-        # print(np.sum(pts_added_mask))
         if n_added > 0:
             if self.surfel_points is None:
                 self.surfel_points = pts_survived_filter_with_mappoints[pts_added_mask]
             else:
                 self.surfel_points = np.concatenate((self.surfel_points, pts_survived_filter_with_mappoints[pts_added_mask]))
 
-        # existing_distmatrix = scipy.spatial.distance_matrix(visible_points, self.surfel_points)
+        # COMPUTE POINT NORMALS AND KILL THEM IF OCCUPIED BY SPHERES
+        affection_distance = self.max_radius * 1.2
+        killing_inside_dist = -0.1
+
+        max_n_affecting_spheres = 5
+        skdtree_query = self.spheres_kdtree.query(self.surfel_points, k=max_n_affecting_spheres, distance_upper_bound=affection_distance)
+        n_spheres = self.points.shape[0]
+        print("N SPHERES: " + str(n_spheres))
+
+        self.surfels_that_have_normals = np.full((self.surfel_points.shape[0]), False)
+        keep_surfels_mask = np.full((self.surfel_points.shape[0]), True)
+        self.surfel_normals = np.zeros((self.surfel_points.shape[0], 3))
+
+        # CHECK IF NOT KILLED BY SPHERE AND COMPUTE NORMAL IF NOT
+        for i in range(self.surfel_points.shape[0]):
+            # found_neighbors = np.array([x for x in skdtree_query[1][i] if x != n_spheres])
+
+            found_neighbors = skdtree_query[1][i]
+            existing_mask = found_neighbors != n_spheres
+            # print("FOUND NEIGHBORS: " + str(found_neighbors.shape[0]))
+            # print(skdtree_query[1][i])
+            # print(skdtree_query[0][i])
+
+            n_considered = np.sum(existing_mask)
+            if n_considered == 0:
+                continue
+
+            found_dists = skdtree_query[0][i][existing_mask]
+            found_sphere_indicies = skdtree_query[1][i][existing_mask]
+            found_radii = self.radii[found_sphere_indicies]
+            # found_neighbors = np.array(found_neighbors)
+
+            # CHECK IF KILLED BY THE SPHERES
+            dists_from_spheres_edge = found_dists - found_radii
+            # print(dists_from_spheres_edge )
+
+            if np.any(dists_from_spheres_edge < killing_inside_dist):
+                keep_surfels_mask[i] = False
+                # print("KILLING")
+                continue
+
+            # COMPUTE NORMALS FROM NEAR SPHERES
+            normals = (self.points[found_sphere_indicies, :] - self.surfel_points[i].reshape(1,3)) / found_dists.reshape(n_considered, 1)
+            self.surfel_normals[i, :] = np.sum(normals, axis = 0) / n_considered
+
+        # SAVE NEW PTS AND THEIR NORMALS
+        n_keep = np.sum(keep_surfels_mask)
+        self.surfel_points = self.surfel_points[keep_surfels_mask, :]
+        # self.surfel_normals = self.surfel_normals[keep_surfels_mask, :] / n_considered
+        self.surfel_normals = self.surfel_normals[keep_surfels_mask, :] / np.linalg.norm(self.surfel_normals[keep_surfels_mask, :], axis=1).reshape(n_keep, 1)
+
 
         return True
     # # #}
@@ -465,6 +515,7 @@ class NavNode:
 
         # SRV
         self.vocab_srv = rospy.Service("save_vocabulary", EmptySrv, self.saveCurrentVisualDatabaseToVocabFile)
+        self.save_episode_full = rospy.Service("save_episode_full", EmptySrv, self.saveEpisodeFull)
 
         # VIS PUB
         self.slam_points = None
@@ -483,23 +534,22 @@ class NavNode:
 
         # --Load calib
         # UNITY
-        # self.K = np.array([642.8495341420769, 0, 400, 0, 644.5958939934509, 300, 0, 0, 1]).reshape((3,3))
-        # self.imu_to_cam_T = np.array( [[0, -1, 0, 0], [0, 0, -1, 0], [1, 0, 0, 0], [0.0, 0.0, 0.0, 1.0]])
-        # self.width = 800
-        # self.height = 600
-        # ov_slampoints_topic = '/ov_msckf/points_slam'
-        # img_topic = '/robot1/camera1/raw'
-        # odom_topic = '/ov_msckf/odomimu'
+        self.K = np.array([642.8495341420769, 0, 400, 0, 644.5958939934509, 300, 0, 0, 1]).reshape((3,3))
+        self.imu_to_cam_T = np.array( [[0, -1, 0, 0], [0, 0, -1, 0], [1, 0, 0, 0], [0.0, 0.0, 0.0, 1.0]])
+        self.width = 800
+        self.height = 600
+        ov_slampoints_topic = '/ov_msckf/points_slam'
+        img_topic = '/robot1/camera1/raw'
+        odom_topic = '/ov_msckf/odomimu'
 
         # BLUEFOX UAV
-        self.K = np.array([227.4, 0, 376, 0, 227.4, 240, 0, 0, 1]).reshape((3,3))
-        # self.imu_to_cam_T = np.array( [[0, -1, 0, 0], [0, 0, -1, 0], [1, 0, 0, 0], [0.0, 0.0, 0.0, 1.0]])
-        self.imu_to_cam_T = np.eye(4)
-        self.width = 752
-        self.height = 480
-        ov_slampoints_topic = '/ov_msckf/points_slam'
-        img_topic = '/uav1/vio/camera/image_raw'
-        odom_topic = '/ov_msckf/odomimu'
+        # self.K = np.array([227.4, 0, 376, 0, 227.4, 240, 0, 0, 1]).reshape((3,3))
+        # self.imu_to_cam_T = np.eye(4)
+        # self.width = 752
+        # self.height = 480
+        # ov_slampoints_topic = '/ov_msckf/points_slam'
+        # img_topic = '/uav1/vio/camera/image_raw'
+        # odom_topic = '/ov_msckf/odomimu'
 
         print("IMUTOCAM", self.imu_to_cam_T)
         self.P = np.zeros((3,4))
@@ -606,7 +656,7 @@ class NavNode:
                 #     split_score = max_split_score
 
                 # CONTEXT DIST BASED
-                if self.spheremap.traveled_context_distance > 30:
+                if self.spheremap.traveled_context_distance > 50:
                     split_score = max_split_score
 
                 if split_score >= max_split_score:
@@ -838,6 +888,12 @@ class NavNode:
         comp_time = time.time() - comp_start_time
         print("SPHEREMAP integration time: " + str((comp_time) * 1000) +  " ms")
 
+        comp_start_time = time.time()
+        self.spheremap.spheres_kdtree = KDTree(self.spheremap.points)
+        self.spheremap.max_radius = np.max(self.spheremap.radii)
+        comp_time = time.time() - comp_start_time
+        print("Sphere KDTree computation: " + str((comp_time) * 1000) +  " ms")
+
         # HANDLE ADDING/REMOVING VISIBLE 3D POINTS
         comp_start_time = time.time()
 
@@ -858,7 +914,17 @@ class NavNode:
         # self.node_offline = not self.spheremap.consistencyCheck()
 # # #}
 
-    def saveCurrentVisualDatabaseToVocabFile(self, req):
+    def saveEpisodeFull(self, req):# # #{
+        self.node_offline = True
+        print("SAVING EPISODE ")
+
+        fpath = rospkg.RosPack().get_path('spatial_ai') + "/saved_episodes/last_episode.pickle"
+        # vocab.save(fpath)
+
+        print("EPISODE SAVED TO " + str(fpath))
+        return EmptySrvResponse()# # #}
+
+    def saveCurrentVisualDatabaseToVocabFile(self, req):# # #{
         self.node_offline = True
         n_words = 1000
         depth = 3
@@ -902,7 +968,7 @@ class NavNode:
         vocab.save(vocab_path)
 
         print("VOCAB SAVE SUCCESS")
-        return EmptySrvResponse()
+        return EmptySrvResponse()# # #}
 
     def findPathAstarInSubmap(self, smap, startpoint, endpoint, maxdist_to_graph=10, min_safe_dist=0.5, max_safe_dist=3, safety_weight=1):# # #{
         print("PATHFIND: STARTING, FROM TO:")
@@ -1736,7 +1802,7 @@ class NavNode:
         self.spheremap_spheres_pub.publish(marker_array)
 # # #}
     
-    def get_spheremap_marker_array(self, marker_array, smap, T_inv, alternative_look=False, do_connections=True,  do_surfels=True, do_spheres=True, do_keyframes=True):# # #{
+    def get_spheremap_marker_array(self, marker_array, smap, T_inv, alternative_look=False, do_connections=True,  do_surfels=True, do_spheres=True, do_keyframes=True, do_normals=True):# # #{
         # T_vis = np.linalg.inv(T_inv)
         T_vis = T_inv
         pts = transformPoints(smap.points, T_vis)
@@ -1817,6 +1883,41 @@ class NavNode:
                 points_msg = [Point(x=spts[i, 0], y=spts[i, 1], z=spts[i, 2]) for i in range(n_surfels)]
                 marker.points = points_msg
                 marker_array.markers.append(marker)
+        if do_normals:
+            arrowlen = 3
+            pts1 = transformPoints(smap.surfel_points, T_vis)
+            pts2 = transformPoints(smap.surfel_points + smap.surfel_normals * arrowlen, T_vis)
+            if not smap.surfel_points is None:
+                for i in range(smap.surfel_points.shape[0]):
+                    marker = Marker()
+                    marker.header.frame_id = "global"  # Change this frame_id if necessary
+                    marker.header.stamp = rospy.Time.now()
+                    marker.type = Marker.ARROW
+                    marker.action = Marker.ADD
+                    marker.id = marker_id
+                    marker_id += 1
+
+                    # Set the scale
+                    marker.scale.x = 0.5
+                    marker.scale.y = 1
+                    marker.scale.z = 1
+
+                    marker.color.a = 1
+                    marker.color.r = 1.0
+                    marker.color.g = 0.5
+                    marker.color.b = 0.0
+                    if alternative_look:
+                        marker.color.r = 0.7
+                        marker.color.g = 0.0
+                        marker.color.b = 1.0
+
+                    pt1 = pts1[i]
+                    pt2 = pts2[i]
+                    points_msg = [Point(x=pt1[0], y=pt1[1], z=pt1[2]), Point(x=pt2[0], y=pt2[1], z=pt2[2])]
+                    marker.points = points_msg
+
+                    # Add the marker to the MarkerArray
+                    marker_array.markers.append(marker)
 
         if do_keyframes:
             n_kframes = len(smap.visual_keyframes)
