@@ -2,9 +2,11 @@
 
 # #{ imports
 
+import copy
 import rospy
 from std_srvs.srv import Empty as EmptySrv
 from std_srvs.srv import EmptyResponse as EmptySrvResponse
+import threading
 
 import heapq
 
@@ -20,6 +22,8 @@ from spatial_ai.common_spatial import *
 # from sensor_msgs.msg import Image
 from sensor_msgs.msg import Image, CompressedImage, PointCloud2
 import sensor_msgs.point_cloud2 as pc2
+import mrs_msgs.msg
+import std_msgs.msg
 from scipy.spatial.transform import Rotation
 import scipy
 from scipy.spatial import Delaunay
@@ -69,6 +73,19 @@ import sys
 from termcolor import colored, cprint
 
 # #}
+class ScopedLock:
+    def __init__(self, mutex):
+        # self.lock = threading.Lock()
+        self.lock = mutex
+
+    def __enter__(self):
+        print("LOCKING MUTEX")
+        self.lock.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        print("UNLOCKING MUTEX")
+        self.lock.release()
 
 # #{ global variables
 STAGE_FIRST_FRAME = 0
@@ -123,6 +140,7 @@ class KeyFrame:
 # #{ class NavNode:
 class NavNode:
     def __init__(self):# # #{
+        self.node_initialized = False
         self.node_offline = False
         self.bridge = CvBridge()
         self.prev_image = None
@@ -136,10 +154,18 @@ class NavNode:
         self.keyframes = []
         self.noprior_triangulation_points = None
         self.odomprior_triangulation_points = None
+        self.spheremap_mutex = threading.Lock()
 
         # SRV
         self.vocab_srv = rospy.Service("save_vocabulary", EmptySrv, self.saveCurrentVisualDatabaseToVocabFile)
         self.save_episode_full = rospy.Service("save_episode_full", EmptySrv, self.saveEpisodeFull)
+
+        # TIMERS
+        self.planning_frequency = 10
+        self.planning_timer = rospy.Timer(rospy.Duration(1.0 / self.planning_frequency), self.planning_loop_iter)
+
+        # PLANNING PUB
+        self.path_for_trajectory_generator_pub = rospy.Publisher('/uav1/trajectory_generation/path', mrs_msgs.msg.Path, queue_size=10)
 
         # VIS PUB
         self.slam_points = None
@@ -229,317 +255,448 @@ class NavNode:
         self.tracking_colors = np.random.randint(0, 255, (100, 3)) 
 
         self.n_frames = 0
+        self.tracked_features = []
 
-        self.tracked_features = []# # #}
+        self.local_nav_goal = None
+        self.local_nav_start_time = None
+        self.local_reaching_dist = 3
+        
+        self.node_initialized = True
+        # # #}
+
+    def select_random_reachable_goal_viewpoint(self):# # #{
+        print("SELECTING RANDOM REACHABLE GOAL VP")
+        T_global_to_imu = self.odom_msg_to_transformation_matrix(self.odom_buffer[-1])
+        current_pos_in_smap_frame = (np.linalg.inv(self.spheremap.T_global_to_imu_at_start) @ T_global_to_imu)[:3, 3]
+
+        # GET LARGEST SEGMENT SEG_ID IN SOME RADIUS AORUND CURRENT POSITION, FIND GOAL IN THAT REACHABILITY SEGMENT
+        if self.spheremap.spheres_kdtree is None:
+            print("GOT NO SPHERES!!!")
+            return
+        query_res = self.spheremap.spheres_kdtree.query(current_pos_in_smap_frame, k = 5, distance_upper_bound = 3)[1]
+        bad_mask = query_res == self.spheremap.points.shape[0]
+        if np.all(bad_mask):
+            print("WARN: NO NEARBY SPHERES TO FIND REACAHBLE VIEWPOINT")
+            return None
+        near_sphere_ids = query_res[np.logical_not(bad_mask)]
+        seg_ids = self.spheremap.connectivity_labels[near_sphere_ids]
+
+        # GET ALL SEG_IDS
+        unique_segs = np.unique(seg_ids)
+        counts = self.spheremap.connectivity_segments_counts[unique_segs]
+        largest_seg_id = unique_segs[np.argmax(counts)]
+        print("LARGEST SEG N SPHERES: " + str(self.spheremap.connectivity_segments_counts[largest_seg_id]))
+
+        # REACHABLE SPHERES:
+        reachable_centroids = self.spheremap.points[self.spheremap.connectivity_labels == largest_seg_id]
+        deltavecs = reachable_centroids - current_pos_in_smap_frame
+        dists = np.linalg.norm(deltavecs, axis = 1)
+        
+        # best_idx = np.argmax(dists)
+        best_idx = np.argmax(deltavecs[:, 0]) # MOST INFRONT
+        print("SELECTING GOAL METRES AWAY: " + str(dists[best_idx]))
+        print(reachable_centroids[best_idx, :])
+        print(reachable_centroids[best_idx, :].shape)
+
+        res_point_in_odom_frame = transformPoints(reachable_centroids[best_idx, :].reshape((1,3)), self.spheremap.T_global_to_imu_at_start)
+        print("GOAL IN ODOM_FRAME: ")
+        print(res_point_in_odom_frame )
+        return Viewpoint(res_point_in_odom_frame, None)
+
+# # #}
+
+    def find_path_rrt_multiple_submaps(self, start_vp, goal_vp, maps, sampling_dist=0.2):# # #{
+        return None
+# # #}
+
+    def send_path_to_trajectory_generator(self, path):# # #{
+        print("SENDING PATH TO TRAJ GENERATOR")
+        msg = mrs_msgs.msg.Path
+        msg.header = std_msgs.msg.Header()
+        msg.header.frame_id = 'global'
+        msg.header.stamp = rospy.Time.now()
+        msg.use_heading = False
+        msg.fly_now = True
+        msg.stop_at_waypoints = False
+        arr = []
+
+        for p in path:
+            ref = mrs_msgs.msg.Reference
+            ref.position = Point(x=p[0], y=p[1], z=p[2])
+            arr.append(p)
+        msg.points = arr
+
+        self.path_for_trajectory_generator_pub.publish(msg)
+
+        return None
+# # #}
+
+    def planning_loop_iter(self, event=None):# # #{
+        print("pes")
+        with ScopedLock(self.spheremap_mutex):
+            print("pespes")
+            if not self.node_initialized:
+                return
+            print("kocka")
+
+            T_global_to_imu = self.odom_msg_to_transformation_matrix(self.odom_buffer[-1])
+            pos_odom_frame = T_global_to_imu[:3, 3]
+            heading_odom_frame = transformationMatrixToHeading(T_global_to_imu)
+            current_vp = Viewpoint(pos_odom_frame, heading_odom_frame)
+
+            # FIND GOAL IF NONE
+            max_reaching_time = 5
+            if self.local_nav_goal is None or (rospy.get_rostime() - self.local_nav_start_time).to_sec() > max_reaching_time:
+                self.local_nav_goal = self.select_random_reachable_goal_viewpoint()
+                self.local_nav_start_time = rospy.get_rostime()
+                return
+
+            # CHECK IF REACHED
+            dist_to_goal = np.linalg.norm(self.local_nav_goal.position - pos_odom_frame)
+            print("DIST TO GOAL: " + str(dist_to_goal))
+            if dist_to_goal < self.local_reaching_dist:
+                print("GOAL REACHED!!!")
+                self.local_nav_goal = None
+                return
+
+            # VISUALIZE GOAL POSITION
+            # TODO
+
+            # FIND PATH TO GOAL AND SEND IT TO TRAJECTORY GENERATOR
+            # TRY A* PATH PLANNING FOR NOW!
+            T_global_to_smap_origin = np.linalg.inv(self.spheremap.T_global_to_imu_at_start)
+            current_pos_in_smap_frame = (T_global_to_smap_origin @ T_global_to_imu)[:3, 3]
+            goal_pos_in_smap_frame = transformPoints(self.local_nav_goal.position, T_global_to_smap_origin)
+
+            pathfindres = self.findPathAstarInSubmap(self.spheremap, current_pos_in_smap_frame, goal_pos_in_smap_frame)
+            if not pathfindres is None:
+                print("FOUND SOME PATH!")
+                path_in_global_frame = transformPoints(pathfindres, T_global_to_smap_origin)
+                self.send_path_to_trajectory_generator(path_in_global_frame)
+            else:
+                print("NO PATH FOUND! SELECTING NEW GOAL!")
+                self.local_nav_goal = None
+            # planning_smaps = [self.spheremap]
+            # rrt_path = self.find_path_rrt_multiple_submaps(
+
+
+# # #}
+
+
 
     def points_slam_callback(self, msg):# # #{
         if self.node_offline:
             return
         print("PCL MSG")
-        comp_start_time = time.time()
+        with ScopedLock(self.spheremap_mutex):
+            print("PCL MSG PROCESSING NOW")
+            comp_start_time = time.time()
 
-        # Read Points from OpenVINS# #{
-        pc_data = pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)
-        pc_list = []
-        for point in pc_data:
-            x, y, z = point
-            pc_list.append([x, y, z])
-        if len(pc_list) == 0:
-            return
-        point_cloud_array = np.array(pc_list, dtype=np.float32)
+            # Read Points from OpenVINS# #{
+            pc_data = pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)
+            pc_list = []
+            for point in pc_data:
+                x, y, z = point
+                pc_list.append([x, y, z])
+            if len(pc_list) == 0:
+                return
+            point_cloud_array = np.array(pc_list, dtype=np.float32)
 
-        # OpenVINS outputs always some point at origin, and it is not really useful for us, breaks hull shit
-        #TODO - solve what to do with this in future
-        nonzero_pts = np.array(np.linalg.norm(point_cloud_array, axis=1) > 0)
-        if not np.any(nonzero_pts):
-            print("NO POINTS?")
-            return
-        point_cloud_array = point_cloud_array[nonzero_pts, :]
+            # OpenVINS outputs always some point at origin, and it is not really useful for us, breaks hull shit
+            #TODO - solve what to do with this in future
+            nonzero_pts = np.array(np.linalg.norm(point_cloud_array, axis=1) > 0)
+            if not np.any(nonzero_pts):
+                print("NO POINTS?")
+                return
+            point_cloud_array = point_cloud_array[nonzero_pts, :]
 # # #}
 
-        # DECIDE WHETHER TO UPDATE SPHEREMAP OR INIT NEW ONE# #{
-        T_global_to_imu = self.odom_msg_to_transformation_matrix(self.odom_buffer[-1])
-        self.submap_unpredictability_signal = 0
-        init_new_spheremap = False
-        memorized_transform_to_prev_map = None
-        init_rad = 0.5
-        min_rad = init_rad
+            # DECIDE WHETHER TO UPDATE SPHEREMAP OR INIT NEW ONE# #{
+            T_global_to_imu = self.odom_msg_to_transformation_matrix(self.odom_buffer[-1])
+            self.submap_unpredictability_signal = 0
+            init_new_spheremap = False
+            memorized_transform_to_prev_map = None
+            init_rad = 0.5
+            min_rad = init_rad
 
-        if self.spheremap is None:
-            init_new_spheremap = True
-        else:
-            if self.submap_unpredictability_signal > 1:
-                pass
+            if self.spheremap is None:
+                init_new_spheremap = True
             else:
-                max_split_score = 100
-                split_score = 0
-                secs_since_creation = (rospy.get_rostime() - self.spheremap.creation_time).to_sec()
-
-                # TIME BASED
-                # if secs_since_creation > 70:
-                #     split_score = max_split_score
-
-                # CONTEXT DIST BASED
-                if self.spheremap.traveled_context_distance > 50:
-                    split_score = max_split_score
+                if self.submap_unpredictability_signal > 1:
+                    pass
                 else:
-                    print("TRAVELED CONTEXT DISTS: " + str(self.spheremap.traveled_context_distance))
+                    max_split_score = 100
+                    split_score = 0
+                    secs_since_creation = (rospy.get_rostime() - self.spheremap.creation_time).to_sec()
 
-                if split_score >= max_split_score:
-                    # SAVE OLD SPHEREMAP
-                    # TODO give it the transform to the next ones origin from previous origin
-                    memorized_transform_to_prev_map = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_imu
-                    self.mchunk.submaps.append(self.spheremap)
-                    init_new_spheremap = True
-                    self.visualize_episode_submaps()
-        if init_new_spheremap:
-            # INIT NEW SPHEREMAP
-            print("INFO: initing new spheremap")
-            self.spheremap = SphereMap(init_rad, min_rad)
-            self.spheremap.memorized_transform_to_prev_map = memorized_transform_to_prev_map 
-            # self.spheremap.T_global_to_own_origin = T_global_to_imu @ self.imu_to_cam_T
-            self.spheremap.T_global_to_own_origin = T_global_to_imu 
-            self.spheremap.T_global_to_imu_at_start = T_global_to_imu
-            self.spheremap.creation_time = rospy.get_rostime()
+                    # TIME BASED
+                    # if secs_since_creation > 70:
+                    #     split_score = max_split_score
 
-        if len(self.mchunk.submaps) > 2:
-            self.saveEpisodeFull(None)
-        # # #}
+                    # CONTEXT DIST BASED
+                    if self.spheremap.traveled_context_distance > 7:
+                        split_score = max_split_score
+                    else:
+                        print("TRAVELED CONTEXT DISTS: " + str(self.spheremap.traveled_context_distance))
 
-        # ---CURRENT SPHEREMAP UPDATE WITH CURRENTLY TRIANGULATED POINTS # #{
+                    if split_score >= max_split_score:
+                        # SAVE OLD SPHEREMAP
+                        # TODO give it the transform to the next ones origin from previous origin
+                        memorized_transform_to_prev_map = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_imu
+                        self.mchunk.submaps.append(self.spheremap)
+                        init_new_spheremap = True
+                        self.visualize_episode_submaps()
+            if init_new_spheremap:
+                # INIT NEW SPHEREMAP
+                print("INFO: initing new spheremap")
+                self.spheremap = SphereMap(init_rad, min_rad)
+                self.spheremap.surfels_filtering_radius = 0.2
 
-        # TRANSFORM SLAM PTS TO IMAGE AND COMPUTE THEIR PIXPOSITIONS
-        if len(self.odom_buffer) == 0:
-            print("WARN: ODOM BUFFER EMPY!")
-            return
-        transformed = transformPoints(point_cloud_array, (self.imu_to_cam_T @ np.linalg.inv(T_global_to_imu))).T
-        positive_z_idxs = transformed[2, :] > 0
-        final_points = transformed[:, positive_z_idxs]
+                self.spheremap.memorized_transform_to_prev_map = memorized_transform_to_prev_map 
+                # self.spheremap.T_global_to_own_origin = T_global_to_imu @ self.imu_to_cam_T
+                self.spheremap.T_global_to_own_origin = T_global_to_imu 
+                self.spheremap.T_global_to_imu_at_start = T_global_to_imu
+                self.spheremap.creation_time = rospy.get_rostime()
 
-        pixpos = self.getPixelPositions(final_points)
+            if len(self.mchunk.submaps) > 2:
+                self.saveEpisodeFull(None)
+            # # #}
 
-        # COMPUTE DELAUNAY TRIANG OF VISIBLE SLAM POINTS
-        print("HAVE DELAUNAY:")
-        tri = Delaunay(pixpos)
-        # vis = self.visualize_depth(pixpos, tri)
-        # self.depth_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
+            # ---CURRENT SPHEREMAP UPDATE WITH CURRENTLY TRIANGULATED POINTS # #{
 
-        # CONSTRUCT OBSTACLE MESH
-        comp_mesh = time.time()
-        obstacle_mesh = trimesh.Trimesh(vertices=final_points.T, faces = tri.simplices)
+            # TRANSFORM SLAM PTS TO IMAGE AND COMPUTE THEIR PIXPOSITIONS
+            if len(self.odom_buffer) == 0:
+                print("WARN: ODOM BUFFER EMPY!")
+                return
+            transformed = transformPoints(point_cloud_array, (self.imu_to_cam_T @ np.linalg.inv(T_global_to_imu))).T
+            positive_z_idxs = transformed[2, :] > 0
+            final_points = transformed[:, positive_z_idxs]
 
-        # CONSTRUCT POLYGON OF PIXPOSs OF VISIBLE SLAM PTS
-        hull = ConvexHull(pixpos)
-        print("POLY")
-        img_polygon = geometry.Polygon(hull.points)
+            pixpos = self.getPixelPositions(final_points)
 
-        # CONSTRUCT HULL MESH FROM 3D POINTS OF CONVEX 2D HULL OF PROJECTED POINTS
-        hullmesh_pts = final_points[:, np.unique(hull.simplices)]
-        orig_pts = np.zeros((3, 1))
-        hullmesh_pts = np.concatenate((hullmesh_pts, orig_pts), axis=1)
-        zero_pt_index = hullmesh_pts.shape[1] - 1
+            # COMPUTE DELAUNAY TRIANG OF VISIBLE SLAM POINTS
+            print("HAVE DELAUNAY:")
+            tri = Delaunay(pixpos)
+            # vis = self.visualize_depth(pixpos, tri)
+            # self.depth_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
 
-        # FUCK IT JUST DO CONV HULL OF THESE 3D PTS(just start and hull pts)
-        fov_hull = ConvexHull(hullmesh_pts.T)
+            # CONSTRUCT OBSTACLE MESH
+            comp_mesh = time.time()
+            obstacle_mesh = trimesh.Trimesh(vertices=final_points.T, faces = tri.simplices)
 
-        uniq_idxs_in_hull = np.unique(fov_hull.simplices)
-        simplices_reindexing = {uniq_idxs_in_hull[i]:i for i in range(uniq_idxs_in_hull.size)}
-        simplices_reindexed = [[simplices_reindexing[orig[0]], simplices_reindexing[orig[1]], simplices_reindexing[orig[2]]] for orig in fov_hull.simplices]
+            # CONSTRUCT POLYGON OF PIXPOSs OF VISIBLE SLAM PTS
+            hull = ConvexHull(pixpos)
+            print("POLY")
+            img_polygon = geometry.Polygon(hull.points)
 
-        # CONSTRUCT FOV MESH AND QUERY
-        fov_mesh = trimesh.Trimesh(vertices=fov_hull.points, faces = simplices_reindexed)
-        fov_mesh_query = trimesh.proximity.ProximityQuery(fov_mesh)
+            # CONSTRUCT HULL MESH FROM 3D POINTS OF CONVEX 2D HULL OF PROJECTED POINTS
+            hullmesh_pts = final_points[:, np.unique(hull.simplices)]
+            orig_pts = np.zeros((3, 1))
+            hullmesh_pts = np.concatenate((hullmesh_pts, orig_pts), axis=1)
+            zero_pt_index = hullmesh_pts.shape[1] - 1
 
-        # CONSTRUCT OBSTACLE POINT MESH AND QUERY
-        obstacle_mesh_query = trimesh.proximity.ProximityQuery(obstacle_mesh)
+            # FUCK IT JUST DO CONV HULL OF THESE 3D PTS(just start and hull pts)
+            fov_hull = ConvexHull(hullmesh_pts.T)
 
-        comp_time = time.time() - comp_mesh
-        print("MESHING time: " + str((comp_time) * 1000) +  " ms")
+            uniq_idxs_in_hull = np.unique(fov_hull.simplices)
+            simplices_reindexing = {uniq_idxs_in_hull[i]:i for i in range(uniq_idxs_in_hull.size)}
+            simplices_reindexed = [[simplices_reindexing[orig[0]], simplices_reindexing[orig[1]], simplices_reindexing[orig[2]]] for orig in fov_hull.simplices]
 
+            # CONSTRUCT FOV MESH AND QUERY
+            fov_mesh = trimesh.Trimesh(vertices=fov_hull.points, faces = simplices_reindexed)
+            fov_mesh_query = trimesh.proximity.ProximityQuery(fov_mesh)
 
-        # ---UPDATE AND PRUNING STEP
-        T_current_cam_to_orig = np.eye(4)
-        T_delta_odom  = np.eye(4)
-        if not self.spheremap is None:
-            # transform existing sphere points to current camera frame
-            # T_spheremap_orig_to_current_cam = self.imu_to_cam_T @ T_global_to_imu @ np.linalg.inv(self.spheremap.T_global_to_own_origin) 
-            # T_current_cam_to_orig = np.linalg.inv(T_spheremap_orig_to_current_cam)
-            # T_spheremap_orig_to_current_cam = np.linalg.inv(self.imu_to_cam_T)
-            # print("T DELTA ODOM")
-            # print(T_delta_odom)
-            # print("GLOBAL TO OWN ORIGIN")
-            # print(self.spheremap.T_global_to_own_origin)
-            # print("ORIG TO NOW")
-            # print(T_spheremap_orig_to_current_cam )
-            n_spheres_old = self.spheremap.points.shape[0]
+            # CONSTRUCT OBSTACLE POINT MESH AND QUERY
+            obstacle_mesh_query = trimesh.proximity.ProximityQuery(obstacle_mesh)
 
-            T_delta_odom = np.linalg.inv(self.spheremap.T_global_to_imu_at_start) @ T_global_to_imu
-            # T_current_cam_to_orig = self.imu_to_cam_T @ T_delta_odom @ np.linalg.inv(self.imu_to_cam_T)
-
-            T_current_cam_to_orig = T_delta_odom @ np.linalg.inv(self.imu_to_cam_T)
-
-            print("FINAL MATRIX")
-            print(T_current_cam_to_orig)
-
-            # project sphere points to current camera frame
-            transformed_old_points  = transformPoints(self.spheremap.points, np.linalg.inv(T_current_cam_to_orig))
-
-            print("TRANSFORMED EXISTING SPHERE POINTS TO CURRENT CAMERA FRAME!")
-
-            # Filter out spheres with z below zero or above the max z of obstacle points
-            # TODO - use dist rather than z for checking
-            max_vis_z = np.max(final_points[2, :])
-            print(max_vis_z )
-            z_ok_idxs = np.logical_and(transformed_old_points[:, 2] > 0, transformed_old_points[:, 2] <= max_vis_z)
-
-            z_ok_points = transformed_old_points[z_ok_idxs , :] # remove spheres with negative z
-            worked_sphere_idxs = np.arange(n_spheres_old)[z_ok_idxs ]
-            print("POSITIVE Z AND NOT BEHIND OBSTACLE MESH:" + str(np.sum(z_ok_idxs )) + "/" + str(n_spheres_old))
-
-            # check the ones that are projected into the 2D hull
-            old_pixpos = self.getPixelPositions(z_ok_points.T)
-            inhull = np.array([img_polygon.contains(geometry.Point(old_pixpos[i, 0], old_pixpos[i, 1])) for i in range(old_pixpos.shape[0])])
-            
-            print("OLD PTS IN HULL:" + str(np.sum(inhull)) + "/" + str(z_ok_points.shape[0]))
-
-            if np.any(inhull):
-                # remove spheres not projecting to conv hull in 2D
-                visible_old_points = z_ok_points[inhull]
-                worked_sphere_idxs = worked_sphere_idxs[inhull]
-                # print("IN HULL: " + str(worked_sphere_idxs.size))
-
-                # get mesh distances for these updatable spheres
-                old_spheres_fov_dists = np.abs(fov_mesh_query.signed_distance(visible_old_points))
-                old_spheres_obs_dists = np.abs(obstacle_mesh_query.signed_distance(visible_old_points))
-                upperbound_combined = np.minimum(old_spheres_fov_dists, old_spheres_obs_dists)
-
-                should_decrease_radius = old_spheres_obs_dists < self.spheremap.radii[worked_sphere_idxs]
-                could_increase_radius = upperbound_combined > self.spheremap.radii[worked_sphere_idxs]
-
-                for i in range(worked_sphere_idxs.size):
-                    if should_decrease_radius[i]:
-                        self.spheremap.radii[worked_sphere_idxs[i]] = old_spheres_obs_dists[i]
-                    elif could_increase_radius[i]:
-                        self.spheremap.radii[worked_sphere_idxs[i]] = upperbound_combined[i]
-
-                # FIND WHICH SMALL SPHERES TO PRUNE AND STOP WORKING WITH THEM, BUT REMEMBER INDICES TO KILL THEM IN THE END
-                idx_picker = self.spheremap.radii[worked_sphere_idxs[i]] < self.spheremap.min_radius
-                toosmall_idxs = worked_sphere_idxs[idx_picker]
-                shouldkeep = np.full((n_spheres_old , 1), True)
-                shouldkeep[toosmall_idxs] = False
-                shouldkeep = shouldkeep .flatten()
-
-                # print("SHOULDKEEP:")
-                # print(shouldkeep)
-
-                worked_sphere_idxs = worked_sphere_idxs[np.logical_not(idx_picker)].flatten()
-
-                # self.spheremap.consistencyCheck()
-                # RE-CHECK CONNECTIONS
-                self.spheremap.updateConnections(worked_sphere_idxs)
-
-                # AT THE END, PRUNE THE EXISTING SPHERES THAT BECAME TOO SMALL (delete their pos, radius and conns)
-                # self.spheremap.consistencyCheck()
-                self.spheremap.removeSpheresIfRedundant(worked_sphere_idxs)
-
-                # self.spheremap.removeNodes(np.where(idx_picker)[0])
+            comp_time = time.time() - comp_mesh
+            print("MESHING time: " + str((comp_time) * 1000) +  " ms")
 
 
-        # ---EXPANSION STEP #{
-        max_sphere_sampling_z = 60
+            # ---UPDATE AND PRUNING STEP
+            T_current_cam_to_orig = np.eye(4)
+            T_delta_odom  = np.eye(4)
+            if not self.spheremap is None:
+                # transform existing sphere points to current camera frame
+                # T_spheremap_orig_to_current_cam = self.imu_to_cam_T @ T_global_to_imu @ np.linalg.inv(self.spheremap.T_global_to_own_origin) 
+                # T_current_cam_to_orig = np.linalg.inv(T_spheremap_orig_to_current_cam)
+                # T_spheremap_orig_to_current_cam = np.linalg.inv(self.imu_to_cam_T)
+                # print("T DELTA ODOM")
+                # print(T_delta_odom)
+                # print("GLOBAL TO OWN ORIGIN")
+                # print(self.spheremap.T_global_to_own_origin)
+                # print("ORIG TO NOW")
+                # print(T_spheremap_orig_to_current_cam )
+                n_spheres_old = self.spheremap.points.shape[0]
 
-        n_sampled = 50
-        sampling_pts = np.random.rand(n_sampled, 2)  # Random points in [0, 1] range for x and y
-        sampling_pts = sampling_pts * [self.width, self.height]
+                T_delta_odom = np.linalg.inv(self.spheremap.T_global_to_imu_at_start) @ T_global_to_imu
+                # T_current_cam_to_orig = self.imu_to_cam_T @ T_delta_odom @ np.linalg.inv(self.imu_to_cam_T)
 
-        # CHECK THE SAMPLING DIRS ARE INSIDE THE 2D CONVEX HULL OF 3D POINTS
-        inhull = np.array([img_polygon .contains(geometry.Point(p[0], p[1])) for p in sampling_pts])
-        # print(inhull)
-        if not np.any(inhull):
-            print("NONE IN HULL")
-            return
-        sampling_pts = sampling_pts[inhull, :]
+                T_current_cam_to_orig = T_delta_odom @ np.linalg.inv(self.imu_to_cam_T)
 
-        n_sampled = sampling_pts.shape[0]
+                print("FINAL MATRIX")
+                print(T_current_cam_to_orig)
 
-        # NOW PROJECT THEM TO 3D SPACE
-        sampling_pts = np.concatenate((sampling_pts.T, np.full((1, n_sampled), 1)))
+                # project sphere points to current camera frame
+                transformed_old_points  = transformPoints(self.spheremap.points, np.linalg.inv(T_current_cam_to_orig))
 
-        invK = np.linalg.inv(self.K)
-        sampling_pts = invK @ sampling_pts
-        rand_z = np.random.rand(1, n_sampled) * max_sphere_sampling_z
+                print("TRANSFORMED EXISTING SPHERE POINTS TO CURRENT CAMERA FRAME!")
 
-        # FILTER PTS - CHECK THAT THE MAX DIST IS NOT BEHIND THE OBSTACLE MESH BY RAYCASTING
-        ray_hit_pts, index_ray, index_tri = obstacle_mesh.ray.intersects_location(
-        ray_origins=np.zeros(sampling_pts.shape).T, ray_directions=sampling_pts.T)
+                # Filter out spheres with z below zero or above the max z of obstacle points
+                # TODO - use dist rather than z for checking
+                max_vis_z = np.max(final_points[2, :])
+                print(max_vis_z )
+                z_ok_idxs = np.logical_and(transformed_old_points[:, 2] > 0, transformed_old_points[:, 2] <= max_vis_z)
 
-        # MAKE THEM BE IN RAND POSITION BETWEEN CAM AND MESH HIT POSITION
-        sampling_pts =  (np.random.rand(n_sampled, 1) * ray_hit_pts).T
-        # TODO - add max sampling dist
+                z_ok_points = transformed_old_points[z_ok_idxs , :] # remove spheres with negative z
+                worked_sphere_idxs = np.arange(n_spheres_old)[z_ok_idxs ]
+                print("POSITIVE Z AND NOT BEHIND OBSTACLE MESH:" + str(np.sum(z_ok_idxs )) + "/" + str(n_spheres_old))
+
+                # check the ones that are projected into the 2D hull
+                old_pixpos = self.getPixelPositions(z_ok_points.T)
+                inhull = np.array([img_polygon.contains(geometry.Point(old_pixpos[i, 0], old_pixpos[i, 1])) for i in range(old_pixpos.shape[0])])
+                
+                print("OLD PTS IN HULL:" + str(np.sum(inhull)) + "/" + str(z_ok_points.shape[0]))
+
+                if np.any(inhull):
+                    # remove spheres not projecting to conv hull in 2D
+                    visible_old_points = z_ok_points[inhull]
+                    worked_sphere_idxs = worked_sphere_idxs[inhull]
+                    # print("IN HULL: " + str(worked_sphere_idxs.size))
+
+                    # get mesh distances for these updatable spheres
+                    old_spheres_fov_dists = np.abs(fov_mesh_query.signed_distance(visible_old_points))
+                    old_spheres_obs_dists = np.abs(obstacle_mesh_query.signed_distance(visible_old_points))
+                    upperbound_combined = np.minimum(old_spheres_fov_dists, old_spheres_obs_dists)
+
+                    should_decrease_radius = old_spheres_obs_dists < self.spheremap.radii[worked_sphere_idxs]
+                    could_increase_radius = upperbound_combined > self.spheremap.radii[worked_sphere_idxs]
+
+                    for i in range(worked_sphere_idxs.size):
+                        if should_decrease_radius[i]:
+                            self.spheremap.radii[worked_sphere_idxs[i]] = old_spheres_obs_dists[i]
+                        elif could_increase_radius[i]:
+                            self.spheremap.radii[worked_sphere_idxs[i]] = upperbound_combined[i]
+
+                    # FIND WHICH SMALL SPHERES TO PRUNE AND STOP WORKING WITH THEM, BUT REMEMBER INDICES TO KILL THEM IN THE END
+                    idx_picker = self.spheremap.radii[worked_sphere_idxs[i]] < self.spheremap.min_radius
+                    toosmall_idxs = worked_sphere_idxs[idx_picker]
+                    shouldkeep = np.full((n_spheres_old , 1), True)
+                    shouldkeep[toosmall_idxs] = False
+                    shouldkeep = shouldkeep .flatten()
+
+                    # print("SHOULDKEEP:")
+                    # print(shouldkeep)
+
+                    worked_sphere_idxs = worked_sphere_idxs[np.logical_not(idx_picker)].flatten()
+
+                    # self.spheremap.consistencyCheck()
+                    # RE-CHECK CONNECTIONS
+                    self.spheremap.updateConnections(worked_sphere_idxs)
+
+                    # AT THE END, PRUNE THE EXISTING SPHERES THAT BECAME TOO SMALL (delete their pos, radius and conns)
+                    # self.spheremap.consistencyCheck()
+                    self.spheremap.removeSpheresIfRedundant(worked_sphere_idxs)
+
+                    # self.spheremap.removeNodes(np.where(idx_picker)[0])
 
 
-        orig_3dpt_indices_in_hull = np.unique(hull.simplices)
+            # ---EXPANSION STEP #{
+            max_sphere_sampling_z = 60
 
-        # TRY ADDING NEW SPHERES AT SAMPLED POSITIONS
-        new_spheres_fov_dists = np.abs(fov_mesh_query.signed_distance(sampling_pts.T))
-        new_spheres_obs_dists = np.abs(obstacle_mesh_query.signed_distance(sampling_pts.T))
+            n_sampled = 50
+            sampling_pts = np.random.rand(n_sampled, 2)  # Random points in [0, 1] range for x and y
+            sampling_pts = sampling_pts * [self.width, self.height]
 
-        mindists = np.minimum(new_spheres_obs_dists, new_spheres_fov_dists)
-        new_sphere_idxs = mindists > min_rad
+            # CHECK THE SAMPLING DIRS ARE INSIDE THE 2D CONVEX HULL OF 3D POINTS
+            inhull = np.array([img_polygon .contains(geometry.Point(p[0], p[1])) for p in sampling_pts])
+            # print(inhull)
+            if not np.any(inhull):
+                print("NONE IN HULL")
+                self.spheremap.labelSpheresByConnectivity()
+                return
+            sampling_pts = sampling_pts[inhull, :]
 
-        n_spheres_before_adding = self.spheremap.points.shape[0]
-        n_spheres_to_add = np.sum(new_sphere_idxs)
-        print("PUTATIVE SPHERES THAT PASSED FIRST RADIUS CHECKS: " + str(n_spheres_to_add))
-        if n_spheres_to_add == 0:
-            return
+            n_sampled = sampling_pts.shape[0]
 
-        # print(mindists.shape)
-        # print(mindists[new_sphere_idxs].shape)
+            # NOW PROJECT THEM TO 3D SPACE
+            sampling_pts = np.concatenate((sampling_pts.T, np.full((1, n_sampled), 1)))
 
-        # TRANSFORM POINTS FROM CAM ORIGIN TO SPHEREMAP ORIGIN! - DRAW OUT!
-        new_sphere_locations_in_spheremap_origin = transformPoints(sampling_pts[:, new_sphere_idxs].T, T_current_cam_to_orig)
-        # print(new_sphere_locations_in_spheremap_origin.shape)
-        # print(self.spheremap.points.shape)
+            invK = np.linalg.inv(self.K)
+            sampling_pts = invK @ sampling_pts
+            rand_z = np.random.rand(1, n_sampled) * max_sphere_sampling_z
 
-        self.spheremap.points = np.concatenate((self.spheremap.points, new_sphere_locations_in_spheremap_origin))
-        self.spheremap.radii = np.concatenate((self.spheremap.radii.flatten(), mindists[new_sphere_idxs].flatten()))
-        self.spheremap.connections = np.concatenate((self.spheremap.connections.flatten(), np.array([None for i in range(n_spheres_to_add)], dtype=object).flatten()))
+            # FILTER PTS - CHECK THAT THE MAX DIST IS NOT BEHIND THE OBSTACLE MESH BY RAYCASTING
+            ray_hit_pts, index_ray, index_tri = obstacle_mesh.ray.intersects_location(
+            ray_origins=np.zeros(sampling_pts.shape).T, ray_directions=sampling_pts.T)
 
-        self.spheremap.updateConnections(np.arange(n_spheres_before_adding, n_spheres_before_adding+n_spheres_to_add))
+            # MAKE THEM BE IN RAND POSITION BETWEEN CAM AND MESH HIT POSITION
+            sampling_pts =  (np.random.rand(n_sampled, 1) * ray_hit_pts).T
+            # TODO - add max sampling dist
 
-        new_idxs = np.arange(self.spheremap.radii.size)[self.spheremap.radii.size - n_spheres_to_add : self.spheremap.radii.size]
-        self.spheremap.removeSpheresIfRedundant(new_idxs)
 
-        self.spheremap.labelSpheresByConnectivity()
-        # # #}
+            orig_3dpt_indices_in_hull = np.unique(hull.simplices)
 
-        comp_time = time.time() - comp_start_time
-        print("SPHEREMAP integration time: " + str((comp_time) * 1000) +  " ms")
+            # TRY ADDING NEW SPHERES AT SAMPLED POSITIONS
+            new_spheres_fov_dists = np.abs(fov_mesh_query.signed_distance(sampling_pts.T))
+            new_spheres_obs_dists = np.abs(obstacle_mesh_query.signed_distance(sampling_pts.T))
 
-        comp_start_time = time.time()
-        self.spheremap.spheres_kdtree = KDTree(self.spheremap.points)
-        self.spheremap.max_radius = np.max(self.spheremap.radii)
-        comp_time = time.time() - comp_start_time
-        print("Sphere KDTree computation: " + str((comp_time) * 1000) +  " ms")
+            mindists = np.minimum(new_spheres_obs_dists, new_spheres_fov_dists)
+            new_sphere_idxs = mindists > min_rad
 
-        # HANDLE ADDING/REMOVING VISIBLE 3D POINTS
-        comp_start_time = time.time()
+            n_spheres_before_adding = self.spheremap.points.shape[0]
+            n_spheres_to_add = np.sum(new_sphere_idxs)
+            print("PUTATIVE SPHERES THAT PASSED FIRST RADIUS CHECKS: " + str(n_spheres_to_add))
+            if n_spheres_to_add == 0:
+                return
 
-        visible_pts_in_spheremap_frame = transformPoints(final_points.T, T_current_cam_to_orig)
-        self.spheremap.updateSurfels(visible_pts_in_spheremap_frame , pixpos, tri.simplices)
+            # print(mindists.shape)
+            # print(mindists[new_sphere_idxs].shape)
 
-        comp_time = time.time() - comp_start_time
-        print("SURFELS integration time: " + str((comp_time) * 1000) +  " ms")
+            # TRANSFORM POINTS FROM CAM ORIGIN TO SPHEREMAP ORIGIN! - DRAW OUT!
+            new_sphere_locations_in_spheremap_origin = transformPoints(sampling_pts[:, new_sphere_idxs].T, T_current_cam_to_orig)
+            # print(new_sphere_locations_in_spheremap_origin.shape)
+            # print(self.spheremap.points.shape)
 
-        # VISUALIZE CURRENT SPHERES
-        self.visualize_spheremap()
-        comp_time = time.time() - comp_start_time
-        print("SPHEREMAP visualization time: " + str((comp_time) * 1000) +  " ms")
+            self.spheremap.points = np.concatenate((self.spheremap.points, new_sphere_locations_in_spheremap_origin))
+            self.spheremap.radii = np.concatenate((self.spheremap.radii.flatten(), mindists[new_sphere_idxs].flatten()))
+            self.spheremap.connections = np.concatenate((self.spheremap.connections.flatten(), np.array([None for i in range(n_spheres_to_add)], dtype=object).flatten()))
 
-        # TRY PATHFINDING TO START OF CURRENT SPHEREMAP
-        pathfindres = self.findPathAstarInSubmap(self.spheremap, T_delta_odom[:3, 3], np.array([0,0,0]))
+            self.spheremap.updateConnections(np.arange(n_spheres_before_adding, n_spheres_before_adding+n_spheres_to_add))
 
-        # self.node_offline = not self.spheremap.consistencyCheck()
+            new_idxs = np.arange(self.spheremap.radii.size)[self.spheremap.radii.size - n_spheres_to_add : self.spheremap.radii.size]
+            self.spheremap.removeSpheresIfRedundant(new_idxs)
+
+            self.spheremap.labelSpheresByConnectivity()
+            # # #}
+
+            comp_time = time.time() - comp_start_time
+            print("SPHEREMAP integration time: " + str((comp_time) * 1000) +  " ms")
+
+            comp_start_time = time.time()
+            self.spheremap.spheres_kdtree = KDTree(self.spheremap.points)
+            self.spheremap.max_radius = np.max(self.spheremap.radii)
+            comp_time = time.time() - comp_start_time
+            print("Sphere KDTree computation: " + str((comp_time) * 1000) +  " ms")
+
+            # HANDLE ADDING/REMOVING VISIBLE 3D POINTS
+            comp_start_time = time.time()
+
+            visible_pts_in_spheremap_frame = transformPoints(final_points.T, T_current_cam_to_orig)
+            self.spheremap.updateSurfels(visible_pts_in_spheremap_frame , pixpos, tri.simplices)
+
+            comp_time = time.time() - comp_start_time
+            print("SURFELS integration time: " + str((comp_time) * 1000) +  " ms")
+
+            # VISUALIZE CURRENT SPHERES
+            self.visualize_spheremap()
+            comp_time = time.time() - comp_start_time
+            print("SPHEREMAP visualization time: " + str((comp_time) * 1000) +  " ms")
+
+            # TRY PATHFINDING TO START OF CURRENT SPHEREMAP
+            # pathfindres = self.findPathAstarInSubmap(self.spheremap, T_delta_odom[:3, 3], np.array([0,0,0]))
+
+            # self.node_offline = not self.spheremap.consistencyCheck()
 # # #}
 
     def saveEpisodeFull(self, req):# # #{
@@ -693,7 +850,7 @@ class NavNode:
 
         if len(path) == 0:
             return None
-        return path
+        return smap.points[np.array(path), :]
 # # #}
 
     def getPixelPositions(self, pts):# # #{
@@ -1289,17 +1446,25 @@ class NavNode:
             marker.scale.y = 2
             marker.scale.z = 2
 
-            marker.color.a = 0.9
+            marker.color.a = 1
             marker.color.r = 1.0
             marker.color.g = 0.0
             marker.color.b = 0.0
             marker_array.markers.append(marker)
 
+            marker = copy.deepcopy(marker)
+            marker.id = marker_id
+            marker_id += 1
             marker.pose.position.x = goal[0, 0]
             marker.pose.position.y = goal[0, 1]
             marker.pose.position.z = goal[0, 2]
+            marker.color.a = 1
+            marker.color.r = 1.0
+            marker.color.g = 0.5
+            marker.color.b = 0.0
             # marker_array.markers.append(copy.deepcopy(marker))
             marker_array.markers.append(marker)
+
 
         # VISUALIZE START AND GOAL
         if not points_untransformed is None:

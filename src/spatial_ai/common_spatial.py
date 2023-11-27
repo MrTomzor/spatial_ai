@@ -20,6 +20,11 @@ def transformPoints(pts, T):
     res = T @ res 
     res = res / res[3, :] # unhomogenize
     return res[:3, :].T
+
+class Viewpoint(object):
+    def __init__(self, position, heading):
+        self.position = position
+        self.heading = heading
 # # #}
 
 class SubmapKeyframe:# # #{
@@ -43,11 +48,13 @@ class SubmapKeyframe:# # #{
 # #{ class SphereMap
 class SphereMap:
     def __init__(self, init_radius, min_radius):# # #{
+        self.spheres_kdtree = None
         self.points = np.array([0,0,0]).reshape((1,3))
         self.radii = np.array([init_radius]).reshape((1,1))
         self.connections = np.array([None], dtype=object)
         self.visual_keyframes = []
         self.traveled_context_distance = 0
+        self.surfels_filtering_radius = 1
 
         self.surfel_points = None
         self.surfel_radii = None
@@ -63,7 +70,7 @@ class SphereMap:
         n_test_new_pts = visible_points.shape[0]
 
         # TODO do based on map scale!!!
-        filtering_radius = 1
+        filtering_radius = self.surfels_filtering_radius
 
         pts_survived_first_mask = np.full((n_test_new_pts), True)
         if not self.surfel_points is None:
@@ -171,6 +178,7 @@ class SphereMap:
     def labelSpheresByConnectivity(self):
         n_nodes = self.points.shape[0]
         self.connectivity_labels = np.full((n_nodes), -1)
+        self.connectivity_segments_counts = []
 
         seg_id = 0
         for i in range(n_nodes):
@@ -190,8 +198,10 @@ class SphereMap:
                             self.connectivity_labels[conn_id] = seg_id
                             openset.append(conn_id)
                             n_labeled += 1
+                self.connectivity_segments_counts.append(n_labeled)
                 # print("SEG SIZE: "  +str(n_labeled))
                 seg_id += 1
+        self.connectivity_segments_counts = np.array(self.connectivity_segments_counts)
 
         print("DISCONNECTED REGIONS: " + str(seg_id))
 

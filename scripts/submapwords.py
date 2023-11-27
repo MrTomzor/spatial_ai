@@ -128,7 +128,7 @@ def detect_and_describe_3d_key_areas(submap, n_horiz_bins, n_vert_bins):# # #{
     
     
     # n_clusters = 100
-    n_clusters = int(points.shape[0] / 5)
+    n_clusters = int(points.shape[0] / 10)
     if n_clusters == 0:
         n_clusters = 1
     cluster_centroids, distortion = scipy.cluster.vq.kmeans(points, n_clusters, iter=2)
@@ -184,22 +184,24 @@ num_points = 10000
 # mesh = trimesh.load('Normandy.stl')
 # mesh = trimesh.load('House.stl')
 # mesh = trimesh.load('Minecraft.stl')
+# mesh = trimesh.load('model.sdf')
 # points, normals = sample_mesh(mesh, num_points)
 
-n_horiz_bins = 20
-n_vert_bins = 6
-# n_horiz_bins = 6
-# n_vert_bins = 3
-n_vocab_clusters = 5
+# n_horiz_bins = 20
+# n_vert_bins = 6
+n_horiz_bins = 6
+n_vert_bins = 3
+n_vocab_clusters = 6
 desc_size = n_vert_bins * n_horiz_bins
 
 
-# fpath = rospkg.RosPack().get_path('spatial_ai') + "/memories/last_episode.pickle"
-fpath = rospkg.RosPack().get_path('spatial_ai') + "/memories/big_ep.pickle"
+# fpath = rospkg.RosPack().get_path('spatial_ai') + "/memories/almost_loop.pickle"
+# fpath = rospkg.RosPack().get_path('spatial_ai') + "/memories/big_ep.pickle"
+fpath = rospkg.RosPack().get_path('spatial_ai') + "/memories/forest_uav.pickle"
 mchunk = CoherentSpatialMemoryChunk.load(fpath)
 
 # MERGE SUBMAPS OF MCHUNK
-merging_factor = 4
+merging_factor = 2
 n_submaps_old = len(mchunk.submaps)
 new_submaps = []
 n_new_maps = int(n_submaps_old / merging_factor)
@@ -275,6 +277,7 @@ for i in range(len(mchunk.submaps)):
     score_max = np.max(minmax_scores)
     print(i)
     scores_recaled =  (query_scores - score_min) / (score_max - score_min)
+    # scores_recaled =  query_scores
     print(query_scores)
     print(scores_recaled)
 
@@ -291,9 +294,9 @@ for i in range(len(mchunk.submaps)):
         #     clr = 'b'
         # ax.scatter(tpoints[:, 0], tpoints[:, 1], tpoints[:, 2],
         #            c=clr, marker='o', label='AAA')
-        siz = 20
+        siz = 30
         if j != i:
-            siz = 2
+            siz = 5
         ax.scatter(tpoints[:, 0], tpoints[:, 1], tpoints[:, 2],
                    marker='o',s=siz)
         point1 = pov_centroid
@@ -302,7 +305,7 @@ for i in range(len(mchunk.submaps)):
         if j != i:
             score = scores_recaled[j]
 
-            bar_size = 50
+            bar_size = 5
             point1 = point2 
             point2 = point1 + np.array([0, 0, bar_size * score])
             point4 = point1 + np.array([5, 0, 0])
