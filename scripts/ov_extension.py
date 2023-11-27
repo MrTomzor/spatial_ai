@@ -184,23 +184,23 @@ class NavNode:
 
         # --Load calib
         # UNITY
-        self.K = np.array([642.8495341420769, 0, 400, 0, 644.5958939934509, 300, 0, 0, 1]).reshape((3,3))
-        self.imu_to_cam_T = np.array( [[0, -1, 0, 0], [0, 0, -1, 0], [1, 0, 0, 0], [0.0, 0.0, 0.0, 1.0]])
-        self.width = 800
-        self.height = 600
-        ov_slampoints_topic = '/ov_msckf/points_slam'
-        # img_topic = '/robot1/camera1/raw'
-        img_topic = '/robot1/camera1/image'
-        odom_topic = '/ov_msckf/odomimu'
+        # self.K = np.array([642.8495341420769, 0, 400, 0, 644.5958939934509, 300, 0, 0, 1]).reshape((3,3))
+        # self.imu_to_cam_T = np.array( [[0, -1, 0, 0], [0, 0, -1, 0], [1, 0, 0, 0], [0.0, 0.0, 0.0, 1.0]])
+        # self.width = 800
+        # self.height = 600
+        # ov_slampoints_topic = '/ov_msckf/points_slam'
+        # # img_topic = '/robot1/camera1/raw'
+        # img_topic = '/robot1/camera1/image'
+        # odom_topic = '/ov_msckf/odomimu'
 
         # BLUEFOX UAV
-        # self.K = np.array([227.4, 0, 376, 0, 227.4, 240, 0, 0, 1]).reshape((3,3))
-        # self.imu_to_cam_T = np.eye(4)
-        # self.width = 752
-        # self.height = 480
-        # ov_slampoints_topic = '/ov_msckf/points_slam'
-        # img_topic = '/uav1/vio/camera/image_raw'
-        # odom_topic = '/ov_msckf/odomimu'
+        self.K = np.array([227.4, 0, 376, 0, 227.4, 240, 0, 0, 1]).reshape((3,3))
+        self.imu_to_cam_T = np.eye(4)
+        self.width = 752
+        self.height = 480
+        ov_slampoints_topic = '/ov_msckf/points_slam'
+        img_topic = '/uav1/vio/camera/image_raw'
+        odom_topic = '/ov_msckf/odomimu'
 
         print("IMUTOCAM", self.imu_to_cam_T)
         self.P = np.zeros((3,4))
@@ -310,23 +310,30 @@ class NavNode:
 # # #}
 
     def send_path_to_trajectory_generator(self, path):# # #{
-        print("SENDING PATH TO TRAJ GENERATOR")
-        msg = mrs_msgs.msg.Path
+        print("SENDING PATH TO TRAJ GENERATOR, LEN: " + str(len(path)))
+        msg = mrs_msgs.msg.Path()
         msg.header = std_msgs.msg.Header()
-        msg.header.frame_id = 'global'
+        # msg.header.frame_id = 'uav1/vio_origin'
+        # msg.header.frame_id = 'uav1/fcu'
+        msg.header.frame_id = 'uav1/local_origin'
         msg.header.stamp = rospy.Time.now()
         msg.use_heading = False
         msg.fly_now = True
         msg.stop_at_waypoints = False
         arr = []
+        print(msg.points)
 
         for p in path:
-            ref = mrs_msgs.msg.Reference
+            ref = mrs_msgs.msg.Reference()
             ref.position = Point(x=p[0], y=p[1], z=p[2])
-            arr.append(p)
-        msg.points = arr
+            # arr.append(ref)
+            msg.points.append(ref)
+        # print("ARR:")
+        # print(arr)
+        # msg.points = arr
 
         self.path_for_trajectory_generator_pub.publish(msg)
+        print("SENT PATH TO TRAJ GENERATOR")
 
         return None
 # # #}
@@ -335,6 +342,8 @@ class NavNode:
         print("pes")
         with ScopedLock(self.spheremap_mutex):
             print("pespes")
+            if self.spheremap is None:
+                return
             if not self.node_initialized:
                 return
             print("kocka")
@@ -371,6 +380,9 @@ class NavNode:
             pathfindres = self.findPathAstarInSubmap(self.spheremap, current_pos_in_smap_frame, goal_pos_in_smap_frame)
             if not pathfindres is None:
                 print("FOUND SOME PATH!")
+                print(pathfindres)
+                print("GOING TO SEND!")
+                # pathfindres = np.concatenate(pathfindres, goal_pos_in_smap_frame.reshape((3,1)))
                 path_in_global_frame = transformPoints(pathfindres, T_global_to_smap_origin)
                 self.send_path_to_trajectory_generator(path_in_global_frame)
             else:
@@ -648,6 +660,7 @@ class NavNode:
             n_spheres_to_add = np.sum(new_sphere_idxs)
             print("PUTATIVE SPHERES THAT PASSED FIRST RADIUS CHECKS: " + str(n_spheres_to_add))
             if n_spheres_to_add == 0:
+                self.spheremap.labelSpheresByConnectivity()
                 return
 
             # print(mindists.shape)
