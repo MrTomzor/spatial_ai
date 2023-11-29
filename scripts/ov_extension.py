@@ -426,6 +426,111 @@ class NavNode:
 
 # # #}
 
+    def findGlobalPath(self, start_vp, goal_vp, goal_vp_map_index):
+        # VIEWPOINTS SHOULD BE IN RELATIVE COORDS OF THE SUBMAPS!!!
+        # TEST TOPOLOGICAL REACHABILITY FIRST!
+        print("GLOBAL PATHFINDING TO POINT AND SUBMAP_ID:")
+        print(goal_vp.position)
+        print(goal_vp_map_index)
+    
+        n_old_submaps = len(self.mchunk.submaps)
+        reached_flags = np.full((n_old_submaps), False)
+        reaching_costs = np.zeros((n_old_submaps))
+
+        # open_set = []
+        # Priority queue for efficient retrieval of the node with the lowest total cost
+        
+        # while open_set:
+        #     current_f, current_index, parent = heapq.heappop(open_set)
+        #     smap = self.mchunk.submaps[current_index]
+        #     reached_flags[current_index] = True
+
+        #     if current_index == goal_vp_map_index:
+        #         path = [current_index]
+        #         while not parent is None:
+        #             path.append(parent)
+        #             current_index = parent
+        #             parent = closed_set[current_index]
+        #         break
+
+        #     for conn in self.spheremap.map2map_conns:
+        #         if not reached_flags[conn.second_map_id]:
+        #             euclid_dist = np.linalg.norm(conn.pt_in_first_map_frame - start_vp.position)
+        #             heapq.heappush(open_set, (euclid_dist, conn.second_map_id, None))
+
+
+        open_set = []
+        # closed_set = set()
+        closed_set = {}
+
+        # Priority queue for efficient retrieval of the node with the lowest total cost
+
+        # heapq.heappush(open_set, (0, start_node_index, None))
+        # g_score = {start_node_index: 0}
+        g_score = {}
+
+        for conn in self.spheremap.map2map_conns:
+            euclid_dist = np.linalg.norm(conn.pt_in_first_map_frame - start_vp.position)
+            heapq.heappush(open_set, (euclid_dist, conn.second_map_id, n_old_submaps))
+            print("STARTING CONN TO: " + str(conn.second_map_id))
+            closed_set[conn.second_map_id] = n_old_submaps
+            g_score[conn.second_map_id] = euclid_dist
+
+        # Dictionary to store the cost of reaching each node from the start
+
+        # Dictionary to store the estimated total cost from start to goal passing through the node
+        # startned_dist = np.linalg.norm(smap.points[start_node_index] - goal_node_pt)
+        # print("PATHFIND: startnend dist:" + str(startned_dist))
+        # f_score = {start_node_index: startned_dist }
+        # print("TOPO PLANNING! N SUBMAPS IN HISTORY: " + str(n_old_submaps))
+
+        path = []
+        while open_set:
+            current_f, current_index, parent = heapq.heappop(open_set)
+            # print("POPPED: " + str(current_index) + " F: " + str(current_f))
+
+            smap = self.mchunk.submaps[current_index]
+            reached_flags[current_index] = True
+
+            if current_index == goal_vp_map_index:
+                path = [current_index]
+                # while not parent is None:
+                while parent != n_old_submaps:
+                    path.append(parent)
+                    current_index = parent
+                    parent = closed_set[current_index]
+                break
+
+            # closed_set.add(current_index)
+
+            conns = smap.map2map_conns
+            if conns is None:
+                continue
+
+            for c in conns:
+                neighbor_index = c.second_map_id
+                # print("NEIGHBOR: " + str(neighbor_index))
+                if neighbor_index == n_old_submaps or reached_flags[neighbor_index]:
+                    continue
+                pt_prev = smap.getPointOfConnectionToSubmap(parent)
+                pt_next = c.pt_in_first_map_frame 
+
+                # euclid_dist = np.linalg.norm(smap.points[current_index] - smap.points[neighbor_index])
+                euclid_dist = np.linalg.norm(pt_prev - pt_next)
+                tentative_g = g_score[current_index] + euclid_dist
+
+                # if neighbor_index not in g_score or tentative_g < g_score[neighbor_index]:
+                if neighbor_index not in g_score or tentative_g < g_score[neighbor_index]:
+                    g_score[neighbor_index] = tentative_g
+                    heapq.heappush(open_set, (g_score[neighbor_index], neighbor_index, current_index))
+                    closed_set[neighbor_index] = current_index
+        path.reverse()
+        print("TOPO PLANNING FOUND PATH:")
+        print(path)
+
+        # RETURNING THIS TOPOLOGICAL PATH
+
+
 
 
     def points_slam_callback(self, msg):# # #{
@@ -508,8 +613,8 @@ class NavNode:
                         odist = self.uav_radius
                         print("WARN! ODIST SMALLER THAN UAV RADIUS!")
 
-                    self.spheremap.map2map_conns.append(MapToMapConnection(pos_in_old_frame, len(self.mchunk.submaps)+1, odist))
-                    connection_to_prev_map = MapToMapConnection(pos_in_new_frame, len(self.mchunk.submaps), odist)
+                    self.spheremap.map2map_conns.append(MapToMapConnection(pos_in_old_frame, len(self.mchunk.submaps), odist))
+                    connection_to_prev_map = MapToMapConnection(pos_in_new_frame, len(self.mchunk.submaps)-1, odist)
                     # else:
                     #     # print("ODIST NOT SAFE!!! NOT ADDING CONNECTION!")
                     #     TODO - 
@@ -765,6 +870,8 @@ class NavNode:
 
             # TRY PATHFINDING TO START OF CURRENT SPHEREMAP
             # pathfindres = self.findPathAstarInSubmap(self.spheremap, T_delta_odom[:3, 3], np.array([0,0,0]))
+            if len(self.mchunk.submaps) > 0:
+                self.findGlobalPath(Viewpoint(T_current_cam_to_orig[:3,3].reshape((3,1))), Viewpoint(np.zeros((3,1))), 0)
 
             # self.node_offline = not self.spheremap.consistencyCheck()
 # # #}

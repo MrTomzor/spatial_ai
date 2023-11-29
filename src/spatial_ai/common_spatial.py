@@ -22,7 +22,7 @@ def transformPoints(pts, T):
     return res[:3, :].T
 
 class Viewpoint(object):
-    def __init__(self, position, heading):
+    def __init__(self, position, heading=None):
         self.position = position
         self.heading = heading
 # # #}
@@ -69,6 +69,14 @@ class SphereMap:
 
         self.min_radius = min_radius
         self.max_radius = init_radius# # #}
+
+    def getPointOfConnectionToSubmap(self, idx):
+        print("ASKING FOR IDX:" + str(idx))
+        for conn in self.map2map_conns:
+            print(conn.second_map_id)
+            if conn.second_map_id == idx:
+                return conn.pt_in_first_map_frame
+        return None
 
     def updateSurfels(self, visible_points, pixpos, simplices):# # #{
         # Compute normals measurements for the visible points, all should be pointing towards the camera
