@@ -45,6 +45,12 @@ class SubmapKeyframe:# # #{
         return dif
 # # #}
 
+class MapToMapConnection:
+    def __init__(self, pt_in_first_map_frame, second_map_id, rad):
+        self.pt_in_first_map_frame = pt_in_first_map_frame
+        self.second_map_id = second_map_id
+        self.radius_at_creation = rad
+
 # #{ class SphereMap
 class SphereMap:
     def __init__(self, init_radius, min_radius):# # #{
@@ -55,6 +61,7 @@ class SphereMap:
         self.visual_keyframes = []
         self.traveled_context_distance = 0
         self.surfels_filtering_radius = 1
+        self.map2map_conns = []
 
         self.surfel_points = None
         self.surfel_radii = None
@@ -174,6 +181,17 @@ class SphereMap:
                     print(otherconns)
                     return False
         return True# # #}
+
+    def getDistFromObstaclesAtPoint(self, pt):# # #{
+        # query_res = self.spheres_kdtree.query(pt.reshape((1,3), k=10, distance_upper_bound=affection_distance)
+        dists = np.linalg.norm(self.points - pt, axis=1)
+        dists = dists - self.radii
+
+        inside_mask = dists < 0
+        if not np.any(inside_mask):
+            return -1
+        largest_inside_dist = np.max(-dists[inside_mask])
+        return largest_inside_dist# # #}
 
     def labelSpheresByConnectivity(self):
         n_nodes = self.points.shape[0]

@@ -161,7 +161,7 @@ class NavNode:
         self.save_episode_full = rospy.Service("save_episode_full", EmptySrv, self.saveEpisodeFull)
 
         # TIMERS
-        self.planning_frequency = 10
+        self.planning_frequency = 0.2
         self.planning_timer = rospy.Timer(rospy.Duration(1.0 / self.planning_frequency), self.planning_loop_iter)
 
         # PLANNING PUB
@@ -184,23 +184,25 @@ class NavNode:
 
         # --Load calib
         # UNITY
-        # self.K = np.array([642.8495341420769, 0, 400, 0, 644.5958939934509, 300, 0, 0, 1]).reshape((3,3))
-        # self.imu_to_cam_T = np.array( [[0, -1, 0, 0], [0, 0, -1, 0], [1, 0, 0, 0], [0.0, 0.0, 0.0, 1.0]])
-        # self.width = 800
-        # self.height = 600
-        # ov_slampoints_topic = '/ov_msckf/points_slam'
-        # # img_topic = '/robot1/camera1/raw'
+        self.K = np.array([642.8495341420769, 0, 400, 0, 644.5958939934509, 300, 0, 0, 1]).reshape((3,3))
+        self.imu_to_cam_T = np.array( [[0, -1, 0, 0], [0, 0, -1, 0], [1, 0, 0, 0], [0.0, 0.0, 0.0, 1.0]])
+        self.width = 800
+        self.height = 600
+        ov_slampoints_topic = '/ov_msckf/points_slam'
+        img_topic = '/robot1/camera1/raw'
         # img_topic = '/robot1/camera1/image'
-        # odom_topic = '/ov_msckf/odomimu'
+        odom_topic = '/ov_msckf/odomimu'
+        self.marker_scale = 1
 
         # BLUEFOX UAV
-        self.K = np.array([227.4, 0, 376, 0, 227.4, 240, 0, 0, 1]).reshape((3,3))
-        self.imu_to_cam_T = np.eye(4)
-        self.width = 752
-        self.height = 480
-        ov_slampoints_topic = '/ov_msckf/points_slam'
-        img_topic = '/uav1/vio/camera/image_raw'
-        odom_topic = '/ov_msckf/odomimu'
+        # self.K = np.array([227.4, 0, 376, 0, 227.4, 240, 0, 0, 1]).reshape((3,3))
+        # self.imu_to_cam_T = np.eye(4)
+        # self.width = 752
+        # self.height = 480
+        # ov_slampoints_topic = '/ov_msckf/points_slam'
+        # img_topic = '/uav1/vio/camera/image_raw'
+        # odom_topic = '/ov_msckf/odomimu'
+        # self.marker_scale = 0.5
 
         print("IMUTOCAM", self.imu_to_cam_T)
         self.P = np.zeros((3,4))
@@ -260,6 +262,11 @@ class NavNode:
         self.local_nav_goal = None
         self.local_nav_start_time = None
         self.local_reaching_dist = 3
+
+        self.uav_radius = 0.5
+        self.min_planning_odist = 0.8
+        self.max_planning_odist = 2
+        self.safety_weight = 0.5
         
         self.node_initialized = True
         # # #}
@@ -313,9 +320,10 @@ class NavNode:
         print("SENDING PATH TO TRAJ GENERATOR, LEN: " + str(len(path)))
         msg = mrs_msgs.msg.Path()
         msg.header = std_msgs.msg.Header()
-        # msg.header.frame_id = 'uav1/vio_origin'
+        # msg.header.frame_id = 'global'
+        msg.header.frame_id = 'uav1/vio_origin'
         # msg.header.frame_id = 'uav1/fcu'
-        msg.header.frame_id = 'uav1/local_origin'
+        # msg.header.frame_id = 'uav1/local_origin'
         msg.header.stamp = rospy.Time.now()
         msg.use_heading = False
         msg.fly_now = True
@@ -325,7 +333,7 @@ class NavNode:
 
         for p in path:
             ref = mrs_msgs.msg.Reference()
-            ref.position = Point(x=p[0], y=p[1], z=p[2])
+            ref.position = Point(x=-p[0], y=-p[1], z=p[2])
             # arr.append(ref)
             msg.points.append(ref)
         # print("ARR:")
@@ -350,6 +358,8 @@ class NavNode:
 
             T_global_to_imu = self.odom_msg_to_transformation_matrix(self.odom_buffer[-1])
             pos_odom_frame = T_global_to_imu[:3, 3]
+            print("ODOM FRAME POS:")
+            print(pos_odom_frame)
             heading_odom_frame = transformationMatrixToHeading(T_global_to_imu)
             current_vp = Viewpoint(pos_odom_frame, heading_odom_frame)
 
@@ -374,16 +384,38 @@ class NavNode:
             # FIND PATH TO GOAL AND SEND IT TO TRAJECTORY GENERATOR
             # TRY A* PATH PLANNING FOR NOW!
             T_global_to_smap_origin = np.linalg.inv(self.spheremap.T_global_to_imu_at_start)
+            print("T:")
+            print(T_global_to_smap_origin)
             current_pos_in_smap_frame = (T_global_to_smap_origin @ T_global_to_imu)[:3, 3]
+            print("CURRENT POS IN SMAP FRAME:")
+            print(current_pos_in_smap_frame)
             goal_pos_in_smap_frame = transformPoints(self.local_nav_goal.position, T_global_to_smap_origin)
 
             pathfindres = self.findPathAstarInSubmap(self.spheremap, current_pos_in_smap_frame, goal_pos_in_smap_frame)
             if not pathfindres is None:
                 print("FOUND SOME PATH!")
                 print(pathfindres)
-                print("GOING TO SEND!")
                 # pathfindres = np.concatenate(pathfindres, goal_pos_in_smap_frame.reshape((3,1)))
-                path_in_global_frame = transformPoints(pathfindres, T_global_to_smap_origin)
+
+                print("TRANSFORMED PATH:")
+                path_in_global_frame = transformPoints(pathfindres, self.spheremap.T_global_to_imu_at_start)
+                print(path_in_global_frame )
+
+                # IGNORE VPS TOO CLOSE TO UAV
+                ignoring_dist = 1
+                # TODO - use predicted trajectory to not stop like a retard
+                first_to_not_ignore = path_in_global_frame.shape[0] - 1
+                for i in range(path_in_global_frame.shape[0] - 1):
+                    if np.linalg.norm(path_in_global_frame - current_pos_in_smap_frame) > ignoring_dist:
+                        first_to_not_ignore = i
+                        break
+                print("IGNORING PTS: " + str(first_to_not_ignore))
+                path_in_global_frame = path_in_global_frame[i:, :]
+
+                print("GONNA SEND THIS PATH:")
+                print(path_in_global_frame )
+
+
                 self.send_path_to_trajectory_generator(path_in_global_frame)
             else:
                 print("NO PATH FOUND! SELECTING NEW GOAL!")
@@ -453,6 +485,7 @@ class NavNode:
 
                     if split_score >= max_split_score:
                         # SAVE OLD SPHEREMAP
+                        print("SPLITTING!")
                         # TODO give it the transform to the next ones origin from previous origin
                         memorized_transform_to_prev_map = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_imu
                         self.mchunk.submaps.append(self.spheremap)
@@ -461,8 +494,32 @@ class NavNode:
             if init_new_spheremap:
                 # INIT NEW SPHEREMAP
                 print("INFO: initing new spheremap")
+
+                # CREATE CONNECTION FROM AND TO THE PREV SPHEREMAP IF PREV MAP EXISTS!
+                connection_to_prev_map = None
+                if (not self.spheremap is None) and (not memorized_transform_to_prev_map is None):
+                    print("CREATING CONNECTION TO PREV MAP")
+                    pos_in_old_frame = memorized_transform_to_prev_map[:3,3].reshape((1,3))
+                    pos_in_new_frame = np.zeros((1,3))
+                    odist = self.spheremap.getDistFromObstaclesAtPoint(pos_in_old_frame)
+                    print("ODIST: " + str(odist))
+
+                    if odist < self.uav_radius:
+                        odist = self.uav_radius
+                        print("WARN! ODIST SMALLER THAN UAV RADIUS!")
+
+                    self.spheremap.map2map_conns.append(MapToMapConnection(pos_in_old_frame, len(self.mchunk.submaps)+1, odist))
+                    connection_to_prev_map = MapToMapConnection(pos_in_new_frame, len(self.mchunk.submaps), odist)
+                    # else:
+                    #     # print("ODIST NOT SAFE!!! NOT ADDING CONNECTION!")
+                    #     TODO - 
+                    # old_map_connection_pt = 
+
                 self.spheremap = SphereMap(init_rad, min_rad)
                 self.spheremap.surfels_filtering_radius = 0.2
+
+                if not connection_to_prev_map is None:
+                    self.spheremap.map2map_conns.append(connection_to_prev_map)
 
                 self.spheremap.memorized_transform_to_prev_map = memorized_transform_to_prev_map 
                 # self.spheremap.T_global_to_own_origin = T_global_to_imu @ self.imu_to_cam_T
@@ -855,6 +912,7 @@ class NavNode:
                     heapq.heappush(open_set, (f_score[neighbor_index], neighbor_index, current_index))
                     closed_set[neighbor_index] = current_index
 
+        path.reverse()
         print("PATHFIND: RES PATH: ")
         print(path)
         print("N CLOSED NODES: " + str(len(closed_set.keys())))
@@ -1079,6 +1137,7 @@ class NavNode:
 
         new_kf = SubmapKeyframe(T_odom_relative_to_smap_start)
 
+
         # CHECK IF NEW ENOUGH
         # TODO - check in near certainly connected submaps
         for kf in self.spheremap.visual_keyframes:
@@ -1104,6 +1163,8 @@ class NavNode:
         # self.test_db.add(descs)
         # self.test_db_n_kframes += 1
         self.spheremap.visual_keyframes.append(new_kf)
+
+
 
         # self.test_db_indexing[self.test_db_n_kframes - 1] = (len(self.mchunk.submaps), len(self.spheremap.visual_keyframes)-1) 
 
@@ -1581,10 +1642,14 @@ class NavNode:
         if max_maps_to_vis < len(self.mchunk.submaps):
             max_maps_to_vis = len(self.mchunk.submaps)
 
+        clr_index = 0
+        max_clrs = 4
         for i in range(max_maps_to_vis):
-            if self.mchunk.submaps[-(1+i)].memorized_transform_to_prev_map is None:
+            idx = len(self.mchunk.submaps)-(1+i)
+            clr_index = idx % max_clrs
+            if self.mchunk.submaps[idx].memorized_transform_to_prev_map is None:
                 break
-            self.get_spheremap_marker_array(marker_array, self.mchunk.submaps[-(i+1)], self.mchunk.submaps[-(i+1)].T_global_to_own_origin, alternative_look = True, do_connections = False, do_surfels = True)
+            self.get_spheremap_marker_array(marker_array, self.mchunk.submaps[-(i+1)], self.mchunk.submaps[-(i+1)].T_global_to_own_origin, alternative_look = True, do_connections = False, do_surfels = True, do_spheres = False, ms=self.marker_scale, clr_index = clr_index)
 
         self.recent_submaps_vis_pub.publish(marker_array)
 
@@ -1606,12 +1671,12 @@ class NavNode:
 
         marker_array = MarkerArray()
 
-        self.get_spheremap_marker_array(marker_array, self.spheremap, self.spheremap.T_global_to_own_origin)
+        self.get_spheremap_marker_array(marker_array, self.spheremap, self.spheremap.T_global_to_own_origin, ms=self.marker_scale)
 
         self.spheremap_spheres_pub.publish(marker_array)
 # # #}
     
-    def get_spheremap_marker_array(self, marker_array, smap, T_inv, alternative_look=False, do_connections=True,  do_surfels=True, do_spheres=True, do_keyframes=True, do_normals=True):# # #{
+    def get_spheremap_marker_array(self, marker_array, smap, T_inv, alternative_look=False, do_connections=False,  do_surfels=True, do_spheres=True, do_keyframes=True, do_normals=False, do_map2map_conns=True, ms=1, clr_index =0):# # #{
         # T_vis = np.linalg.inv(T_inv)
         T_vis = T_inv
         pts = transformPoints(smap.points, T_vis)
@@ -1620,15 +1685,81 @@ class NavNode:
         if len(marker_array.markers) > 0:
             marker_id = marker_array.markers[-1].id
 
+        if do_map2map_conns and len(smap.map2map_conns) > 0:
+            n_conns = len(smap.map2map_conns)
+
+            # CONN PTS
+            untr_pts = np.array([c.pt_in_first_map_frame for c in smap.map2map_conns])
+            untr_pts = untr_pts.reshape((n_conns, 3))
+            spts = transformPoints(untr_pts, T_vis)
+
+            marker = Marker()
+            marker.header.frame_id = "global"  # Adjust the frame_id as needed
+            marker.type = Marker.POINTS
+            marker.action = Marker.ADD
+            marker.pose.orientation.w = 1.0
+            # marker.scale.x = 1.2  # Adjust the size of the points
+            # marker.scale.y = 1.2
+            marker.scale.x = ms *2.2  # Adjust the size of the points
+            marker.scale.y = ms *2.2
+            marker.color.a = 1
+            marker.color.r = 0.5
+            marker.color.b = 1
+            # if alternative_look:
+            #     marker.color.r = 0.5
+            #     marker.color.b = 1
+
+            marker.id = marker_id
+            marker_id += 1
+
+            # Convert the 3D points to Point messages
+            points_msg = [Point(x=spts[i, 0], y=spts[i, 1], z=spts[i, 2]) for i in range(n_conns)]
+            marker.points = points_msg
+            marker_array.markers.append(marker)
+
+            # LINES BETWEEN CONN POINTS
+            line_marker = Marker()
+            line_marker.header.frame_id = "global"  # Set your desired frame_id
+            line_marker.type = Marker.LINE_LIST
+            line_marker.action = Marker.ADD
+            line_marker.scale.x =ms* 1  # Line width
+            line_marker.color.a = 1  # Alpha
+            line_marker.color.r = 0.5  # Alpha
+            line_marker.color.b = 1  # Alpha
+
+            # if alternative_look:
+            #     line_marker.scale.x = 0.1
+
+            line_marker.id = marker_id
+            marker_id += 1
+
+            for i in range(n_conns):
+                for j in range(i+1, n_conns):
+                    point1 = Point()
+                    point2 = Point()
+
+                    p1 = spts[i, :]
+                    p2 = spts[j, :]
+                    
+                    point1.x = p1[0]
+                    point1.y = p1[1]
+                    point1.z = p1[2]
+                    point2.x = p2[0]
+                    point2.y = p2[1]
+                    point2.z = p2[2]
+                    line_marker.points.append(point1)
+                    line_marker.points.append(point2)
+            marker_array.markers.append(line_marker)
+
         if do_connections:
             line_marker = Marker()
             line_marker.header.frame_id = "global"  # Set your desired frame_id
             line_marker.type = Marker.LINE_LIST
             line_marker.action = Marker.ADD
-            line_marker.scale.x = 0.2  # Line width
+            line_marker.scale.x = ms* 0.2  # Line width
             line_marker.color.a = 1.0  # Alpha
             if alternative_look:
-                line_marker.scale.x = 0.1
+                line_marker.scale.x =ms * 0.1
 
             line_marker.id = marker_id
             marker_id += 1
@@ -1672,16 +1803,32 @@ class NavNode:
                 marker.type = Marker.POINTS
                 marker.action = Marker.ADD
                 marker.pose.orientation.w = 1.0
-                marker.scale.x = 1.2  # Adjust the size of the points
-                marker.scale.y = 1.2
+                # marker.scale.x = 1.2  # Adjust the size of the points
+                # marker.scale.y = 1.2
+                marker.scale.x = ms *0.9  # Adjust the size of the points
+                marker.scale.y = ms *0.9
                 marker.color.a = 1.0
                 marker.color.r = 1.0
                 marker.color.g = 0.0
                 marker.color.b = 0.0
                 if alternative_look:
-                    marker.color.r = 1.0
-                    marker.color.g = 0.0
-                    marker.color.b = 1.0
+                    marker.color.a = 0.5
+                    if clr_index == 0:
+                        marker.color.r = 1.0
+                        marker.color.g = 1.0
+                        marker.color.b = 0.0
+                    elif clr_index == 1:
+                        marker.color.r = 0.0
+                        marker.color.g = 1.0
+                        marker.color.b = 1.0
+                    elif clr_index == 2:
+                        marker.color.r = 0.4
+                        marker.color.g = 0.7
+                        marker.color.b = 1.0
+                    else:
+                        marker.color.r = 1.0
+                        marker.color.g = 0.0
+                        marker.color.b = 1.0
 
                 marker.id = marker_id
                 marker_id += 1
@@ -1693,7 +1840,7 @@ class NavNode:
                 marker.points = points_msg
                 marker_array.markers.append(marker)
         if do_normals:
-            arrowlen = 3
+            arrowlen = 0.6 * ms
             pts1 = transformPoints(smap.surfel_points, T_vis)
             pts2 = transformPoints(smap.surfel_points + smap.surfel_normals * arrowlen, T_vis)
             if not smap.surfel_points is None:
@@ -1707,9 +1854,9 @@ class NavNode:
                     marker_id += 1
 
                     # Set the scale
-                    marker.scale.x = 0.5
-                    marker.scale.y = 1
-                    marker.scale.z = 1
+                    marker.scale.x = ms *0.25
+                    marker.scale.y = ms *0.5
+                    marker.scale.z = ms *0.5
 
                     marker.color.a = 1
                     marker.color.r = 1.0
@@ -1748,9 +1895,9 @@ class NavNode:
                     # marker.pose.position.z = kframes_pts[i][2]
 
                     # Set the scale
-                    marker.scale.x = 0.8
-                    marker.scale.y = 2.2
-                    marker.scale.z = 1.5
+                    marker.scale.x = ms *0.8
+                    marker.scale.y = ms *2.2
+                    marker.scale.z = ms *1.5
 
                     marker.color.a = 1
                     marker.color.r = 0.0
