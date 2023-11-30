@@ -159,9 +159,10 @@ class NavNode:
         # SRV
         self.vocab_srv = rospy.Service("save_vocabulary", EmptySrv, self.saveCurrentVisualDatabaseToVocabFile)
         self.save_episode_full = rospy.Service("save_episode_full", EmptySrv, self.saveEpisodeFull)
+        self.return_home_srv = rospy.Service("home", EmptySrv, self.return_home)
 
         # TIMERS
-        self.planning_frequency = 0.2
+        self.planning_frequency = 10
         self.planning_timer = rospy.Timer(rospy.Duration(1.0 / self.planning_frequency), self.planning_loop_iter)
 
         # PLANNING PUB
@@ -184,25 +185,25 @@ class NavNode:
 
         # --Load calib
         # UNITY
-        self.K = np.array([642.8495341420769, 0, 400, 0, 644.5958939934509, 300, 0, 0, 1]).reshape((3,3))
-        self.imu_to_cam_T = np.array( [[0, -1, 0, 0], [0, 0, -1, 0], [1, 0, 0, 0], [0.0, 0.0, 0.0, 1.0]])
-        self.width = 800
-        self.height = 600
-        ov_slampoints_topic = '/ov_msckf/points_slam'
-        img_topic = '/robot1/camera1/raw'
-        # img_topic = '/robot1/camera1/image'
-        odom_topic = '/ov_msckf/odomimu'
-        self.marker_scale = 1
+        # self.K = np.array([642.8495341420769, 0, 400, 0, 644.5958939934509, 300, 0, 0, 1]).reshape((3,3))
+        # self.imu_to_cam_T = np.array( [[0, -1, 0, 0], [0, 0, -1, 0], [1, 0, 0, 0], [0.0, 0.0, 0.0, 1.0]])
+        # self.width = 800
+        # self.height = 600
+        # ov_slampoints_topic = '/ov_msckf/points_slam'
+        # img_topic = '/robot1/camera1/raw'
+        # # img_topic = '/robot1/camera1/image'
+        # odom_topic = '/ov_msckf/odomimu'
+        # self.marker_scale = 1
 
         # BLUEFOX UAV
-        # self.K = np.array([227.4, 0, 376, 0, 227.4, 240, 0, 0, 1]).reshape((3,3))
-        # self.imu_to_cam_T = np.eye(4)
-        # self.width = 752
-        # self.height = 480
-        # ov_slampoints_topic = '/ov_msckf/points_slam'
-        # img_topic = '/uav1/vio/camera/image_raw'
-        # odom_topic = '/ov_msckf/odomimu'
-        # self.marker_scale = 0.5
+        self.K = np.array([227.4, 0, 376, 0, 227.4, 240, 0, 0, 1]).reshape((3,3))
+        self.imu_to_cam_T = np.eye(4)
+        self.width = 752
+        self.height = 480
+        ov_slampoints_topic = '/ov_msckf/points_slam'
+        img_topic = '/uav1/vio/camera/image_raw'
+        odom_topic = '/ov_msckf/odomimu'
+        self.marker_scale = 0.5
 
         print("IMUTOCAM", self.imu_to_cam_T)
         self.P = np.zeros((3,4))
@@ -259,20 +260,36 @@ class NavNode:
         self.n_frames = 0
         self.tracked_features = []
 
+        self.global_roadmap = None
+        self.global_roadmap_index = None
+        self.global_roadmap_len = None
+        self.roadmap_start_time = None
+
         self.local_nav_goal = None
-        self.local_nav_start_time = None
+        self.local_nav_start_time = rospy.get_rostime()
         self.local_reaching_dist = 3
+        self.last_traj_send_time =  rospy.get_rostime()
+        self.traj_min_duration = 5
 
         # META PARAMS
+        self.state = 'explore'
+        self.n_sphere_samples_per_update = 50
         self.carryover_dist = 8
         self.uav_radius = 0.5
-        self.min_planning_odist = 0.8
+        self.min_planning_odist = 1
         self.max_planning_odist = 2
         self.safety_weight = 0.5
         self.fragmenting_travel_dist = 15
+        self.fragmenting_travel_dist = 5
         
         self.node_initialized = True
         # # #}
+
+    def set_global_roadmap(rm):
+        self.global_roadmap = rm
+        self.global_roadmap_index = 0
+        self.global_roadmap_len = rm.shape[0]
+        self.roadmap_start_time = rospy.Time.now()
 
     def select_random_reachable_goal_viewpoint(self):# # #{
         print("SELECTING RANDOM REACHABLE GOAL VP")
@@ -349,6 +366,13 @@ class NavNode:
         return None
 # # #}
 
+    def return_home(self, req):
+        print("RETURN HOME SRV")
+        with ScopedLock(self.spheremap_mutex):
+            self.local_nav_goal = None
+            self.state = 'home'
+        return EmptySrvResponse()
+
     def planning_loop_iter(self, event=None):# # #{
         print("pes")
         with ScopedLock(self.spheremap_mutex):
@@ -366,9 +390,17 @@ class NavNode:
             heading_odom_frame = transformationMatrixToHeading(T_global_to_imu)
             current_vp = Viewpoint(pos_odom_frame, heading_odom_frame)
 
+
+            trajtime = (rospy.get_rostime() - self.last_traj_send_time).to_sec()
+            # DONT REPLAN IF SENT TRAJ RECENTLY
+            if (not self.local_nav_goal is None ) and (trajtime < self.traj_min_duration):
+                print("TOO SOON TO FIND AND SEND ANOTHER TRAJECTORY, TIME:" + str(trajtime))
+                return
+
             # FIND GOAL IF NONE
             max_reaching_time = 5
-            if self.local_nav_goal is None or (rospy.get_rostime() - self.local_nav_start_time).to_sec() > max_reaching_time:
+            reaching_time = (rospy.get_rostime() - self.local_nav_start_time).to_sec()
+            if self.local_nav_goal is None or reaching_time > max_reaching_time:
                 self.local_nav_goal = self.select_random_reachable_goal_viewpoint()
                 self.local_nav_start_time = rospy.get_rostime()
                 return
@@ -386,6 +418,7 @@ class NavNode:
 
             # FIND PATH TO GOAL AND SEND IT TO TRAJECTORY GENERATOR
             # TRY A* PATH PLANNING FOR NOW!
+
             T_global_to_smap_origin = np.linalg.inv(self.spheremap.T_global_to_imu_at_start)
             print("T:")
             print(T_global_to_smap_origin)
@@ -394,14 +427,28 @@ class NavNode:
             print(current_pos_in_smap_frame)
             goal_pos_in_smap_frame = transformPoints(self.local_nav_goal.position, T_global_to_smap_origin)
 
-            pathfindres = self.findPathAstarInSubmap(self.spheremap, current_pos_in_smap_frame, goal_pos_in_smap_frame)
+            pathfindres = None
+            do_transform = True
+            if self.state == 'home':
+                print("HOMING")
+                startpos = current_pos_in_smap_frame
+                endpos = np.zeros((1,3))
+                goal_map_id = 0
+                pathfindres = self.findGlobalPath(Viewpoint(startpos), Viewpoint(endpos), goal_map_id)
+                self.visualize_roadmap(pathfindres, transformPoints(startpos, self.spheremap.T_global_to_own_origin), transformPoints(endpos, self.mchunk.submaps[goal_map_id].T_global_to_own_origin))
+                do_transform = False
+            else:
+                pathfindres = self.findPathAstarInSubmap(self.spheremap, current_pos_in_smap_frame, goal_pos_in_smap_frame, visual=True)
+
             if not pathfindres is None:
                 print("FOUND SOME PATH!")
                 print(pathfindres)
                 # pathfindres = np.concatenate(pathfindres, goal_pos_in_smap_frame.reshape((3,1)))
 
                 print("TRANSFORMED PATH:")
-                path_in_global_frame = transformPoints(pathfindres, self.spheremap.T_global_to_imu_at_start)
+                path_in_global_frame  = pathfindres
+                if do_transform:
+                    path_in_global_frame = transformPoints(pathfindres, self.spheremap.T_global_to_imu_at_start)
                 print(path_in_global_frame )
 
                 # IGNORE VPS TOO CLOSE TO UAV
@@ -420,6 +467,8 @@ class NavNode:
 
 
                 self.send_path_to_trajectory_generator(path_in_global_frame)
+
+                self.last_traj_send_time = rospy.get_rostime()
             else:
                 print("NO PATH FOUND! SELECTING NEW GOAL!")
                 self.local_nav_goal = None
@@ -587,7 +636,8 @@ class NavNode:
             self.submap_unpredictability_signal = 0
             init_new_spheremap = False
             memorized_transform_to_prev_map = None
-            init_rad = 0.5
+
+            init_rad = self.min_planning_odist
             min_rad = init_rad
 
             if self.spheremap is None:
@@ -827,7 +877,7 @@ class NavNode:
             # ---EXPANSION STEP #{
             max_sphere_sampling_z = 60
 
-            n_sampled = 50
+            n_sampled = self.n_sphere_samples_per_update
             sampling_pts = np.random.rand(n_sampled, 2)  # Random points in [0, 1] range for x and y
             sampling_pts = sampling_pts * [self.width, self.height]
 
@@ -920,12 +970,13 @@ class NavNode:
             # TRY PATHFINDING TO START OF CURRENT SPHEREMAP
             # pathfindres = self.findPathAstarInSubmap(self.spheremap, T_delta_odom[:3, 3], np.array([0,0,0]))
 
-            if len(self.mchunk.submaps) > 0:
-                startpos = T_current_cam_to_orig[:3,3].reshape((1,3))
-                endpos = np.zeros((1,3))
-                goal_map_id = 0
-                plan_res = self.findGlobalPath(Viewpoint(startpos), Viewpoint(endpos), goal_map_id)
-                self.visualize_roadmap(plan_res, transformPoints(startpos,self.spheremap.T_global_to_own_origin), transformPoints(endpos, self.mchunk.submaps[goal_map_id].T_global_to_own_origin))
+            # VISUALIZE PATH HOME
+            # if len(self.mchunk.submaps) > 0:
+            #     startpos = T_current_cam_to_orig[:3,3].reshape((1,3))
+            #     endpos = np.zeros((1,3))
+            #     goal_map_id = 0
+            #     plan_res = self.findGlobalPath(Viewpoint(startpos), Viewpoint(endpos), goal_map_id)
+            #     self.visualize_roadmap(plan_res, transformPoints(startpos,self.spheremap.T_global_to_own_origin), transformPoints(endpos, self.mchunk.submaps[goal_map_id].T_global_to_own_origin))
 
             # self.node_offline = not self.spheremap.consistencyCheck()
 # # #}
@@ -989,7 +1040,7 @@ class NavNode:
         print("VOCAB SAVE SUCCESS")
         return EmptySrvResponse()# # #}
 
-    def findPathAstarInSubmap(self, smap, startpoint, endpoint, maxdist_to_graph=10, min_safe_dist=0.5, max_safe_dist=3, safety_weight=1):# # #{
+    def findPathAstarInSubmap(self, smap, startpoint, endpoint, maxdist_to_graph=10, min_safe_dist=0.5, max_safe_dist=3, visual = False):# # #{
         print("PATHFIND: STARTING, FROM TO:")
         print(startpoint)
         print(endpoint)
@@ -1008,10 +1059,11 @@ class NavNode:
         dist_from_endpoint = np.linalg.norm((smap.points - endpoint), axis=1) - smap.radii
 
         best_sumdist = None
+        # print("N UNIQUE SEGMENTS:")
 
         for seg_id in np.unique(smap.connectivity_labels):
-            # print("SEG")
-            # print(seg_id)
+            print("SEG")
+            print(seg_id)
             seg_mask = smap.connectivity_labels == seg_id
             mask_idxs = np.where(seg_mask)[0]
 
@@ -1026,11 +1078,16 @@ class NavNode:
 
             enddist = dist_from_startpoint[t_start_node_index]
             startdist = dist_from_endpoint[t_end_node_index]
+
+            print(enddist)
+            print(startdist)
             if(enddist > maxdist_to_graph or startdist > maxdist_to_graph):
                 continue
             sumdist = enddist + startdist
             if (best_sumdist is None) or sumdist < best_sumdist:
-                # print("found better seg with sumdist: " + str(sumdist))
+                print("found better seg with sumdist: " + str(sumdist))
+                print(enddist)
+                print(startdist)
                 best_sumdist = sumdist
                 start_seg_id = seg_id
                 start_node_index = t_start_node_index 
@@ -1081,7 +1138,12 @@ class NavNode:
 
             for neighbor_index in conns:
                 euclid_dist = np.linalg.norm(smap.points[current_index] - smap.points[neighbor_index])
-                tentative_g = g_score[current_index] + euclid_dist
+                neighbor_rad = smap.radii[neighbor_index]
+                if neighbor_rad < self.min_planning_odist:
+                    continue
+                safety_g = self.compute_safety_cost(neighbor_rad, euclid_dist)
+
+                tentative_g = g_score[current_index] + euclid_dist + safety_g
 
                 if neighbor_index not in g_score or tentative_g < g_score[neighbor_index]:
                     g_score[neighbor_index] = tentative_g
@@ -1094,10 +1156,12 @@ class NavNode:
         print(path)
         print("N CLOSED NODES: " + str(len(closed_set.keys())))
 
-        self.visualize_trajectory(smap.points[np.array(path), :], smap.T_global_to_own_origin, startpoint, endpoint)
-
         if len(path) == 0:
             return None
+
+        if visual:
+            self.visualize_trajectory(smap.points[np.array(path), :], smap.T_global_to_own_origin, startpoint, endpoint)
+
         return smap.points[np.array(path), :]
 # # #}
 
@@ -1519,6 +1583,14 @@ class NavNode:
 
         comp_time = time.time() - comp_start_time
         print("computation time: " + str((comp_time) * 1000) +  " ms")# # #}
+
+    def compute_safety_cost(self, node2_radius, dist):
+        if node2_radius < self.min_planning_odist:
+            node2_radius = self.min_planning_odist
+        if node2_radius > self.max_planning_odist:
+            return 0
+        saf = (node2_radius - self.min_planning_odist) / (self.max_planning_odist  - self.min_planning_odist)
+        return saf * saf * dist * self.safety_weight
 
     def visualize_tracking(self):# # #{
         # rgb = np.zeros((self.new_frame.shape[0], self.new_frame.shape[1], 3), dtype=np.uint8)
