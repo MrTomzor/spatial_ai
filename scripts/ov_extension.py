@@ -269,7 +269,7 @@ class NavNode:
         self.local_nav_start_time = rospy.get_rostime()
         self.local_reaching_dist = 3
         self.last_traj_send_time =  rospy.get_rostime()
-        self.traj_min_duration = 5
+        self.traj_min_duration = 10
 
         # META PARAMS
         self.state = 'explore'
@@ -398,7 +398,7 @@ class NavNode:
                 return
 
             # FIND GOAL IF NONE
-            max_reaching_time = 5
+            max_reaching_time = 10
             reaching_time = (rospy.get_rostime() - self.local_nav_start_time).to_sec()
             if self.local_nav_goal is None or reaching_time > max_reaching_time:
                 self.local_nav_goal = self.select_random_reachable_goal_viewpoint()
@@ -452,7 +452,7 @@ class NavNode:
                 print(path_in_global_frame )
 
                 # IGNORE VPS TOO CLOSE TO UAV
-                ignoring_dist = 1
+                ignoring_dist = 0.5
                 # TODO - use predicted trajectory to not stop like a retard
                 first_to_not_ignore = path_in_global_frame.shape[0] - 1
                 for i in range(path_in_global_frame.shape[0] - 1):
