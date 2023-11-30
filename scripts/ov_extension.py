@@ -263,10 +263,13 @@ class NavNode:
         self.local_nav_start_time = None
         self.local_reaching_dist = 3
 
+        # META PARAMS
+        self.carryover_dist = 8
         self.uav_radius = 0.5
         self.min_planning_odist = 0.8
         self.max_planning_odist = 2
         self.safety_weight = 0.5
+        self.fragmenting_travel_dist = 15
         
         self.node_initialized = True
         # # #}
@@ -451,7 +454,7 @@ class NavNode:
         for conn in self.spheremap.map2map_conns:
             euclid_dist = np.linalg.norm(conn.pt_in_first_map_frame - start_vp.position)
             heapq.heappush(open_set, (euclid_dist, conn.second_map_id, n_old_submaps))
-            print("STARTING CONN TO: " + str(conn.second_map_id))
+            # print("STARTING CONN TO: " + str(conn.second_map_id))
             closed_set[conn.second_map_id] = n_old_submaps
             g_score[conn.second_map_id] = euclid_dist
 
@@ -602,7 +605,7 @@ class NavNode:
                     #     split_score = max_split_score
 
                     # CONTEXT DIST BASED
-                    if self.spheremap.traveled_context_distance > 7:
+                    if self.spheremap.traveled_context_distance > self.fragmenting_travel_dist:
                         split_score = max_split_score
                     else:
                         print("TRAVELED CONTEXT DISTS: " + str(self.spheremap.traveled_context_distance))
@@ -644,7 +647,6 @@ class NavNode:
 
                     # GET SOME CLOSE SPHERES
                     if not self.spheremap.spheres_kdtree is None:
-                        self.carryover_dist = 8
                         qres = self.spheremap.spheres_kdtree.query(pos_in_old_frame, k=10, distance_upper_bound=self.carryover_dist)
                         print("CARRYOVER:")
                         idxs = qres[1][0]
@@ -654,7 +656,7 @@ class NavNode:
                         if np.any(existing_mask):
                             pts_to_transfer = self.spheremap.points[existing_mask, :]
                             radii_to_transfer = self.spheremap.radii[existing_mask]
-                            pts_to_transfer = transformPoints(pts_to_transfer, memorized_transform_to_prev_map)
+                            pts_to_transfer = transformPoints(pts_to_transfer, np.linalg.inv(memorized_transform_to_prev_map))
 
 
                 self.spheremap = SphereMap(init_rad, min_rad)
@@ -997,37 +999,48 @@ class NavNode:
             return None
 
         # FIND NEAREST NODES TO START AND END
+
+        # CHECK ALL SEGMENTS
+        start_seg_id = None
+        start_node_index = None
+        end_node_index = None
         dist_from_startpoint = np.linalg.norm((smap.points - startpoint), axis=1) - smap.radii
-        start_node_index = np.argmin(dist_from_startpoint)
-        if smap.connectivity_labels is None:
-            print("WARN! NO CONNECTIVITY LABELS!")
-            smap.labelSpheresByConnectivity()
-        start_seg_id = smap.connectivity_labels[start_node_index]
+        dist_from_endpoint = np.linalg.norm((smap.points - endpoint), axis=1) - smap.radii
 
-        # ONLY CONSIDER GOAL POINTS IN THE SAME CONNECTIVITY REGION
-        seg_mask = smap.connectivity_labels == start_seg_id
-        mask_idxs = np.where(seg_mask)[0]
-        # print(mask_idxs)
-        # dist_from_endpoint = np.linalg.norm((smap.points - endpoint), axis=1) - smap.radii
-        dist_from_endpoint = np.linalg.norm((smap.points[seg_mask, :] - endpoint), axis=1) - smap.radii[seg_mask]
-        end_node_index_masked = np.argmin(dist_from_endpoint)
-        # print(end_node_index_masked)
-        end_node_index = mask_idxs[end_node_index_masked]
-        # print(end_node_index)
+        best_sumdist = None
 
-        if(dist_from_startpoint[start_node_index ] > maxdist_to_graph or dist_from_endpoint[end_node_index_masked] > maxdist_to_graph):
+        for seg_id in np.unique(smap.connectivity_labels):
+            # print("SEG")
+            # print(seg_id)
+            seg_mask = smap.connectivity_labels == seg_id
+            mask_idxs = np.where(seg_mask)[0]
+
+            # if smap.connectivity_labels is None:
+            #     print("WARN! NO CONNECTIVITY LABELS!")
+            #     smap.labelSpheresByConnectivity()
+
+            # ONLY CONSIDER GOAL POINTS IN THE SAME CONNECTIVITY REGION
+
+            t_start_node_index = mask_idxs[np.argmin(dist_from_startpoint[seg_mask])]
+            t_end_node_index = mask_idxs[np.argmin(dist_from_endpoint[seg_mask])]
+
+            enddist = dist_from_startpoint[t_start_node_index]
+            startdist = dist_from_endpoint[t_end_node_index]
+            if(enddist > maxdist_to_graph or startdist > maxdist_to_graph):
+                continue
+            sumdist = enddist + startdist
+            if (best_sumdist is None) or sumdist < best_sumdist:
+                # print("found better seg with sumdist: " + str(sumdist))
+                best_sumdist = sumdist
+                start_seg_id = seg_id
+                start_node_index = t_start_node_index 
+                end_node_index = t_end_node_index 
+
+        if best_sumdist is None:
             print("PATHFIND: start or end too far form graph!")
-            print(dist_from_startpoint[start_node_index])
-            print(dist_from_endpoint[end_node_index_masked])
             print("N SPHERES:")
             print(smap.points.shape[0])
             return None
-        print("PATHFIND: node indices:")
-        print(start_node_index)
-        print(end_node_index)
-        print("PATHFIND: node segments:")
-        print(start_seg_id)
-        print(smap.connectivity_labels[end_node_index])
 
         goal_node_pt = smap.points[end_node_index]
         open_set = []
