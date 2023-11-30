@@ -66,12 +66,12 @@ class SphereMap:
         self.surfel_points = None
         self.surfel_radii = None
         self.surfel_normals = None
+        self.connectivity_labels = None
 
         self.min_radius = min_radius
         self.max_radius = init_radius# # #}
 
     def getPointOfConnectionToSubmap(self, idx):
-        print("ASKING FOR IDX:" + str(idx))
         for conn in self.map2map_conns:
             print(conn.second_map_id)
             if conn.second_map_id == idx:

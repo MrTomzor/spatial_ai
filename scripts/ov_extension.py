@@ -437,27 +437,6 @@ class NavNode:
         reached_flags = np.full((n_old_submaps), False)
         reaching_costs = np.zeros((n_old_submaps))
 
-        # open_set = []
-        # Priority queue for efficient retrieval of the node with the lowest total cost
-        
-        # while open_set:
-        #     current_f, current_index, parent = heapq.heappop(open_set)
-        #     smap = self.mchunk.submaps[current_index]
-        #     reached_flags[current_index] = True
-
-        #     if current_index == goal_vp_map_index:
-        #         path = [current_index]
-        #         while not parent is None:
-        #             path.append(parent)
-        #             current_index = parent
-        #             parent = closed_set[current_index]
-        #         break
-
-        #     for conn in self.spheremap.map2map_conns:
-        #         if not reached_flags[conn.second_map_id]:
-        #             euclid_dist = np.linalg.norm(conn.pt_in_first_map_frame - start_vp.position)
-        #             heapq.heappush(open_set, (euclid_dist, conn.second_map_id, None))
-
 
         open_set = []
         # closed_set = set()
@@ -527,8 +506,48 @@ class NavNode:
         path.reverse()
         print("TOPO PLANNING FOUND PATH:")
         print(path)
+        if len(path) == 0:
+            print("EMPTY TOPO PATH!")
+            return None
 
-        # RETURNING THIS TOPOLOGICAL PATH
+        # CONSTRUCT PATH OUT OF SPHERES
+        # current_planning_map = self.spheremap
+        # pt1 = start_vp.position
+        # pt2 = current_planning_map.getPointOfConnectionToSubmap(path[0])
+        minipath_res = self.findPathAstarInSubmap(self.spheremap, start_vp.position, self.spheremap.getPointOfConnectionToSubmap(path[0]))
+        if minipath_res is None:
+            print("CANT FIND MINIPATH TO 1ST CONN POINT")
+            return None
+        minipath_res = np.concatenate((minipath_res, self.spheremap.getPointOfConnectionToSubmap(path[0])))
+        minipath_in_global_frame = transformPoints(minipath_res, self.spheremap.T_global_to_imu_at_start)
+        total_path = minipath_in_global_frame 
+        prev_id = n_old_submaps
+
+        for i in range(len(path)-1):
+            current_planning_map = self.mchunk.submaps[path[i]]
+            pt1 = current_planning_map.getPointOfConnectionToSubmap(prev_id)
+            pt2 = current_planning_map.getPointOfConnectionToSubmap(path[i+1])
+            minipath_res = self.findPathAstarInSubmap(current_planning_map, pt1, pt2)
+            if minipath_res is None:
+                print("CANT FIND MINIPATH AT IDX" + str(i))
+                return None
+            minipath_res = np.concatenate((minipath_res, pt2))
+            minipath_in_global_frame = transformPoints(minipath_res, current_planning_map.T_global_to_imu_at_start)
+            total_path = np.concatenate((total_path, minipath_in_global_frame))
+
+            prev_id = path[i]
+
+        final_submap = self.mchunk.submaps[goal_vp_map_index]
+        minipath_res = self.findPathAstarInSubmap(final_submap, final_submap.getPointOfConnectionToSubmap(prev_id), goal_vp.position)
+        if minipath_res is None:
+            print("CANT FIND MINIPATH TO GOAL IN LAST MAP")
+            return None
+        minipath_in_global_frame = transformPoints(minipath_res, final_submap.T_global_to_imu_at_start)
+        total_path = np.concatenate((total_path, minipath_in_global_frame))
+        prev_id = n_old_submaps
+
+        print("--FOUND TOTAL ROADMAP IN GLOBAL FRAME!!!")
+        return total_path
 
 
 
@@ -600,6 +619,9 @@ class NavNode:
                 # INIT NEW SPHEREMAP
                 print("INFO: initing new spheremap")
 
+                pts_to_transfer = None
+                radii_to_transfer = None
+
                 # CREATE CONNECTION FROM AND TO THE PREV SPHEREMAP IF PREV MAP EXISTS!
                 connection_to_prev_map = None
                 if (not self.spheremap is None) and (not memorized_transform_to_prev_map is None):
@@ -620,8 +642,24 @@ class NavNode:
                     #     TODO - 
                     # old_map_connection_pt = 
 
+                    # GET SOME CLOSE SPHERES
+                    if not self.spheremap.spheres_kdtree is None:
+                        self.carryover_dist = 8
+                        qres = self.spheremap.spheres_kdtree.query(pos_in_old_frame, k=10, distance_upper_bound=self.carryover_dist)
+                        print("CARRYOVER:")
+                        idxs = qres[1][0]
+                        existing_mask = idxs != self.spheremap.points.shape[0]
+                        print(np.sum(existing_mask ))
+                        existing_mask = np.where(existing_mask)[0]
+                        if np.any(existing_mask):
+                            pts_to_transfer = self.spheremap.points[existing_mask, :]
+                            radii_to_transfer = self.spheremap.radii[existing_mask]
+                            pts_to_transfer = transformPoints(pts_to_transfer, memorized_transform_to_prev_map)
+
+
                 self.spheremap = SphereMap(init_rad, min_rad)
                 self.spheremap.surfels_filtering_radius = 0.2
+
 
                 if not connection_to_prev_map is None:
                     self.spheremap.map2map_conns.append(connection_to_prev_map)
@@ -631,6 +669,15 @@ class NavNode:
                 self.spheremap.T_global_to_own_origin = T_global_to_imu 
                 self.spheremap.T_global_to_imu_at_start = T_global_to_imu
                 self.spheremap.creation_time = rospy.get_rostime()
+
+                if not pts_to_transfer is None:
+                    self.spheremap.points = pts_to_transfer 
+                    self.spheremap.radii = radii_to_transfer 
+                    self.spheremap.connections = np.array([None for c in range(pts_to_transfer.shape[0])], dtype=object)
+                    self.spheremap.updateConnections(np.arange(0, pts_to_transfer.shape[0]))
+                    self.spheremap.labelSpheresByConnectivity()
+
+
 
             if len(self.mchunk.submaps) > 2:
                 self.saveEpisodeFull(None)
@@ -870,8 +917,13 @@ class NavNode:
 
             # TRY PATHFINDING TO START OF CURRENT SPHEREMAP
             # pathfindres = self.findPathAstarInSubmap(self.spheremap, T_delta_odom[:3, 3], np.array([0,0,0]))
+
             if len(self.mchunk.submaps) > 0:
-                self.findGlobalPath(Viewpoint(T_current_cam_to_orig[:3,3].reshape((3,1))), Viewpoint(np.zeros((3,1))), 0)
+                startpos = T_current_cam_to_orig[:3,3].reshape((1,3))
+                endpos = np.zeros((1,3))
+                goal_map_id = 0
+                plan_res = self.findGlobalPath(Viewpoint(startpos), Viewpoint(endpos), goal_map_id)
+                self.visualize_roadmap(plan_res, transformPoints(startpos,self.spheremap.T_global_to_own_origin), transformPoints(endpos, self.mchunk.submaps[goal_map_id].T_global_to_own_origin))
 
             # self.node_offline = not self.spheremap.consistencyCheck()
 # # #}
@@ -947,6 +999,9 @@ class NavNode:
         # FIND NEAREST NODES TO START AND END
         dist_from_startpoint = np.linalg.norm((smap.points - startpoint), axis=1) - smap.radii
         start_node_index = np.argmin(dist_from_startpoint)
+        if smap.connectivity_labels is None:
+            print("WARN! NO CONNECTIVITY LABELS!")
+            smap.labelSpheresByConnectivity()
         start_seg_id = smap.connectivity_labels[start_node_index]
 
         # ONLY CONSIDER GOAL POINTS IN THE SAME CONNECTIVITY REGION
@@ -964,6 +1019,8 @@ class NavNode:
             print("PATHFIND: start or end too far form graph!")
             print(dist_from_startpoint[start_node_index])
             print(dist_from_endpoint[end_node_index_masked])
+            print("N SPHERES:")
+            print(smap.points.shape[0])
             return None
         print("PATHFIND: node indices:")
         print(start_node_index)
@@ -1600,6 +1657,89 @@ class NavNode:
             self.kp_pcl_pub.publish(point_cloud)
 # # #}
 
+    def visualize_roadmap(self,pts, start=None, goal=None, reached_idx = None):# # #{
+        marker_array = MarkerArray()
+        # pts = transformPoints(points_untransformed, T_vis)
+
+        marker_id = 0
+        if not start is None:
+            # start = transformPoints(start.reshape((1,3)), T_vis)
+            # goal = transformPoints(goal.reshape((1,3)), T_vis)
+
+            marker = Marker()
+            marker.header.frame_id = "global"  # Change this frame_id if necessary
+            marker.ns = "roadmap"
+            marker.header.stamp = rospy.Time.now()
+            marker.type = Marker.CUBE
+            marker.action = Marker.ADD
+            marker.id = marker_id
+            marker_id += 1
+
+            # Set the position (sphere center)
+            marker.pose.position.x = start[0, 0]
+            marker.pose.position.y = start[0, 1]
+            marker.pose.position.z = start[0, 2]
+
+            marker.scale.x = 2
+            marker.scale.y = 2
+            marker.scale.z = 4
+
+            marker.color.a = 1
+            marker.color.r = 1.0
+            marker.color.g = 0.0
+            marker.color.b = 0.0
+            marker_array.markers.append(marker)
+
+            marker = copy.deepcopy(marker)
+            marker.id = marker_id
+            marker_id += 1
+            marker.pose.position.x = goal[0, 0]
+            marker.pose.position.y = goal[0, 1]
+            marker.pose.position.z = goal[0, 2]
+            marker.color.a = 1
+            marker.color.r = 1.0
+            marker.color.g = 0.5
+            marker.color.b = 0.0
+            # marker_array.markers.append(copy.deepcopy(marker))
+            marker_array.markers.append(marker)
+
+
+        # VISUALIZE START AND GOAL
+        if not pts is None:
+            line_marker = Marker()
+            
+            line_marker.header.frame_id = "global"  # Set your desired frame_id
+            line_marker.type = Marker.LINE_LIST
+            line_marker.action = Marker.ADD
+            line_marker.scale.x = 0.5  # Line width
+            line_marker.color.a = 1.0  # Alpha
+            line_marker.color.r = 1.0  
+            line_marker.color.b = 1.0  
+
+            line_marker.id = marker_id
+            line_marker.ns = "roadmap"
+            marker_id += 1
+
+            for i in range(pts.shape[0]-1):
+                point1 = Point()
+                point2 = Point()
+
+                p1 = pts[i, :]
+                p2 = pts[i+1, :]
+                
+                point1.x = p1[0]
+                point1.y = p1[1]
+                point1.z = p1[2]
+                point2.x = p2[0]
+                point2.y = p2[1]
+                point2.z = p2[2]
+                line_marker.points.append(point1)
+                line_marker.points.append(point2)
+            marker_array.markers.append(line_marker)
+
+        self.path_planning_vis_pub .publish(marker_array)
+# # #}
+
     def visualize_trajectory(self,points_untransformed , T_vis, start=None, goal=None):# # #{
         marker_array = MarkerArray()
         print(points_untransformed.shape)
@@ -1616,6 +1756,7 @@ class NavNode:
             marker.type = Marker.CUBE
             marker.action = Marker.ADD
             marker.id = marker_id
+            marker.ns = "path"
             marker_id += 1
 
             # Set the position (sphere center)
@@ -1661,6 +1802,7 @@ class NavNode:
 
             line_marker.id = marker_id
             marker_id += 1
+            line_marker.ns = "path"
 
             for i in range(pts.shape[0]-1):
                 point1 = Point()
@@ -1756,7 +1898,7 @@ class NavNode:
             clr_index = idx % max_clrs
             if self.mchunk.submaps[idx].memorized_transform_to_prev_map is None:
                 break
-            self.get_spheremap_marker_array(marker_array, self.mchunk.submaps[-(i+1)], self.mchunk.submaps[-(i+1)].T_global_to_own_origin, alternative_look = True, do_connections = False, do_surfels = True, do_spheres = False, ms=self.marker_scale, clr_index = clr_index)
+            self.get_spheremap_marker_array(marker_array, self.mchunk.submaps[-(i+1)], self.mchunk.submaps[-(i+1)].T_global_to_own_origin, alternative_look = True, do_connections = False, do_surfels = True, do_spheres = True, ms=self.marker_scale, clr_index = clr_index)
 
         self.recent_submaps_vis_pub.publish(marker_array)
 
