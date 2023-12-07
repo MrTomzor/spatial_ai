@@ -79,12 +79,12 @@ class ScopedLock:
         self.lock = mutex
 
     def __enter__(self):
-        print("LOCKING MUTEX")
+        # print("LOCKING MUTEX")
         self.lock.acquire()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        print("UNLOCKING MUTEX")
+        # print("UNLOCKING MUTEX")
         self.lock.release()
 
 # #{ global variables
@@ -281,6 +281,8 @@ class NavNode:
         self.safety_weight = 0.5
         self.fragmenting_travel_dist = 15
         self.fragmenting_travel_dist = 5
+
+        self.verbose_submap_construction = False
         
         self.node_initialized = True
         # # #}
@@ -373,107 +375,109 @@ class NavNode:
             self.state = 'home'
         return EmptySrvResponse()
 
+    def dump_forward_flight_astar_iter(self):# # #{
+        print("--DUMB FORWARD FLIGHT ITER")
+        if self.spheremap is None:
+            return
+        if not self.node_initialized:
+            return
+
+        T_global_to_imu = self.odom_msg_to_transformation_matrix(self.odom_buffer[-1])
+        pos_odom_frame = T_global_to_imu[:3, 3]
+        print("ODOM FRAME POS:")
+        print(pos_odom_frame)
+        heading_odom_frame = transformationMatrixToHeading(T_global_to_imu)
+        current_vp = Viewpoint(pos_odom_frame, heading_odom_frame)
+
+
+        trajtime = (rospy.get_rostime() - self.last_traj_send_time).to_sec()
+        # DONT REPLAN IF SENT TRAJ RECENTLY
+        if (not self.local_nav_goal is None ) and (trajtime < self.traj_min_duration):
+            print("TOO SOON TO FIND AND SEND ANOTHER TRAJECTORY, TIME:" + str(trajtime))
+            return
+
+        # FIND GOAL IF NONE
+        max_reaching_time = 10
+        reaching_time = (rospy.get_rostime() - self.local_nav_start_time).to_sec()
+        if self.local_nav_goal is None or reaching_time > max_reaching_time:
+            self.local_nav_goal = self.select_random_reachable_goal_viewpoint()
+            self.local_nav_start_time = rospy.get_rostime()
+            return
+
+        # CHECK IF REACHED
+        dist_to_goal = np.linalg.norm(self.local_nav_goal.position - pos_odom_frame)
+        print("DIST TO GOAL: " + str(dist_to_goal))
+        if dist_to_goal < self.local_reaching_dist:
+            print("GOAL REACHED!!!")
+            self.local_nav_goal = None
+            return
+
+        # VISUALIZE GOAL POSITION
+        # TODO
+
+        # FIND PATH TO GOAL AND SEND IT TO TRAJECTORY GENERATOR
+        # TRY A* PATH PLANNING FOR NOW!
+
+        T_global_to_smap_origin = np.linalg.inv(self.spheremap.T_global_to_imu_at_start)
+        print("T:")
+        print(T_global_to_smap_origin)
+        current_pos_in_smap_frame = (T_global_to_smap_origin @ T_global_to_imu)[:3, 3]
+        print("CURRENT POS IN SMAP FRAME:")
+        print(current_pos_in_smap_frame)
+        goal_pos_in_smap_frame = transformPoints(self.local_nav_goal.position, T_global_to_smap_origin)
+
+        pathfindres = None
+        do_transform = True
+        if self.state == 'home':
+            print("HOMING")
+            startpos = current_pos_in_smap_frame
+            endpos = np.zeros((1,3))
+            goal_map_id = 0
+            pathfindres = self.findGlobalPath(Viewpoint(startpos), Viewpoint(endpos), goal_map_id)
+            self.visualize_roadmap(pathfindres, transformPoints(startpos, self.spheremap.T_global_to_own_origin), transformPoints(endpos, self.mchunk.submaps[goal_map_id].T_global_to_own_origin))
+            do_transform = False
+        else:
+            pathfindres = self.findPathAstarInSubmap(self.spheremap, current_pos_in_smap_frame, goal_pos_in_smap_frame, visual=True)
+
+        if not pathfindres is None:
+            print("FOUND SOME PATH!")
+            print(pathfindres)
+            # pathfindres = np.concatenate(pathfindres, goal_pos_in_smap_frame.reshape((3,1)))
+
+            print("TRANSFORMED PATH:")
+            path_in_global_frame  = pathfindres
+            if do_transform:
+                path_in_global_frame = transformPoints(pathfindres, self.spheremap.T_global_to_imu_at_start)
+            print(path_in_global_frame )
+
+            # IGNORE VPS TOO CLOSE TO UAV
+            ignoring_dist = 0.5
+            # TODO - use predicted trajectory to not stop like a retard
+            first_to_not_ignore = path_in_global_frame.shape[0] - 1
+            for i in range(path_in_global_frame.shape[0] - 1):
+                if np.linalg.norm(path_in_global_frame - current_pos_in_smap_frame) > ignoring_dist:
+                    first_to_not_ignore = i
+                    break
+            print("IGNORING PTS: " + str(first_to_not_ignore))
+            path_in_global_frame = path_in_global_frame[i:, :]
+
+            print("GONNA SEND THIS PATH:")
+            print(path_in_global_frame )
+
+
+            self.send_path_to_trajectory_generator(path_in_global_frame)
+
+            self.last_traj_send_time = rospy.get_rostime()
+        else:
+            print("NO PATH FOUND! SELECTING NEW GOAL!")
+            self.local_nav_goal = None
+        # planning_smaps = [self.spheremap]
+        # rrt_path = self.find_path_rrt_multiple_submaps(
+
     def planning_loop_iter(self, event=None):# # #{
-        print("pes")
+        # print("pes")
         with ScopedLock(self.spheremap_mutex):
-            print("pespes")
-            if self.spheremap is None:
-                return
-            if not self.node_initialized:
-                return
-            print("kocka")
-
-            T_global_to_imu = self.odom_msg_to_transformation_matrix(self.odom_buffer[-1])
-            pos_odom_frame = T_global_to_imu[:3, 3]
-            print("ODOM FRAME POS:")
-            print(pos_odom_frame)
-            heading_odom_frame = transformationMatrixToHeading(T_global_to_imu)
-            current_vp = Viewpoint(pos_odom_frame, heading_odom_frame)
-
-
-            trajtime = (rospy.get_rostime() - self.last_traj_send_time).to_sec()
-            # DONT REPLAN IF SENT TRAJ RECENTLY
-            if (not self.local_nav_goal is None ) and (trajtime < self.traj_min_duration):
-                print("TOO SOON TO FIND AND SEND ANOTHER TRAJECTORY, TIME:" + str(trajtime))
-                return
-
-            # FIND GOAL IF NONE
-            max_reaching_time = 10
-            reaching_time = (rospy.get_rostime() - self.local_nav_start_time).to_sec()
-            if self.local_nav_goal is None or reaching_time > max_reaching_time:
-                self.local_nav_goal = self.select_random_reachable_goal_viewpoint()
-                self.local_nav_start_time = rospy.get_rostime()
-                return
-
-            # CHECK IF REACHED
-            dist_to_goal = np.linalg.norm(self.local_nav_goal.position - pos_odom_frame)
-            print("DIST TO GOAL: " + str(dist_to_goal))
-            if dist_to_goal < self.local_reaching_dist:
-                print("GOAL REACHED!!!")
-                self.local_nav_goal = None
-                return
-
-            # VISUALIZE GOAL POSITION
-            # TODO
-
-            # FIND PATH TO GOAL AND SEND IT TO TRAJECTORY GENERATOR
-            # TRY A* PATH PLANNING FOR NOW!
-
-            T_global_to_smap_origin = np.linalg.inv(self.spheremap.T_global_to_imu_at_start)
-            print("T:")
-            print(T_global_to_smap_origin)
-            current_pos_in_smap_frame = (T_global_to_smap_origin @ T_global_to_imu)[:3, 3]
-            print("CURRENT POS IN SMAP FRAME:")
-            print(current_pos_in_smap_frame)
-            goal_pos_in_smap_frame = transformPoints(self.local_nav_goal.position, T_global_to_smap_origin)
-
-            pathfindres = None
-            do_transform = True
-            if self.state == 'home':
-                print("HOMING")
-                startpos = current_pos_in_smap_frame
-                endpos = np.zeros((1,3))
-                goal_map_id = 0
-                pathfindres = self.findGlobalPath(Viewpoint(startpos), Viewpoint(endpos), goal_map_id)
-                self.visualize_roadmap(pathfindres, transformPoints(startpos, self.spheremap.T_global_to_own_origin), transformPoints(endpos, self.mchunk.submaps[goal_map_id].T_global_to_own_origin))
-                do_transform = False
-            else:
-                pathfindres = self.findPathAstarInSubmap(self.spheremap, current_pos_in_smap_frame, goal_pos_in_smap_frame, visual=True)
-
-            if not pathfindres is None:
-                print("FOUND SOME PATH!")
-                print(pathfindres)
-                # pathfindres = np.concatenate(pathfindres, goal_pos_in_smap_frame.reshape((3,1)))
-
-                print("TRANSFORMED PATH:")
-                path_in_global_frame  = pathfindres
-                if do_transform:
-                    path_in_global_frame = transformPoints(pathfindres, self.spheremap.T_global_to_imu_at_start)
-                print(path_in_global_frame )
-
-                # IGNORE VPS TOO CLOSE TO UAV
-                ignoring_dist = 0.5
-                # TODO - use predicted trajectory to not stop like a retard
-                first_to_not_ignore = path_in_global_frame.shape[0] - 1
-                for i in range(path_in_global_frame.shape[0] - 1):
-                    if np.linalg.norm(path_in_global_frame - current_pos_in_smap_frame) > ignoring_dist:
-                        first_to_not_ignore = i
-                        break
-                print("IGNORING PTS: " + str(first_to_not_ignore))
-                path_in_global_frame = path_in_global_frame[i:, :]
-
-                print("GONNA SEND THIS PATH:")
-                print(path_in_global_frame )
-
-
-                self.send_path_to_trajectory_generator(path_in_global_frame)
-
-                self.last_traj_send_time = rospy.get_rostime()
-            else:
-                print("NO PATH FOUND! SELECTING NEW GOAL!")
-                self.local_nav_goal = None
-            # planning_smaps = [self.spheremap]
-            # rrt_path = self.find_path_rrt_multiple_submaps(
+            self.dump_forward_flight_astar_iter()
 
 
 # # #}
@@ -607,9 +611,12 @@ class NavNode:
     def points_slam_callback(self, msg):# # #{
         if self.node_offline:
             return
-        print("PCL MSG")
+
+        if self.verbose_submap_construction:
+            print("PCL MSG")
         with ScopedLock(self.spheremap_mutex):
-            print("PCL MSG PROCESSING NOW")
+            if self.verbose_submap_construction:
+                print("PCL MSG PROCESSING NOW")
             comp_start_time = time.time()
 
             # Read Points from OpenVINS# #{
@@ -626,7 +633,8 @@ class NavNode:
             #TODO - solve what to do with this in future
             nonzero_pts = np.array(np.linalg.norm(point_cloud_array, axis=1) > 0)
             if not np.any(nonzero_pts):
-                print("NO POINTS?")
+                if self.verbose_submap_construction:
+                    print("NO POINTS?")
                 return
             point_cloud_array = point_cloud_array[nonzero_pts, :]
 # # #}
@@ -658,11 +666,12 @@ class NavNode:
                     if self.spheremap.traveled_context_distance > self.fragmenting_travel_dist:
                         split_score = max_split_score
                     else:
-                        print("TRAVELED CONTEXT DISTS: " + str(self.spheremap.traveled_context_distance))
+                        if self.verbose_submap_construction:
+                            print("TRAVELED CONTEXT DISTS: " + str(self.spheremap.traveled_context_distance))
 
                     if split_score >= max_split_score:
                         # SAVE OLD SPHEREMAP
-                        print("SPLITTING!")
+                        print("SPLITTING SUBMAP!")
                         # TODO give it the transform to the next ones origin from previous origin
                         memorized_transform_to_prev_map = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_imu
                         self.mchunk.submaps.append(self.spheremap)
@@ -739,7 +748,8 @@ class NavNode:
 
             # TRANSFORM SLAM PTS TO IMAGE AND COMPUTE THEIR PIXPOSITIONS
             if len(self.odom_buffer) == 0:
-                print("WARN: ODOM BUFFER EMPY!")
+                if self.verbose_submap_construction:
+                    print("WARN: ODOM BUFFER EMPY!")
                 return
             transformed = transformPoints(point_cloud_array, (self.imu_to_cam_T @ np.linalg.inv(T_global_to_imu))).T
             positive_z_idxs = transformed[2, :] > 0
@@ -748,7 +758,8 @@ class NavNode:
             pixpos = self.getPixelPositions(final_points)
 
             # COMPUTE DELAUNAY TRIANG OF VISIBLE SLAM POINTS
-            print("HAVE DELAUNAY:")
+            if self.verbose_submap_construction:
+                print("HAVE DELAUNAY:")
             tri = Delaunay(pixpos)
             # vis = self.visualize_depth(pixpos, tri)
             # self.depth_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
@@ -759,7 +770,9 @@ class NavNode:
 
             # CONSTRUCT POLYGON OF PIXPOSs OF VISIBLE SLAM PTS
             hull = ConvexHull(pixpos)
-            print("POLY")
+
+            if self.verbose_submap_construction:
+                print("POLY")
             img_polygon = geometry.Polygon(hull.points)
 
             # CONSTRUCT HULL MESH FROM 3D POINTS OF CONVEX 2D HULL OF PROJECTED POINTS
@@ -783,7 +796,9 @@ class NavNode:
             obstacle_mesh_query = trimesh.proximity.ProximityQuery(obstacle_mesh)
 
             comp_time = time.time() - comp_mesh
-            print("MESHING time: " + str((comp_time) * 1000) +  " ms")
+
+            if self.verbose_submap_construction:
+                print("MESHING time: " + str((comp_time) * 1000) +  " ms")
 
 
             # ---UPDATE AND PRUNING STEP
@@ -807,29 +822,23 @@ class NavNode:
 
                 T_current_cam_to_orig = T_delta_odom @ np.linalg.inv(self.imu_to_cam_T)
 
-                print("FINAL MATRIX")
-                print(T_current_cam_to_orig)
-
                 # project sphere points to current camera frame
                 transformed_old_points  = transformPoints(self.spheremap.points, np.linalg.inv(T_current_cam_to_orig))
-
-                print("TRANSFORMED EXISTING SPHERE POINTS TO CURRENT CAMERA FRAME!")
 
                 # Filter out spheres with z below zero or above the max z of obstacle points
                 # TODO - use dist rather than z for checking
                 max_vis_z = np.max(final_points[2, :])
-                print(max_vis_z )
                 z_ok_idxs = np.logical_and(transformed_old_points[:, 2] > 0, transformed_old_points[:, 2] <= max_vis_z)
 
                 z_ok_points = transformed_old_points[z_ok_idxs , :] # remove spheres with negative z
                 worked_sphere_idxs = np.arange(n_spheres_old)[z_ok_idxs ]
-                print("POSITIVE Z AND NOT BEHIND OBSTACLE MESH:" + str(np.sum(z_ok_idxs )) + "/" + str(n_spheres_old))
+                # print("POSITIVE Z AND NOT BEHIND OBSTACLE MESH:" + str(np.sum(z_ok_idxs )) + "/" + str(n_spheres_old))
 
                 # check the ones that are projected into the 2D hull
                 old_pixpos = self.getPixelPositions(z_ok_points.T)
                 inhull = np.array([img_polygon.contains(geometry.Point(old_pixpos[i, 0], old_pixpos[i, 1])) for i in range(old_pixpos.shape[0])])
                 
-                print("OLD PTS IN HULL:" + str(np.sum(inhull)) + "/" + str(z_ok_points.shape[0]))
+                # print("OLD PTS IN HULL:" + str(np.sum(inhull)) + "/" + str(z_ok_points.shape[0]))
 
                 if np.any(inhull):
                     # remove spheres not projecting to conv hull in 2D
@@ -885,7 +894,8 @@ class NavNode:
             inhull = np.array([img_polygon .contains(geometry.Point(p[0], p[1])) for p in sampling_pts])
             # print(inhull)
             if not np.any(inhull):
-                print("NONE IN HULL")
+                if self.verbose_submap_construction:
+                    print("NONE IN HULL")
                 self.spheremap.labelSpheresByConnectivity()
                 return
             sampling_pts = sampling_pts[inhull, :]
@@ -919,7 +929,8 @@ class NavNode:
 
             n_spheres_before_adding = self.spheremap.points.shape[0]
             n_spheres_to_add = np.sum(new_sphere_idxs)
-            print("PUTATIVE SPHERES THAT PASSED FIRST RADIUS CHECKS: " + str(n_spheres_to_add))
+            if self.verbose_submap_construction:
+                print("PUTATIVE SPHERES THAT PASSED FIRST RADIUS CHECKS: " + str(n_spheres_to_add))
             if n_spheres_to_add == 0:
                 self.spheremap.labelSpheresByConnectivity()
                 return
@@ -945,13 +956,15 @@ class NavNode:
             # # #}
 
             comp_time = time.time() - comp_start_time
-            print("SPHEREMAP integration time: " + str((comp_time) * 1000) +  " ms")
+            if self.verbose_submap_construction:
+                print("SPHEREMAP integration time: " + str((comp_time) * 1000) +  " ms")
 
             comp_start_time = time.time()
             self.spheremap.spheres_kdtree = KDTree(self.spheremap.points)
             self.spheremap.max_radius = np.max(self.spheremap.radii)
             comp_time = time.time() - comp_start_time
-            print("Sphere KDTree computation: " + str((comp_time) * 1000) +  " ms")
+            if self.verbose_submap_construction:
+                print("Sphere KDTree computation: " + str((comp_time) * 1000) +  " ms")
 
             # HANDLE ADDING/REMOVING VISIBLE 3D POINTS
             comp_start_time = time.time()
@@ -960,12 +973,14 @@ class NavNode:
             self.spheremap.updateSurfels(visible_pts_in_spheremap_frame , pixpos, tri.simplices)
 
             comp_time = time.time() - comp_start_time
-            print("SURFELS integration time: " + str((comp_time) * 1000) +  " ms")
+            if self.verbose_submap_construction:
+                print("SURFELS integration time: " + str((comp_time) * 1000) +  " ms")
 
             # VISUALIZE CURRENT SPHERES
             self.visualize_spheremap()
             comp_time = time.time() - comp_start_time
-            print("SPHEREMAP visualization time: " + str((comp_time) * 1000) +  " ms")
+            if self.verbose_submap_construction:
+                print("SPHEREMAP visualization time: " + str((comp_time) * 1000) +  " ms")
 
             # TRY PATHFINDING TO START OF CURRENT SPHEREMAP
             # pathfindres = self.findPathAstarInSubmap(self.spheremap, T_delta_odom[:3, 3], np.array([0,0,0]))
@@ -1095,8 +1110,8 @@ class NavNode:
 
         if best_sumdist is None:
             print("PATHFIND: start or end too far form graph!")
-            print("N SPHERES:")
-            print(smap.points.shape[0])
+            # print("N SPHERES:")
+            # print(smap.points.shape[0])
             return None
 
         goal_node_pt = smap.points[end_node_index]
@@ -1354,7 +1369,7 @@ class NavNode:
 
         self.px_ref = self.px_cur
 
-        print("FRAME " + str(self.n_frames))
+        # print("FRAME " + str(self.n_frames))
 
         comp_start_time = time.time()
 
@@ -1384,7 +1399,7 @@ class NavNode:
         for kf in self.spheremap.visual_keyframes:
             # TODO - scaling
             if kf.euclid_dist(new_kf) < 5 and kf.heading_dif(new_kf) < 3.14159 /4:
-                print("KFS: not novel enough, N keyframes: " + str(len(self.spheremap.visual_keyframes)))
+                # print("KFS: not novel enough, N keyframes: " + str(len(self.spheremap.visual_keyframes)))
                 return
 
         if len(self.spheremap.visual_keyframes) > 0:

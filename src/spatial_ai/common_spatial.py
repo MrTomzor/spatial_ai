@@ -31,9 +31,9 @@ class SubmapKeyframe:# # #{
     def __init__(self, T):
         self.pos = T[:3,3]
         self.heading = transformationMatrixToHeading(T)
-        print("HEADING")
-        print(T)
-        print(self.heading)
+        # print("HEADING")
+        # print(T)
+        # print(self.heading)
 
     def euclid_dist(self, other_kf): 
         return np.linalg.norm(self.pos - other_kf.pos)
@@ -126,7 +126,7 @@ class SphereMap:
         max_n_affecting_spheres = 5
         skdtree_query = self.spheres_kdtree.query(self.surfel_points, k=max_n_affecting_spheres, distance_upper_bound=affection_distance)
         n_spheres = self.points.shape[0]
-        print("N SPHERES: " + str(n_spheres))
+        # print("N SPHERES: " + str(n_spheres))
 
         self.surfels_that_have_normals = np.full((self.surfel_points.shape[0]), False)
         keep_surfels_mask = np.full((self.surfel_points.shape[0]), True)
@@ -229,7 +229,7 @@ class SphereMap:
                 seg_id += 1
         self.connectivity_segments_counts = np.array(self.connectivity_segments_counts)
 
-        print("DISCONNECTED REGIONS: " + str(seg_id))
+        # print("DISCONNECTED REGIONS: " + str(seg_id))
 
     def wouldPruningNodeMakeConnectedNodesNotFullGraph(self, idx):# # #{
         conns = self.connections[idx]
@@ -334,32 +334,23 @@ class SphereMap:
             # pdt = peeking_dists < peek_thresh
             magic = norms < ((others_radii + radius) / 2) * 0.9
             trsh = others_radii > ratio_thresh * radius
-            # print("P")
-            # print(norms )
-            # print(peeking_dists )
-            # print(radius)
-
-            # print("MAGIC")
-            # print(magic)
-            # print(trsh)
             wp = self.wouldPruningNodeMakeConnectedNodesNotFullGraph(idx)
-            # print(wp)
 
             if (not wp) and np.any(magic):
             # if np.any(np.logical_and(pdt, trsh)):
                 shouldkeep[idx] = False
                 n_remove += 1
-        print("REMOVING REDUNDANT: " + str(n_remove))
+        # print("REMOVING REDUNDANT: " + str(n_remove))
         if n_remove > 0:
             remove_idxs = np.where(np.logical_not(shouldkeep))[0]
-            print(remove_idxs)
-            print(remove_idxs.shape)
+            # print(remove_idxs)
+            # print(remove_idxs.shape)
             self.removeNodes(remove_idxs)
     # #}
     
     # #{ def updateConnections(self, worked_sphere_idxs):
     def updateConnections(self, worked_sphere_idxs):
-        print("UPDATING CONNECTIONS FOR " + str(worked_sphere_idxs.size) + " SPHERES")
+        # print("UPDATING CONNECTIONS FOR " + str(worked_sphere_idxs.size) + " SPHERES")
         for idx in worked_sphere_idxs:
             prev_connections = self.connections[idx]
             intersecting = self.getIntersectingSpheres(self.points[idx, :], self.radii[idx])
