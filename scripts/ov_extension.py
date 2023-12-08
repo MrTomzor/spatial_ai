@@ -79,12 +79,12 @@ class ScopedLock:
         self.lock = mutex
 
     def __enter__(self):
-        print("LOCKING MUTEX")
+        # print("LOCKING MUTEX")
         self.lock.acquire()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        print("UNLOCKING MUTEX")
+        # print("UNLOCKING MUTEX")
         self.lock.release()
 
 # #{ global variables
@@ -271,12 +271,14 @@ class NavNode:
         self.last_traj_send_time =  rospy.get_rostime()
         self.traj_min_duration = 10
 
+        self.currently_navigating_pts = None
+
         # META PARAMS
         self.state = 'explore'
-        self.n_sphere_samples_per_update = 50
+        self.n_sphere_samples_per_update = 100
         self.carryover_dist = 8
         self.uav_radius = 0.5
-        self.min_planning_odist = 1
+        self.min_planning_odist = self.uav_radius
         self.max_planning_odist = 2
         self.safety_weight = 0.5
         self.fragmenting_travel_dist = 15
@@ -691,8 +693,14 @@ class NavNode:
             self.spheremap.radii = np.concatenate((self.spheremap.radii.flatten(), mindists[new_sphere_idxs].flatten()))
             self.spheremap.connections = np.concatenate((self.spheremap.connections.flatten(), np.array([None for i in range(n_spheres_to_add)], dtype=object).flatten()))
 
-            self.spheremap.updateConnections(np.arange(n_spheres_before_adding, n_spheres_before_adding+n_spheres_to_add))
+            # ADD SPHERE AT CURRENT POSITION!
+            pos_in_smap_frame = T_delta_odom[:3, 3].reshape((1,3)) 
+            self.spheremap.points = np.concatenate((self.spheremap.points, pos_in_smap_frame))
+            self.spheremap.radii = np.concatenate((self.spheremap.radii.flatten(), np.array([self.uav_radius]) ))
+            self.spheremap.connections = np.concatenate((self.spheremap.connections.flatten(), np.array([None], dtype=object).flatten()))
+            n_spheres_to_add += 1
 
+            self.spheremap.updateConnections(np.arange(n_spheres_before_adding, n_spheres_before_adding+n_spheres_to_add))
             new_idxs = np.arange(self.spheremap.radii.size)[self.spheremap.radii.size - n_spheres_to_add : self.spheremap.radii.size]
             self.spheremap.removeSpheresIfRedundant(new_idxs)
 
@@ -1005,30 +1013,63 @@ class NavNode:
         if not self.node_initialized:
             return
 
+        # GET CURRENT POS IN ODOM FRAME
         T_global_to_imu = self.odom_msg_to_transformation_matrix(self.odom_buffer[-1])
         pos_odom_frame = T_global_to_imu[:3, 3]
+        heading_odom_frame = transformationMatrixToHeading(T_global_to_imu)
         print("ODOM FRAME POS:")
         print(pos_odom_frame)
-        heading_odom_frame = transformationMatrixToHeading(T_global_to_imu)
-        current_vp = Viewpoint(pos_odom_frame, heading_odom_frame)
+
+        # IF NAVIGATING ALONG PATH, AND ALL IS OK, DO NOT REPLAN. IF NOT PROGRESSING OR REACHED END - CONTINUE FURTHER IN PLANNIGN NEW PATH!
+        if not self.currently_navigating_pts is None:
+            path_reaching_dist = 0.3
+            dists_from_path_pts = np.linalg.norm(self.currently_navigating_pts - pos_odom_frame, axis = 1)
+            closest_path_pt_idx = np.argmin(dists_from_path_pts)
+            if closest_path_pt_idx > self.currently_navigating_reached_node_idx:
+                self.currently_navigating_reached_node_idx = closest_path_pt_idx 
+                self.trajectory_following_moved_time = rospy.get_rostime()
+            if closest_path_pt_idx == self.currently_navigating_pts.shape[0] - 1:
+                print("REACHED GOAL OF CURRENTLY SENT PATH!")
+                self.currently_navigating_pts = None
+            else:
+                if (rospy.get_rostime() - self.trajectory_following_moved_time).to_sec() > 8:
+                    print("NOT PROGRESSING ON PATH FOR LONG TIME! THROWING AWAY PATH!")
+                    self.currently_navigating_pts = None
+                else:
+                    print("PROGRESSING ALONG PATH - PROGRESS: "+ str(self.currently_navigating_reached_node_idx) + "/" + str(self.currently_navigating_pts.shape[0]) )
+                return
 
         # GET START VP IN SMAP FRAME
         T_global_to_smap_origin = np.linalg.inv(self.spheremap.T_global_to_imu_at_start)
-        # print("T:")
-        # print(T_global_to_smap_origin)
         T_smap_frame_to_robot = (T_global_to_smap_origin @ T_global_to_imu)
         current_vp_smap_frame = Viewpoint(T_smap_frame_to_robot[:3, 3], transformationMatrixToHeading(T_global_to_imu))
 
-        # print("CURRENT POS IN SMAP FRAME:")
-        # print(pos_smap_frame)
-        # goal_pos_in_smap_frame = transformPoints(self.local_nav_goal.position, T_global_to_smap_origin)
-        goal_vp = copy.deepcopy(current_vp_smap_frame)
-        goal_vp.position[0] += 10
+        # FIND PATHS WITH RRT
+        best_path_pts, best_path_headings = self.find_paths_rrt(current_vp_smap_frame, max_comp_time = 0.5)
+        if best_path_pts is None:
+            print("NO OK PATHS FOUND BY RRT!")
+            return
 
-        self.find_path_rrt(current_vp_smap_frame, goal_vp, max_comp_time = 0.1)
-        
+        min_path_len = 1
+        if np.linalg.norm(best_path_pts[-1, :] - current_vp_smap_frame.position) < min_path_len:
+            print("FOUND BEST PATH TOO SHORT!")
+            return
 
-        return None
+        # -PICK FIRST BEST PATH, SEND IT TO TRAJ GENERATOR, SET AS FOLLOWING
+        # TRANSFORM PATH BACK TO ODOM FRAME
+        T_odom_origin_to_smap = self.spheremap.T_global_to_imu_at_start
+
+        best_path_pts = transformPoints(best_path_pts, T_odom_origin_to_smap)
+        heading_dif = transformationMatrixToHeading(T_odom_origin_to_smap)
+        best_path_headings = np.unwrap(best_path_headings + heading_dif)
+
+        # SEND IT AND SET FLAGS
+        self.send_path_to_trajectory_generator(best_path_pts, best_path_headings)
+        self.currently_navigating_pts = best_path_pts
+        self.trajectory_following_moved_time = rospy.get_rostime()
+        self.currently_navigating_reached_node_idx = -1
+
+        return
     # # #}
 
     def dump_forward_flight_astar_iter(self):# # #{
@@ -1129,14 +1170,16 @@ class NavNode:
         # planning_smaps = [self.spheremap]
     # # #}
 
-    def find_path_rrt(self, start_vp, goal_vp, visualize = True, max_comp_time=0.5, max_step_size = 0.5, always_move_forward=True, p_greedy = 0.1, max_iter = 100):# # #{
-        print("RRT: STARTING, FROM TO:")
-        print(start_vp)
-        print(goal_vp)
+    def find_paths_rrt(self, start_vp, visualize = True, max_comp_time=0.5, max_step_size = 0.4, max_spread_dist=10, p_greedy = 0.3, max_iter = 7000):# # #{
+        # print("RRT: STARTING, FROM TO:")
+        # print(start_vp)
 
-        bounds = np.abs((start_vp.position - goal_vp.position))
-        bounds += 100
-        epicenter = (start_vp.position + goal_vp.position) / 2
+        # bounds = np.abs((start_vp.position - goal_vp.position))
+        bounds = np.ones((1,3)) * max_spread_dist
+        # bounds += 10
+
+        # epicenter = (start_vp.position + goal_vp.position) / 2
+        epicenter = start_vp.position 
 
         max_conn_size = max_step_size * 1.05
 
@@ -1145,10 +1188,12 @@ class NavNode:
         n_unsafe = 0
 
         # INIT TREE
+        n_nodes = 1
         tree_pos = start_vp.position.reshape((1, 3))
-        # tree_headings = start_vp.position.reshape((1, 3))
+        tree_headings = np.array([start_vp.heading])
         odists = np.array([self.spheremap.getMaxDistToFreespaceEdge(start_vp.position)])
         parent_indices = np.array([-1])
+        child_indices = np.array([-1])
         total_costs = np.array([0])
 
         # so always can move!
@@ -1161,28 +1206,12 @@ class NavNode:
                 break
             n_iters += 1
 
-            sampling_goal_pt = None
-            if np.random.rand() < p_greedy:
-                # print("GREEDY")
-                sampling_goal_pt = goal_vp.position
-            else:
-                # print("PESS")
-                # print(np.random.rand(1, 3))
-                # print(np.random.rand(1, 3) * bounds)
-                sampling_goal_pt = (np.random.rand(1, 3)*2 - np.ones((1,3))) * bounds * 0.6  + epicenter
+            # SAMPLE PT IN SPACE
+            sampling_goal_pt = (np.random.rand(1, 3)*2 - np.ones((1,3))) * bounds * 0.6  + epicenter
 
             # FIND NEAREST POINT TO THE SAMPLING DIRPOINT
             dists = np.array(np.linalg.norm(sampling_goal_pt - tree_pos, axis=1)).flatten()
             nearest_index = np.argmin(dists)
-            # print(tree_pos.shape)
-            # print(sampling_goal_pt.shape)
-            # print(dists.shape)
-            # print(nearest_index)
-
-            # GENERATE POINT UPTO MAXSTEPSIZE TOWARDS THE SAMPLING DIRPOINT
-            # print("SAMPLING GOAL POS:")
-            # print(sampling_goal_pt)
-            # print("MIN DIST: " + str(np.min(dists)))
 
             new_node_pos = None
             if dists[nearest_index] < max_step_size:
@@ -1193,57 +1222,77 @@ class NavNode:
                 dists = np.linalg.norm(new_node_pos - tree_pos, axis=1).flatten()
                 nearest_index = np.argmin(dists)
 
-            # print("DIST FROM NEAREST TREE NODE:" + str(np.linalg.norm(new_node_pos - tree_pos[nearest_index, :])))
-            # print("DISTS:")
-            # print(dists)
-            # print(dists.shape)
-            # print("MIN DIST: " + str(np.min(dists)))
-            # print("NEAREST NODE POS:")
-            # print(tree_pos[nearest_index, :])
-            # print("NEW NODE POS:")
-            # print(new_node_pos)
-
             # CHECK IF POINT IS SAFE
             new_node_pos = new_node_pos.reshape((1,3))
             new_node_odist = self.spheremap.getMaxDistToFreespaceEdge(new_node_pos)
-            # if new_node_odist < self.min_planning_odist:
-            #     n_unsafe += 1
-            #     continue
+            if new_node_odist < self.min_planning_odist - 0.2:
+                n_unsafe += 1
+                continue
 
             # FIND ALL CONNECTABLE PTS
             connectable_mask = dists < max_conn_size
-            # print("C SHAPE") 
-            # print(connectable_mask.shape)
             if not np.any(connectable_mask):
                 print("WARN!!! no connectable nodes!!")
                 print("MIN DIST: " + str(np.min(dists)))
             connectable_indices = np.where(connectable_mask)[0]
 
             # COMPUTE COST TO MOVE FROM NEAREST NODE TO THIS
-            travelcosts = dists[connectable_mask]
-            potential_new_total_costs = total_costs[connectable_mask] + travelcosts
+            # travelcosts = dists[connectable_mask]
+            dirvecs = (new_node_pos - tree_pos)[connectable_mask, :]
+            potential_headings = np.arctan2(dirvecs[:, 1], dirvecs[:,0])
+            heading_difs = np.abs(np.unwrap(potential_headings - tree_headings[connectable_mask]))
+            travelcosts = dists[connectable_mask] + heading_difs * 0.0
 
+            potential_new_total_costs = total_costs[connectable_mask] + travelcosts
             new_node_parent_idx2 = np.argmin(potential_new_total_costs)
+
             newnode_total_cost = potential_new_total_costs[new_node_parent_idx2]
-            # print(connectable_indices)
-            # print("AA")
-            # print(new_node_parent_idx2)
-            # print("BB")
+            newnode_heading = potential_headings[new_node_parent_idx2]
             new_node_parent_idx = connectable_indices[new_node_parent_idx2]
 
             # ADD NODE TO TREE
             tree_pos = np.concatenate((tree_pos, new_node_pos))
+            tree_headings = np.concatenate((tree_headings, np.array([newnode_heading]) ))
             odists = np.concatenate((odists, np.array([new_node_odist]) ))
             total_costs = np.concatenate((total_costs, np.array([newnode_total_cost]) ))
             parent_indices = np.concatenate((parent_indices, np.array([new_node_parent_idx]) ))
+            child_indices[new_node_parent_idx] = n_nodes
+            child_indices = np.concatenate((child_indices, np.array([-1]) ))
+            n_nodes += 1
 
             # CHECK IF CAN REWIRE
+            # TODO
 
-        print("PLANNING FINISHED, HAVE " + str(tree_pos.shape[0]) + " NODES. N ITERS: " +str(n_iters) + " N UNSAFE: " + str(n_unsafe))
+        print("SPREAD FINISHED, HAVE " + str(tree_pos.shape[0]) + " NODES. N ITERS: " +str(n_iters) + " N UNSAFE: " + str(n_unsafe))
         if visualize:
             self.visualize_rrt_tree(self.spheremap.T_global_to_own_origin, tree_pos, None, odists, parent_indices)
 
-        return None
+        # FIND ALL HEADS, EVALUATE THEM
+        heads_indices = np.where(child_indices < 0)[0]
+        print("N HEADS: " + str(heads_indices.size))
+        # print(heads_indices)
+
+        # TODO - assign value func here! for now just dist from start!
+        heads_values = 10 * np.linalg.norm(start_vp.position-tree_pos[heads_indices, :], axis=1)
+        heads_scores = heads_values - total_costs[heads_indices] 
+        print(heads_scores)
+
+        best_head = np.argmax(heads_scores)
+        best_node_index = heads_indices[best_head]
+
+        # RECONSTRUCT PATH FROM THERE
+        path_idxs = [best_node_index]
+        parent = parent_indices[best_node_index]
+        while parent >= 0:
+            print(parent)
+            path_idxs.append(parent)
+            parent = parent_indices[parent]
+
+        print("RETURNING OF LEN: " + str(len(path_idxs)))
+        path_idxs.reverse()
+        path_idxs = np.array(path_idxs)
+
+        return tree_pos[path_idxs, :], tree_headings[path_idxs]
 
     # # #}
 
@@ -1420,7 +1469,7 @@ class NavNode:
 
 # # #}
 
-    def send_path_to_trajectory_generator(self, path):# # #{
+    def send_path_to_trajectory_generator(self, path, headings=None):# # #{
         print("SENDING PATH TO TRAJ GENERATOR, LEN: " + str(len(path)))
         msg = mrs_msgs.msg.Path()
         msg.header = std_msgs.msg.Header()
@@ -1429,23 +1478,27 @@ class NavNode:
         # msg.header.frame_id = 'uav1/fcu'
         # msg.header.frame_id = 'uav1/local_origin'
         msg.header.stamp = rospy.Time.now()
+        # msg.use_heading = not headings is None
         msg.use_heading = False
         msg.fly_now = True
         msg.stop_at_waypoints = False
         arr = []
-        print(msg.points)
 
-        for p in path:
+        n_pts = path.shape[0]
+        for i in range(n_pts):
+        # for p in path:
+            p = path[i, :]
             ref = mrs_msgs.msg.Reference()
             ref.position = Point(x=-p[0], y=-p[1], z=p[2])
-            # arr.append(ref)
+            # if not headings is None:
+            #     ref.heading = headings[i]
             msg.points.append(ref)
         # print("ARR:")
         # print(arr)
         # msg.points = arr
 
         self.path_for_trajectory_generator_pub.publish(msg)
-        print("SENT PATH TO TRAJ GENERATOR")
+        print("SENT PATH TO TRAJ GENERATOR, N PTS: " + str(n_pts))
 
         return None
 # # #}
@@ -1596,7 +1649,7 @@ class NavNode:
 
 
     # --VISUALIZATIONS
-    def visualize_rrt_tree(self, T_vis, tree_pos, tree_heading, odists, parent_indices):# # #{
+    def visualize_rrt_tree(self, T_vis, tree_pos, tree_headings, odists, parent_indices):# # #{
         marker_array = MarkerArray()
         pts = transformPoints(tree_pos, T_vis)
 
@@ -1606,7 +1659,7 @@ class NavNode:
             line_marker.header.frame_id = "global"  # Set your desired frame_id
             line_marker.type = Marker.LINE_LIST
             line_marker.action = Marker.ADD
-            line_marker.scale.x = 0.02  # Line width
+            line_marker.scale.x = 0.04  # Line width
             line_marker.color.a = 1.0  # Alpha
             line_marker.color.r = 0.5  
             line_marker.color.b = 1.0  
