@@ -25,6 +25,7 @@ class Viewpoint(object):
     def __init__(self, position, heading=None):
         self.position = position
         self.heading = heading
+        self.use_heading = not (heading is None)
 # # #}
 
 class SubmapKeyframe:# # #{
@@ -190,7 +191,7 @@ class SphereMap:
                     return False
         return True# # #}
 
-    def getDistFromObstaclesAtPoint(self, pt):# # #{
+    def getMaxDistToFreespaceEdge(self, pt):# # #{
         # query_res = self.spheres_kdtree.query(pt.reshape((1,3), k=10, distance_upper_bound=affection_distance)
         dists = np.linalg.norm(self.points - pt, axis=1)
         dists = dists - self.radii
