@@ -1003,10 +1003,10 @@ class NavNode:
         # print("pes")
         with ScopedLock(self.spheremap_mutex):
             # self.dump_forward_flight_astar_iter()
-            self.dump_forward_flight_rrt_iter()
+            self.dumb_forward_flight_rrt_iter()
     # # #}
 
-    def dump_forward_flight_rrt_iter(self):# # #{
+    def dumb_forward_flight_rrt_iter(self):# # #{
         print("--DUMB FORWARD FLIGHT RRT ITER")
         if self.spheremap is None:
             return
@@ -1059,9 +1059,18 @@ class NavNode:
         # TRANSFORM PATH BACK TO ODOM FRAME
         T_odom_origin_to_smap = self.spheremap.T_global_to_imu_at_start
 
+        print("ORIG HEADINGS:")
+        print(best_path_headings )
+
         best_path_pts = transformPoints(best_path_pts, T_odom_origin_to_smap)
         heading_dif = transformationMatrixToHeading(T_odom_origin_to_smap)
-        best_path_headings = np.unwrap(best_path_headings + heading_dif)
+        best_path_headings = np.unwrap(best_path_headings - heading_dif)
+        print("MAP HEADING: " + str(heading_dif))
+        print(T_odom_origin_to_smap)
+
+        print("NEW HEADINGS:")
+        print(best_path_headings )
+        # HERE IT IS OK! AT LEAST THE FIRST ONE!!!
 
         # SEND IT AND SET FLAGS
         self.send_path_to_trajectory_generator(best_path_pts, best_path_headings)
@@ -1069,108 +1078,12 @@ class NavNode:
         self.trajectory_following_moved_time = rospy.get_rostime()
         self.currently_navigating_reached_node_idx = -1
 
+        self.visualize_trajectory(best_path_pts, np.eye(4), best_path_headings, do_line = False)
+
         return
     # # #}
 
-    def dump_forward_flight_astar_iter(self):# # #{
-        print("--DUMB FORWARD FLIGHT ITER")
-        if self.spheremap is None:
-            return
-        if not self.node_initialized:
-            return
-
-        T_global_to_imu = self.odom_msg_to_transformation_matrix(self.odom_buffer[-1])
-        pos_odom_frame = T_global_to_imu[:3, 3]
-        print("ODOM FRAME POS:")
-        print(pos_odom_frame)
-        heading_odom_frame = transformationMatrixToHeading(T_global_to_imu)
-        current_vp = Viewpoint(pos_odom_frame, heading_odom_frame)
-
-        trajtime = (rospy.get_rostime() - self.last_traj_send_time).to_sec()
-        # DONT REPLAN IF SENT TRAJ RECENTLY
-        if (not self.local_nav_goal is None ) and (trajtime < self.traj_min_duration):
-            print("TOO SOON TO FIND AND SEND ANOTHER TRAJECTORY, TIME:" + str(trajtime))
-            return
-
-        # FIND GOAL IF NONE
-        max_reaching_time = 10
-        reaching_time = (rospy.get_rostime() - self.local_nav_start_time).to_sec()
-        if self.local_nav_goal is None or reaching_time > max_reaching_time:
-            self.local_nav_goal = self.select_random_reachable_goal_viewpoint()
-            self.local_nav_start_time = rospy.get_rostime()
-            return
-
-        # CHECK IF REACHED
-        dist_to_goal = np.linalg.norm(self.local_nav_goal.position - pos_odom_frame)
-        print("DIST TO GOAL: " + str(dist_to_goal))
-        if dist_to_goal < self.local_reaching_dist:
-            print("GOAL REACHED!!!")
-            self.local_nav_goal = None
-            return
-
-        # VISUALIZE GOAL POSITION
-        # TODO
-
-        # FIND PATH TO GOAL AND SEND IT TO TRAJECTORY GENERATOR
-        # TRY A* PATH PLANNING FOR NOW!
-
-        T_global_to_smap_origin = np.linalg.inv(self.spheremap.T_global_to_imu_at_start)
-        print("T:")
-        print(T_global_to_smap_origin)
-        current_pos_in_smap_frame = (T_global_to_smap_origin @ T_global_to_imu)[:3, 3]
-        print("CURRENT POS IN SMAP FRAME:")
-        print(current_pos_in_smap_frame)
-        goal_pos_in_smap_frame = transformPoints(self.local_nav_goal.position, T_global_to_smap_origin)
-
-        pathfindres = None
-        do_transform = True
-        if self.state == 'home':
-            print("HOMING")
-            startpos = current_pos_in_smap_frame
-            endpos = np.zeros((1,3))
-            goal_map_id = 0
-            pathfindres = self.findGlobalPath(Viewpoint(startpos), Viewpoint(endpos), goal_map_id)
-            self.visualize_roadmap(pathfindres, transformPoints(startpos, self.spheremap.T_global_to_own_origin), transformPoints(endpos, self.mchunk.submaps[goal_map_id].T_global_to_own_origin))
-            do_transform = False
-        else:
-            pathfindres = self.findPathAstarInSubmap(self.spheremap, current_pos_in_smap_frame, goal_pos_in_smap_frame, visual=True)
-
-        if not pathfindres is None:
-            print("FOUND SOME PATH!")
-            print(pathfindres)
-            # pathfindres = np.concatenate(pathfindres, goal_pos_in_smap_frame.reshape((3,1)))
-
-            print("TRANSFORMED PATH:")
-            path_in_global_frame  = pathfindres
-            if do_transform:
-                path_in_global_frame = transformPoints(pathfindres, self.spheremap.T_global_to_imu_at_start)
-            print(path_in_global_frame )
-
-            # IGNORE VPS TOO CLOSE TO UAV
-            ignoring_dist = 0.5
-            # TODO - use predicted trajectory to not stop like a retard
-            first_to_not_ignore = path_in_global_frame.shape[0] - 1
-            for i in range(path_in_global_frame.shape[0] - 1):
-                if np.linalg.norm(path_in_global_frame - current_pos_in_smap_frame) > ignoring_dist:
-                    first_to_not_ignore = i
-                    break
-            print("IGNORING PTS: " + str(first_to_not_ignore))
-            path_in_global_frame = path_in_global_frame[i:, :]
-
-            print("GONNA SEND THIS PATH:")
-            print(path_in_global_frame )
-
-
-            self.send_path_to_trajectory_generator(path_in_global_frame)
-
-            self.last_traj_send_time = rospy.get_rostime()
-        else:
-            print("NO PATH FOUND! SELECTING NEW GOAL!")
-            self.local_nav_goal = None
-        # planning_smaps = [self.spheremap]
-    # # #}
-
-    def find_paths_rrt(self, start_vp, visualize = True, max_comp_time=0.5, max_step_size = 0.4, max_spread_dist=10, p_greedy = 0.3, max_iter = 7000):# # #{
+    def find_paths_rrt(self, start_vp, visualize = True, max_comp_time=0.5, max_step_size = 1, max_spread_dist=10, p_greedy = 0.3, max_iter = 7000):# # #{
         # print("RRT: STARTING, FROM TO:")
         # print(start_vp)
 
@@ -1240,6 +1153,10 @@ class NavNode:
             # travelcosts = dists[connectable_mask]
             dirvecs = (new_node_pos - tree_pos)[connectable_mask, :]
             potential_headings = np.arctan2(dirvecs[:, 1], dirvecs[:,0])
+            # for i in range(dirvecs.shape[0]):
+            #     print("dirvec:")
+            #     print(dirvecs[i,:])
+            #     print("HEADING: " + str(potential_headings[i]))
             heading_difs = np.abs(np.unwrap(potential_headings - tree_headings[connectable_mask]))
             travelcosts = dists[connectable_mask] + heading_difs * 0.0
 
@@ -1478,8 +1395,8 @@ class NavNode:
         # msg.header.frame_id = 'uav1/fcu'
         # msg.header.frame_id = 'uav1/local_origin'
         msg.header.stamp = rospy.Time.now()
-        # msg.use_heading = not headings is None
-        msg.use_heading = False
+        msg.use_heading = not headings is None
+        # msg.use_heading = False
         msg.fly_now = True
         msg.stop_at_waypoints = False
         arr = []
@@ -1489,9 +1406,14 @@ class NavNode:
         # for p in path:
             p = path[i, :]
             ref = mrs_msgs.msg.Reference()
-            ref.position = Point(x=-p[0], y=-p[1], z=p[2])
-            # if not headings is None:
-            #     ref.heading = headings[i]
+            xx = -p[0]
+            yy = -p[1]
+            zz = p[2]
+            ref.position = Point(x=xx, y=yy, z=zz)
+            if not headings is None:
+                ref.heading = headings[i]
+                # ref.heading = np.arctan2(yy, xx)
+                # ref.heading = ((headings[i]+ np.pi) + np.pi) % (2 * np.pi) - np.pi
             msg.points.append(ref)
         # print("ARR:")
         # print(arr)
@@ -1922,7 +1844,7 @@ class NavNode:
         self.path_planning_vis_pub .publish(marker_array)
 # # #}
 
-    def visualize_trajectory(self,points_untransformed , T_vis, start=None, goal=None):# # #{
+    def visualize_trajectory(self,points_untransformed, T_vis, headings=None,do_line=True, start=None, goal=None):# # #{
         marker_array = MarkerArray()
         print(points_untransformed.shape)
         pts = transformPoints(points_untransformed, T_vis)
@@ -1971,13 +1893,13 @@ class NavNode:
 
 
         # VISUALIZE START AND GOAL
-        if not points_untransformed is None:
+        if do_line and not points_untransformed is None:
             line_marker = Marker()
             line_marker = Marker()
             line_marker.header.frame_id = "global"  # Set your desired frame_id
             line_marker.type = Marker.LINE_LIST
             line_marker.action = Marker.ADD
-            line_marker.scale.x = 0.5  # Line width
+            line_marker.scale.x = 0.1  # Line width
             line_marker.color.a = 1.0  # Alpha
             line_marker.color.r = 1.0  
             line_marker.color.b = 1.0  
@@ -2002,6 +1924,35 @@ class NavNode:
                 line_marker.points.append(point1)
                 line_marker.points.append(point2)
             marker_array.markers.append(line_marker)
+
+        if not headings is None:
+           for i in range(pts.shape[0]):
+                marker = Marker()
+                marker.header.frame_id = "global"  # Change this frame_id if necessary
+                marker.header.stamp = rospy.Time.now()
+                marker.type = Marker.ARROW
+                marker.action = Marker.ADD
+                marker.id = marker_id
+                marker.ns = "path"
+                marker_id += 1
+
+                # Set the scale
+                marker.scale.x = self.marker_scale *0.5
+                marker.scale.y = self.marker_scale *1.2
+                marker.scale.z = self.marker_scale *0.8
+
+                marker.color.a = 1
+                marker.color.r = 0.0
+                marker.color.g = 0.0
+                marker.color.b = 0.0
+
+                arrowlen = 0.3
+                map_heading = transformationMatrixToHeading(T_vis)
+                xbonus = arrowlen * np.cos(headings[i] + map_heading)
+                ybonus = arrowlen * np.sin(headings[i] + map_heading)
+                points_msg = [Point(x=pts[i][0], y=pts[i][1], z=pts[i][2]), Point(x=pts[i][0]+xbonus, y=pts[i][1]+ybonus, z=pts[i][2])]
+                marker.points = points_msg
+                marker_array.markers.append(marker)
 
         self.path_planning_vis_pub .publish(marker_array)
 # # #}
