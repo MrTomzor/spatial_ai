@@ -1020,6 +1020,9 @@ class NavNode:
         print("ODOM FRAME POS:")
         print(pos_odom_frame)
 
+        global_to_imu_heading = transformationMatrixToHeading(T_global_to_imu)
+        global_to_fcu_heading = np.unwrap(np.array([transformationMatrixToHeading(T_global_to_imu) - np.pi/2]))
+
         # IF NAVIGATING ALONG PATH, AND ALL IS OK, DO NOT REPLAN. IF NOT PROGRESSING OR REACHED END - CONTINUE FURTHER IN PLANNIGN NEW PATH!
         if not self.currently_navigating_pts is None:
             path_reaching_dist = 0.3
@@ -1042,7 +1045,7 @@ class NavNode:
         # GET START VP IN SMAP FRAME
         T_global_to_smap_origin = np.linalg.inv(self.spheremap.T_global_to_imu_at_start)
         T_smap_frame_to_robot = (T_global_to_smap_origin @ T_global_to_imu)
-        current_vp_smap_frame = Viewpoint(T_smap_frame_to_robot[:3, 3], transformationMatrixToHeading(T_global_to_imu))
+        current_vp_smap_frame = Viewpoint(T_smap_frame_to_robot[:3, 3], transformationMatrixToHeading(T_smap_frame_to_robot))
 
         # FIND PATHS WITH RRT
         best_path_pts, best_path_headings = self.find_paths_rrt(current_vp_smap_frame, max_comp_time = 0.5)
@@ -1062,10 +1065,17 @@ class NavNode:
         print("ORIG HEADINGS:")
         print(best_path_headings )
 
+        print("GLOBAL TO IMU HEADING: " + str(global_to_imu_heading))
+        print("GLOBAL TO FCU HEADING: " + str(global_to_fcu_heading))
+        fcu_to_imu_heading = np.unwrap(np.array([global_to_fcu_heading - global_to_imu_heading]))[0]
+
         best_path_pts = transformPoints(best_path_pts, T_odom_origin_to_smap)
-        heading_dif = transformationMatrixToHeading(T_odom_origin_to_smap)
+        # heading_dif = transformationMatrixToHeading(T_odom_origin_to_smap)
+        smap_heading_dif = transformationMatrixToHeading(T_odom_origin_to_smap)
+        print("SMAP HEADING DIF: " + str(smap_heading_dif))
+        heading_dif = -smap_heading_dif + fcu_to_imu_heading 
         best_path_headings = np.unwrap(best_path_headings - heading_dif)
-        print("MAP HEADING: " + str(heading_dif))
+        print("CHANGE OF HEADING TO HEADINGS IN SMAP FRAME: " + str(heading_dif))
         print(T_odom_origin_to_smap)
 
         print("NEW HEADINGS:")
@@ -1151,12 +1161,12 @@ class NavNode:
 
             # COMPUTE COST TO MOVE FROM NEAREST NODE TO THIS
             # travelcosts = dists[connectable_mask]
-            dirvecs = (new_node_pos - tree_pos)[connectable_mask, :]
+            dirvecs = (new_node_pos - tree_pos[connectable_mask, :])
             potential_headings = np.arctan2(dirvecs[:, 1], dirvecs[:,0])
-            # for i in range(dirvecs.shape[0]):
-            #     print("dirvec:")
-            #     print(dirvecs[i,:])
-            #     print("HEADING: " + str(potential_headings[i]))
+            for i in range(dirvecs.shape[0]):
+                print("dirvec:")
+                print(dirvecs[i,:])
+                print("HEADING: " + str(potential_headings[i]))
             heading_difs = np.abs(np.unwrap(potential_headings - tree_headings[connectable_mask]))
             travelcosts = dists[connectable_mask] + heading_difs * 0.0
 
@@ -1190,7 +1200,8 @@ class NavNode:
         # print(heads_indices)
 
         # TODO - assign value func here! for now just dist from start!
-        heads_values = 10 * np.linalg.norm(start_vp.position-tree_pos[heads_indices, :], axis=1)
+        # heads_values = 10 * np.linalg.norm(start_vp.position-tree_pos[heads_indices, :], axis=1)
+        heads_values = 10 * (tree_pos[heads_indices, :] - start_vp.position)[:, 0]
         heads_scores = heads_values - total_costs[heads_indices] 
         print(heads_scores)
 
@@ -1201,8 +1212,13 @@ class NavNode:
         path_idxs = [best_node_index]
         parent = parent_indices[best_node_index]
         while parent >= 0:
-            print(parent)
+            print("node: " + str(parent))
             path_idxs.append(parent)
+            dvec = tree_pos[parent, :] - tree_pos[parent_indices[parent]]
+            print("dirvec node from its parent:")
+            print(dvec)
+            print("HEADING at node from tree: " + str(tree_headings[parent]))
+            print("HEADING2 at node from dirvec: " + str(np.arctan2(dvec[1], dvec[0])))
             parent = parent_indices[parent]
 
         print("RETURNING OF LEN: " + str(len(path_idxs)))
@@ -1391,7 +1407,7 @@ class NavNode:
         msg = mrs_msgs.msg.Path()
         msg.header = std_msgs.msg.Header()
         # msg.header.frame_id = 'global'
-        msg.header.frame_id = 'uav1/vio_origin'
+        msg.header.frame_id = 'uav1/vio_origin' #FCU!!!!
         # msg.header.frame_id = 'uav1/fcu'
         # msg.header.frame_id = 'uav1/local_origin'
         msg.header.stamp = rospy.Time.now()
@@ -1411,9 +1427,10 @@ class NavNode:
             zz = p[2]
             ref.position = Point(x=xx, y=yy, z=zz)
             if not headings is None:
-                ref.heading = headings[i]
+                # ref.heading = headings[i]
+                # ref.heading = headings[0]
                 # ref.heading = np.arctan2(yy, xx)
-                # ref.heading = ((headings[i]+ np.pi) + np.pi) % (2 * np.pi) - np.pi
+                ref.heading = ((headings[i]+ np.pi) + np.pi) % (2 * np.pi) - np.pi
             msg.points.append(ref)
         # print("ARR:")
         # print(arr)
@@ -1901,8 +1918,8 @@ class NavNode:
             line_marker.action = Marker.ADD
             line_marker.scale.x = 0.1  # Line width
             line_marker.color.a = 1.0  # Alpha
-            line_marker.color.r = 1.0  
-            line_marker.color.b = 1.0  
+            line_marker.color.r = 0.0  
+            line_marker.color.b = 0.0  
 
             line_marker.id = marker_id
             marker_id += 1
@@ -1946,7 +1963,7 @@ class NavNode:
                 marker.color.g = 0.0
                 marker.color.b = 0.0
 
-                arrowlen = 0.3
+                arrowlen = 1
                 map_heading = transformationMatrixToHeading(T_vis)
                 xbonus = arrowlen * np.cos(headings[i] + map_heading)
                 ybonus = arrowlen * np.sin(headings[i] + map_heading)
