@@ -1072,10 +1072,6 @@ class NavNode:
         # pos_odom_frame = T_global_to_imu[:3, 3]
         pos_odom_frame = T_global_to_fcu[:3, 3]
         heading_odom_frame = transformationMatrixToHeading(T_global_to_imu)
-        # print("ODOM FRAME POS:")
-        # print(pos_odom_frame)
-        # print("ODOM FRAME HEADING:")
-        # print(heading_odom_frame)
 
         # IF NAVIGATING ALONG PATH, AND ALL IS OK, DO NOT REPLAN. IF NOT PROGRESSING OR REACHED END - CONTINUE FURTHER IN PLANNIGN NEW PATH!
         if not self.currently_navigating_pts is None:
@@ -1100,17 +1096,8 @@ class NavNode:
         # GET START VP IN SMAP FRAME
 
         T_smap_frame_to_fcu = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
-        # heading_in_smap_frame = np.arctan2(-T_smap_frame_to_fcu[0, 2], T_smap_frame_to_fcu[2, 2]) # TODO - figure out how to deal with Z being forward in SMAP frame
         heading_in_smap_frame = transformationMatrixToHeading(T_smap_frame_to_fcu)
         current_vp_smap_frame = Viewpoint(T_smap_frame_to_fcu[:3, 3], heading_in_smap_frame)
-
-        print("SUBMAP_ORIG TO IMU HEADING:" + str(heading_in_smap_frame))
-        print("T_smap_frame_to_fcu")
-        print(T_smap_frame_to_fcu)
-        print("spheremap.T_global_to_own_origin")
-        print(self.spheremap.T_global_to_own_origin)
-        print("T_global_to_imu NOW")
-        print(T_global_to_imu )
 
         # FIND PATHS WITH RRT
         best_path_pts, best_path_headings = self.find_paths_rrt(current_vp_smap_frame, max_comp_time = 0.5)
@@ -1123,42 +1110,13 @@ class NavNode:
             print("FOUND BEST PATH TOO SHORT!")
             return
 
-        # -PICK FIRST BEST PATH, SEND IT TO TRAJ GENERATOR, SET AS FOLLOWING
-        # TRANSFORM PATH BACK TO ODOM FRAME
-
-        # print("ORIG HEADINGS:")
-        # print(best_path_headings )
-
-        # print("INDEX OF SUBMAP:" + str(len(self.mchunk.submaps)))
-        # print("ODOM TIMESTAMP:")
-        # print(latest_odom_msg.header.stamp.to_sec())
-        # print("GLOBAL TO IMU HEADING: " + str(global_to_imu_heading))
-        # print("GLOBAL TO FCU HEADING: " + str(global_to_fcu_heading))
-        # fcu_to_imu_heading = np.unwrap(np.array([global_to_fcu_heading - global_to_imu_heading]))[0]
-
-        # print("VP POS IN SMAP FRAME:")
-        # print(current_vp_smap_frame.position)
-        # print("PTS IN SMAP FRAME:")
-        # print(best_path_pts)
-        # best_path_pts_fcu_frame = transformPoints(best_path_pts, np.linalg.inv(T_smap_origin_to_fcu))
-
         pts_fcu, headings_fcu = transformViewpoints(best_path_pts, best_path_headings, np.linalg.inv(T_smap_origin_to_fcu))
         pts_global, headings_global = transformViewpoints(best_path_pts, best_path_headings, self.spheremap.T_global_to_own_origin)
 
         print("PTS IN FCU FRAME (SHOULD START AT ZERO!):")
         print(pts_fcu)
-
-        # heading_dif = transformationMatrixToHeading(T_global_to_smap_origin)
-
-        # smap_heading_dif = transformationMatrixToHeading(T_smap_origin_to_fcu)
-        # best_path_headings_fcu_frame = np.unwrap(best_path_headings - smap_heading_dif)
-
-        # print("CHANGE OF HEADING TO HEADINGS IN SMAP FRAME: " + str(heading_dif))
-        # print(self.spheremap.T_global_to_own_origin)
-
         print("HEADINGS IN GLOBAL FRAME (SHOULD START AT ZERO!):") # GLOBAL IS ROTATED BY 180 DEG FROM VIO ORIGIN!
         print(headings_fcu)
-        # HERE IT IS OK! AT LEAST THE FIRST ONE!!!
 
         # SEND IT AND SET FLAGS
         self.send_path_to_trajectory_generator(pts_fcu, headings_fcu)
