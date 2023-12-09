@@ -312,9 +312,9 @@ class NavNode:
         self.n_sphere_samples_per_update = 100
         self.carryover_dist = 8
         self.uav_radius = 0.5
-        self.min_planning_odist = self.uav_radius
+        self.min_planning_odist = self.uav_radius - 0.2
         self.max_planning_odist = 2
-        self.safety_weight = 0.5
+        self.safety_weight = 1
         self.fragmenting_travel_dist = 15
         self.fragmenting_travel_dist = 5
 
@@ -1081,13 +1081,13 @@ class NavNode:
         T_msg_to_global = T_msg_to_fcu @ T_fcu_to_global
 
         pts_global, headings_global = transformViewpoints(pts, headings, np.linalg.inv(T_msg_to_global))
-        print("PTS GLOBAL: ")
-        print(pts_global)
+        # print("PTS GLOBAL: ")
+        # print(pts_global)
 
-        print("PTS FCU: ")
+        # print("PTS FCU: ")
         pts_fcu, headings_fcu = transformViewpoints(pts_global, headings_global, T_fcu_to_global)
-        print(pts_fcu)
-        print(headings_fcu)
+        # print(pts_fcu)
+        # print(headings_fcu)
 
         self.predicted_trajectory_stamps = msg.stamps
         self.predicted_trajectory_pts_global = pts_global
@@ -1097,11 +1097,50 @@ class NavNode:
 
     # --PLANNING PIPELINE
 
-    def get_predicted_trajectory_fcu_frame(self):
+    def get_future_predicted_trajectory_global_frame(self):# # #{
+        now = rospy.get_rostime()
 
-        # return TIMES of reaching pts w.r.t. current time
-        return None
+        if self.predicted_trajectory_pts_global is None:
+            return None, None, None
+        n_pred_pts = self.predicted_trajectory_pts_global.shape[0]
 
+        first_future_index = -1
+        for i in range(n_pred_pts):
+            if (self.predicted_trajectory_stamps[i] - now).to_sec() > 0:
+                first_future_index = i
+                break
+        if first_future_index == -1:
+            print("WARN! - predicted trajectory is pretty old!")
+            return None, None, None
+
+        pts_global = self.predicted_trajectory_pts_global[first_future_index:, :]
+        headings_global = self.predicted_trajectory_headings_global[first_future_index:]
+        relative_times = np.array([(self.predicted_trajectory_stamps[i] - now).to_sec() for i in range(first_future_index, n_pred_pts)])
+
+        return pts_global, headings_global, relative_times
+
+    # # #}
+
+    def find_unsafe_pt_idxs_on_global_path(self, pts_global, headings_global, min_odist, clearing_dist = -1, other_submap_idxs = None):
+        n_pts = pts_global.shape[0]
+        res = []
+
+        pts_in_smap_frame = transformPoints(pts_global, np.linalg.inv(self.spheremap.T_global_to_own_origin))
+        dists_from_start = np.linalg.norm(pts_global - pts_global[0, :], axis=1)
+
+        odists = []
+        for i in range(n_pts):
+            odist = self.spheremap.getMaxDistToFreespaceEdge(pts_in_smap_frame[i, :])
+            odists.append(odist)
+            if odist < min_odist and dists_from_start[i] > clearing_dist:
+                res.append(i)
+        odists = np.array(odists)
+        # print("ODISTS RANKED:")
+        print("ODISTS:")
+        # odists = np.sort(odists)
+        print(odists)
+        return np.array(res)
+        
     def planning_loop_iter(self, event=None):# # #{
         # print("pes")
         with ScopedLock(self.spheremap_mutex):
@@ -1122,14 +1161,19 @@ class NavNode:
         T_global_to_fcu = T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
         T_smap_origin_to_fcu = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_fcu
 
-        # pos_odom_frame = T_global_to_imu[:3, 3]
-        pos_odom_frame = T_global_to_fcu[:3, 3]
+        pos_fcu_in_global_frame = T_global_to_fcu[:3, 3]
         heading_odom_frame = transformationMatrixToHeading(T_global_to_imu)
+
+        # GET START VP IN SMAP FRAME
+        T_smap_frame_to_fcu = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
+        heading_in_smap_frame = transformationMatrixToHeading(T_smap_frame_to_fcu)
+        planning_start_vp = Viewpoint(T_smap_frame_to_fcu[:3, 3], heading_in_smap_frame)
+        planning_time = 0.5
 
         # IF NAVIGATING ALONG PATH, AND ALL IS OK, DO NOT REPLAN. IF NOT PROGRESSING OR REACHED END - CONTINUE FURTHER IN PLANNIGN NEW PATH!
         if not self.currently_navigating_pts is None:
             path_reaching_dist = 0.3
-            dists_from_path_pts = np.linalg.norm(self.currently_navigating_pts - pos_odom_frame, axis = 1)
+            dists_from_path_pts = np.linalg.norm(self.currently_navigating_pts - pos_fcu_in_global_frame, axis = 1)
             closest_path_pt_idx = np.argmin(dists_from_path_pts)
             if closest_path_pt_idx > self.currently_navigating_reached_node_idx:
                 print("MOVED BY PTS: " + str(closest_path_pt_idx - self.currently_navigating_reached_node_idx))
@@ -1142,24 +1186,62 @@ class NavNode:
                 if (rospy.get_rostime() - self.trajectory_following_moved_time).to_sec() > 8:
                     print("NOT PROGRESSING ON PATH FOR LONG TIME! THROWING AWAY PATH!")
                     self.currently_navigating_pts = None
+                    return
                 else:
                     print("PROGRESSING ALONG PATH - PROGRESS: "+ str(self.currently_navigating_reached_node_idx) + "/" + str(self.currently_navigating_pts.shape[0]) )
-                return
 
-        # GET START VP IN SMAP FRAME
+                    # CHECK SAFETY OF TRAJECTORY!
+                    # GET RELEVANT PTS IN PREDICTED TRAJ!
+                    future_pts, future_headings, relative_times = self.get_future_predicted_trajectory_global_frame()
+                    if not future_pts is None:
+                        future_pts_dists = np.linalg.norm(future_pts - pos_fcu_in_global_frame, axis=1)
+                        unsafe_idxs = self.find_unsafe_pt_idxs_on_global_path(future_pts, future_headings, self.min_planning_odist, clearing_dist = self.uav_radius)
+                        if unsafe_idxs.size > 0:
+                            print("FOUND UNSAFE PT IN PREDICTED TRAJECTORY AT INDEX:" + str(unsafe_idxs[0]) + " DIST: " + str(future_pts_dists[unsafe_idxs[0]]))
+                            time_to_unsafety = relative_times[unsafe_idxs[0]]
+                            triggering_time = 1.5
+                            print("TIME TO UNSAFETY: " + str(time_to_unsafety) +" / " + str(triggering_time))
+                            # triggering_time = planning_time * 3
+                            
 
-        T_smap_frame_to_fcu = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
-        heading_in_smap_frame = transformationMatrixToHeading(T_smap_frame_to_fcu)
-        current_vp_smap_frame = Viewpoint(T_smap_frame_to_fcu[:3, 3], heading_in_smap_frame)
+                            if time_to_unsafety < triggering_time:
+                            # if True:
+                                print("-----TRIGGERING UNSAFETY REPLANNING!!!")
+                                planning_time = time_to_unsafety * 0.6
+                                print("PLANNING TIME: " +str(planning_time))
+
+                                # if time_to_unsafety < planning_time
+
+                                # print("SOME PT IS UNSAFE! DISCARDING PLAN AND PLANNING FROM CURRENT VP!")
+                                # self.currently_navigating_pts = None
+
+                                after_planning_time = relative_times > planning_time + 0.2
+                                if not np.any(after_planning_time):
+                                    print("PLANNING TIME IS LONGER THAN PREDICTED TRAJ! SHORTENING IT AND PLANNING FROM CURRENT POS IN SMAP FRAME!")
+                                    planning_time *= 0.5
+                                else:
+                                    start_idx = np.where(after_planning_time)[0][0]
+                                    print("PLANNING FROM VP OF INDEX " + str(start_idx) + " AT DIST " + str(future_pts_dists[start_idx]))
+                                    startpos_smap_frame, startheading_smap_frame = transformViewpoints(future_pts[start_idx, :].reshape((1,3)), np.array([future_headings[start_idx]]), np.linalg.inv(self.spheremap.T_global_to_own_origin))
+                                    planning_start_vp = Viewpoint(startpos_smap_frame, startheading_smap_frame[0])
+                                    self.currently_navigating_pts = None
+                            else:
+                                return
+                        else:
+                            return
+                    else:
+                        return
+
+
 
         # FIND PATHS WITH RRT
-        best_path_pts, best_path_headings = self.find_paths_rrt(current_vp_smap_frame, max_comp_time = 0.5)
+        best_path_pts, best_path_headings = self.find_paths_rrt(planning_start_vp , max_comp_time = planning_time)
         if best_path_pts is None:
             print("NO OK PATHS FOUND BY RRT!")
             return
 
         min_path_len = 1
-        if np.linalg.norm(best_path_pts[-1, :] - current_vp_smap_frame.position) < min_path_len:
+        if np.linalg.norm(best_path_pts[-1, :] - planning_start_vp.position) < min_path_len:
             print("FOUND BEST PATH TOO SHORT!")
             return
 
@@ -1189,7 +1271,7 @@ class NavNode:
         return
     # # #}
 
-    def find_paths_rrt(self, start_vp, visualize = True, max_comp_time=0.5, max_step_size = 1, max_spread_dist=10, p_greedy = 0.3, max_iter = 7000):# # #{
+    def find_paths_rrt(self, start_vp, visualize = True, max_comp_time=0.5, max_step_size = 1, max_spread_dist=10, p_greedy = 0.3, max_iter = 700006969420):# # #{
         # print("RRT: STARTING, FROM TO:")
         # print(start_vp)
 
@@ -1244,15 +1326,15 @@ class NavNode:
             # CHECK IF POINT IS SAFE
             new_node_pos = new_node_pos.reshape((1,3))
             new_node_odist = self.spheremap.getMaxDistToFreespaceEdge(new_node_pos)
-            if new_node_odist < self.min_planning_odist - 0.2:
+            if new_node_odist < self.min_planning_odist:
                 n_unsafe += 1
                 continue
 
             # FIND ALL CONNECTABLE PTS
             connectable_mask = dists < max_conn_size
-            # if not np.any(connectable_mask):
-            #     print("WARN!!! no connectable nodes!!")
-            #     print("MIN DIST: " + str(np.min(dists)))
+            if not np.any(connectable_mask):
+                print("WARN!!! no connectable nodes!!")
+                print("MIN DIST: " + str(np.min(dists)))
             connectable_indices = np.where(connectable_mask)[0]
 
             # COMPUTE COST TO MOVE FROM NEAREST NODE TO THIS
@@ -1265,8 +1347,11 @@ class NavNode:
             #     print("dirvec:")
             #     print(dirvecs[i,:])
             #     print("HEADING: " + str(potential_headings[i]))
+
             heading_difs = np.abs(np.unwrap(potential_headings - tree_headings[connectable_mask]))
-            travelcosts = dists[connectable_mask] + heading_difs * 0.0
+            # safety_costs = np.array([self.compute_safety_cost(odists, dists[idx]) for idx in connectable_indices]).flatten() * self.safety_weight
+            safety_costs = self.compute_safety_cost(new_node_odist) * dists[connectable_mask] * self.safety_weight
+            travelcosts = dists[connectable_mask] + heading_difs * 0.0 + safety_costs
 
             potential_new_total_costs = total_costs[connectable_mask] + travelcosts
             new_node_parent_idx2 = np.argmin(potential_new_total_costs)
@@ -1436,7 +1521,7 @@ class NavNode:
                 neighbor_rad = smap.radii[neighbor_index]
                 if neighbor_rad < self.min_planning_odist:
                     continue
-                safety_g = self.compute_safety_cost(neighbor_rad, euclid_dist)
+                safety_g = self.compute_safety_cost(neighbor_rad, euclid_dist) * self.safety_weight
 
                 tentative_g = g_score[current_index] + euclid_dist + safety_g
 
@@ -1648,7 +1733,15 @@ class NavNode:
         if node2_radius > self.max_planning_odist:
             return 0
         saf = (node2_radius - self.min_planning_odist) / (self.max_planning_odist  - self.min_planning_odist)
-        return saf * saf * dist * self.safety_weight
+        return saf * saf * dist
+
+    def compute_safety_cost(self, node2_radius):# # #{
+        if node2_radius < self.min_planning_odist:
+            node2_radius = self.min_planning_odist
+        if node2_radius > self.max_planning_odist:
+            return 0
+        saf = (node2_radius - self.min_planning_odist) / (self.max_planning_odist  - self.min_planning_odist)
+        return saf * saf
     # # #}
 
 
@@ -2418,7 +2511,7 @@ class NavNode:
                 marker.scale.y = 2 * smap.radii[i]
                 marker.scale.z = 2 * smap.radii[i]
 
-                marker.color.a = 0.15
+                marker.color.a = 0.1
                 marker.color.r = 0.0
                 marker.color.g = 1.0
                 marker.color.b = 0.0
