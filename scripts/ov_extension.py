@@ -57,6 +57,7 @@ from scipy.spatial.transform import Rotation
 import tf
 import tf2_ros
 import tf2_geometry_msgs  # for transforming geometry_msgs
+import tf.transformations as tfs
 from geometry_msgs.msg import TransformStamped
 
 
@@ -197,7 +198,12 @@ class NavNode:
 
         # BLUEFOX UAV
         self.K = np.array([227.4, 0, 376, 0, 227.4, 240, 0, 0, 1]).reshape((3,3))
-        self.imu_to_cam_T = np.eye(4)
+        self.P = np.zeros((3,4))
+        self.P[:3, :3] = self.K
+        print(self.P)
+
+        self.T_imu_to_cam = np.eye(4)
+        self.T_fcu_to_imu = np.eye(4)
         self.width = 752
         self.height = 480
         ov_slampoints_topic = '/ov_msckf/points_slam'
@@ -205,10 +211,35 @@ class NavNode:
         odom_topic = '/ov_msckf/odomimu'
         self.marker_scale = 0.5
 
-        print("IMUTOCAM", self.imu_to_cam_T)
-        self.P = np.zeros((3,4))
-        self.P[:3, :3] = self.K
-        print(self.P)
+        # --GET FCU TO IMU and IMU TO CAM TRANSFORMs!!!
+        print("GETTING FCU TO CAMERA TRANSFORM")
+        # Wait for the transform between the target frame and the source frame
+        imu_frame = '/imu'
+        fcu_frame = '/uav1/fcu'
+        camera_frame = 'cam0'
+        listener = tf.TransformListener()
+        
+        # Get the transform
+        listener.waitForTransform(fcu_frame, imu_frame, rospy.Time(), rospy.Duration(4.0))
+        (trans, rotation) = listener.lookupTransform(fcu_frame, imu_frame, rospy.Time(0))
+        # rotation_matrix = tfs.quaternion_matrix([rotation.x, rotation.y, rotation.z, rotation.w])
+        rotation_matrix = tfs.quaternion_matrix(rotation)
+        print(rotation_matrix)
+        self.T_fcu_to_imu[:3, :3] = rotation_matrix[:3,:3]
+        self.T_fcu_to_imu[:3, 3] = trans
+        print("T_fcu_to_imu")
+        print(self.T_fcu_to_imu)
+
+        listener.waitForTransform(imu_frame, camera_frame, rospy.Time(), rospy.Duration(4.0))
+        (trans, rotation) = listener.lookupTransform(imu_frame, camera_frame, rospy.Time(0))
+        # rotation_matrix = tfs.quaternion_matrix([rotation.x, rotation.y, rotation.z, rotation.w])
+        rotation_matrix = tfs.quaternion_matrix(rotation)
+        print(rotation_matrix)
+        self.T_imu_to_cam[:3, :3] = rotation_matrix[:3,:3]
+        self.T_imu_to_cam[:3, 3] = trans
+        print("T_imu_to_cam")
+        print(self.T_imu_to_cam)
+
 
         # --SUB
         self.sub_cam = rospy.Subscriber(img_topic, Image, self.image_callback, queue_size=10000)
@@ -391,6 +422,8 @@ class NavNode:
 
             # DECIDE WHETHER TO UPDATE SPHEREMAP OR INIT NEW ONE# #{
             T_global_to_imu = self.odom_msg_to_transformation_matrix(self.odom_buffer[-1])
+            T_global_to_fcu = T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
+
             self.submap_unpredictability_signal = 0
             init_new_spheremap = False
             memorized_transform_to_prev_map = None
@@ -477,8 +510,16 @@ class NavNode:
 
                 self.spheremap.memorized_transform_to_prev_map = memorized_transform_to_prev_map 
                 # self.spheremap.T_global_to_own_origin = T_global_to_imu @ self.imu_to_cam_T
-                self.spheremap.T_global_to_own_origin = T_global_to_imu 
-                self.spheremap.T_global_to_imu_at_start = T_global_to_imu
+                print("PESSS")
+                # fcu_to_cam0 = self.T_imu_to_cam0 @ self.T_fcu_to_imu
+                print(T_global_to_imu)
+                # print(T_global_to_imu@ self.imu_to_cam_T)
+                print(T_global_to_fcu )
+                self.spheremap.T_global_to_own_origin = T_global_to_fcu
+                # print(
+                # self.spheremap.T_global_to_own_origin = T_global_to_imu 
+
+                # self.spheremap.T_global_to_own_origin = T_global_to_imu
                 self.spheremap.creation_time = rospy.get_rostime()
 
                 if not pts_to_transfer is None:
@@ -494,12 +535,17 @@ class NavNode:
                     self.saveEpisodeFull(None)
             # # #}
 
-            # TRANSFORM SLAM PTS TO IMAGE AND COMPUTE THEIR PIXPOSITIONS
             if len(self.odom_buffer) == 0:
                 if self.verbose_submap_construction:
                     print("WARN: ODOM BUFFER EMPY!")
                 return
-            transformed = transformPoints(point_cloud_array, (self.imu_to_cam_T @ np.linalg.inv(T_global_to_imu))).T
+
+            self.verbose_submap_construction = True
+            # TRANSFORM SLAM PTS TO -----CAMERA FRAME---- AND COMPUTE THEIR PIXPOSITIONS
+            T_global_to_cam = T_global_to_imu @ self.T_imu_to_cam 
+            transformed = transformPoints(point_cloud_array, np.linalg.inv(T_global_to_cam)).T
+            # transformed = transformPoints(point_cloud_array, (self.imu_to_cam_T @ np.linalg.inv(T_global_to_imu))).T
+
             positive_z_idxs = transformed[2, :] > 0
             final_points = transformed[:, positive_z_idxs]
 
@@ -550,12 +596,12 @@ class NavNode:
 
 
             # ---UPDATE AND PRUNING STEP
-            T_current_cam_to_orig = np.eye(4)
+            T_orig_to_current_cam = np.eye(4)
             T_delta_odom  = np.eye(4)
-            if not self.spheremap is None:
+            if not self.spheremap is None: # TODO remove
                 # transform existing sphere points to current camera frame
                 # T_spheremap_orig_to_current_cam = self.imu_to_cam_T @ T_global_to_imu @ np.linalg.inv(self.spheremap.T_global_to_own_origin) 
-                # T_current_cam_to_orig = np.linalg.inv(T_spheremap_orig_to_current_cam)
+                # T_orig_to_current_cam = np.linalg.inv(T_spheremap_orig_to_current_cam)
                 # T_spheremap_orig_to_current_cam = np.linalg.inv(self.imu_to_cam_T)
                 # print("T DELTA ODOM")
                 # print(T_delta_odom)
@@ -565,13 +611,14 @@ class NavNode:
                 # print(T_spheremap_orig_to_current_cam )
                 n_spheres_old = self.spheremap.points.shape[0]
 
-                T_delta_odom = np.linalg.inv(self.spheremap.T_global_to_imu_at_start) @ T_global_to_imu
-                # T_current_cam_to_orig = self.imu_to_cam_T @ T_delta_odom @ np.linalg.inv(self.imu_to_cam_T)
+                # T_delta_odom = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_imu
+                T_delta_odom = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_fcu
 
-                T_current_cam_to_orig = T_delta_odom @ np.linalg.inv(self.imu_to_cam_T)
+                # T_orig_to_current_cam = T_delta_odom @ np.linalg.inv(self.imu_to_cam_T)
+                T_orig_to_current_cam = ( T_delta_odom @ self.T_fcu_to_imu @ self.T_imu_to_cam)
 
                 # project sphere points to current camera frame
-                transformed_old_points  = transformPoints(self.spheremap.points, np.linalg.inv(T_current_cam_to_orig))
+                transformed_old_points  = transformPoints(self.spheremap.points, np.linalg.inv(T_orig_to_current_cam))
 
                 # Filter out spheres with z below zero or above the max z of obstacle points
                 # TODO - use dist rather than z for checking
@@ -586,7 +633,7 @@ class NavNode:
                 old_pixpos = self.getPixelPositions(z_ok_points.T)
                 inhull = np.array([img_polygon.contains(geometry.Point(old_pixpos[i, 0], old_pixpos[i, 1])) for i in range(old_pixpos.shape[0])])
                 
-                # print("OLD PTS IN HULL:" + str(np.sum(inhull)) + "/" + str(z_ok_points.shape[0]))
+                print("OLD PTS IN HULL:" + str(np.sum(inhull)) + "/" + str(z_ok_points.shape[0]))
 
                 if np.any(inhull):
                     # remove spheres not projecting to conv hull in 2D
@@ -685,7 +732,9 @@ class NavNode:
             # print(mindists[new_sphere_idxs].shape)
 
             # TRANSFORM POINTS FROM CAM ORIGIN TO SPHEREMAP ORIGIN! - DRAW OUT!
-            new_sphere_locations_in_spheremap_origin = transformPoints(sampling_pts[:, new_sphere_idxs].T, T_current_cam_to_orig)
+            # new_sphere_locations_in_spheremap_origin = transformPoints(sampling_pts[:, new_sphere_idxs].T, T_orig_to_current_cam)
+            new_sphere_locations_in_spheremap_origin = transformPoints(sampling_pts[:, new_sphere_idxs].T, T_orig_to_current_cam)
+
             # print(new_sphere_locations_in_spheremap_origin.shape)
             # print(self.spheremap.points.shape)
 
@@ -720,7 +769,7 @@ class NavNode:
             # HANDLE ADDING/REMOVING VISIBLE 3D POINTS
             comp_start_time = time.time()
 
-            visible_pts_in_spheremap_frame = transformPoints(final_points.T, T_current_cam_to_orig)
+            visible_pts_in_spheremap_frame = transformPoints(final_points.T, T_orig_to_current_cam)
             self.spheremap.updateSurfels(visible_pts_in_spheremap_frame , pixpos, tri.simplices)
 
             comp_time = time.time() - comp_start_time
@@ -784,6 +833,8 @@ class NavNode:
         # ADD NEW VISUAL KEYFRAME IF NEW ENOUGH
         if self.spheremap is None:
             return
+        return
+        # TODO - FIX TRANSFORMS
 
         # GET ODOM MSG CLOSEST TO CURRENT IMG TIMESTAMP
         closest_time_odom_msg = self.get_closest_time_odom_msg(self.new_img_stamp)
@@ -1046,8 +1097,8 @@ class NavNode:
                 return
 
         # GET START VP IN SMAP FRAME
-        T_global_to_smap_origin = np.linalg.inv(self.spheremap.T_global_to_imu_at_start)
-        T_smap_frame_to_robot = (T_global_to_smap_origin @ T_global_to_imu)
+        T_global_to_own_origin = np.linalg.inv(self.spheremap.T_global_to_own_origin)
+        T_smap_frame_to_robot = (T_global_to_own_origin @ T_global_to_imu)
         heading_in_smap_frame = np.arctan2(-T_smap_frame_to_robot[0, 2], T_smap_frame_to_robot[2, 2]) # TODO - figure out how to deal with Z being forward in SMAP frame
         # heading_in_smap_frame = transformationMatrixToHeading(T_smap_frame_to_robot)
         current_vp_smap_frame = Viewpoint(T_smap_frame_to_robot[:3, 3], heading_in_smap_frame)
@@ -1055,8 +1106,8 @@ class NavNode:
         # print("SUBMAP_ORIG TO IMU HEADING:" + str(heading_in_smap_frame))
         # print("T_smap_frame_to_robot")
         # print(T_smap_frame_to_robot)
-        # print("spheremap.T_global_to_imu_at_start")
-        # print(self.spheremap.T_global_to_imu_at_start)
+        # print("spheremap.T_global_to_own_origin")
+        # print(self.spheremap.T_global_to_own_origin)
         # print("T_global_to_imu NOW")
         # print(T_global_to_imu )
         # return
@@ -1074,7 +1125,7 @@ class NavNode:
 
         # -PICK FIRST BEST PATH, SEND IT TO TRAJ GENERATOR, SET AS FOLLOWING
         # TRANSFORM PATH BACK TO ODOM FRAME
-        T_odom_origin_to_smap = self.spheremap.T_global_to_imu_at_start
+        T_odom_origin_to_smap = self.spheremap.T_global_to_own_origin
 
         print("ORIG HEADINGS:")
         print(best_path_headings )
@@ -1389,47 +1440,6 @@ class NavNode:
         self.roadmap_start_time = rospy.Time.now()
     # # #}
 
-    def select_random_reachable_goal_viewpoint(self):# # #{
-        print("SELECTING RANDOM REACHABLE GOAL VP")
-        T_global_to_imu = self.odom_msg_to_transformation_matrix(self.odom_buffer[-1])
-        current_pos_in_smap_frame = (np.linalg.inv(self.spheremap.T_global_to_imu_at_start) @ T_global_to_imu)[:3, 3]
-
-        # GET LARGEST SEGMENT SEG_ID IN SOME RADIUS AORUND CURRENT POSITION, FIND GOAL IN THAT REACHABILITY SEGMENT
-        if self.spheremap.spheres_kdtree is None:
-            print("GOT NO SPHERES!!!")
-            return
-        query_res = self.spheremap.spheres_kdtree.query(current_pos_in_smap_frame, k = 5, distance_upper_bound = 3)[1]
-        bad_mask = query_res == self.spheremap.points.shape[0]
-        if np.all(bad_mask):
-            print("WARN: NO NEARBY SPHERES TO FIND REACAHBLE VIEWPOINT")
-            return None
-        near_sphere_ids = query_res[np.logical_not(bad_mask)]
-        seg_ids = self.spheremap.connectivity_labels[near_sphere_ids]
-
-        # GET ALL SEG_IDS
-        unique_segs = np.unique(seg_ids)
-        counts = self.spheremap.connectivity_segments_counts[unique_segs]
-        largest_seg_id = unique_segs[np.argmax(counts)]
-        print("LARGEST SEG N SPHERES: " + str(self.spheremap.connectivity_segments_counts[largest_seg_id]))
-
-        # REACHABLE SPHERES:
-        reachable_centroids = self.spheremap.points[self.spheremap.connectivity_labels == largest_seg_id]
-        deltavecs = reachable_centroids - current_pos_in_smap_frame
-        dists = np.linalg.norm(deltavecs, axis = 1)
-        
-        # best_idx = np.argmax(dists)
-        best_idx = np.argmax(deltavecs[:, 0]) # MOST INFRONT
-        print("SELECTING GOAL METRES AWAY: " + str(dists[best_idx]))
-        print(reachable_centroids[best_idx, :])
-        print(reachable_centroids[best_idx, :].shape)
-
-        res_point_in_odom_frame = transformPoints(reachable_centroids[best_idx, :].reshape((1,3)), self.spheremap.T_global_to_imu_at_start)
-        print("GOAL IN ODOM_FRAME: ")
-        print(res_point_in_odom_frame )
-        return Viewpoint(res_point_in_odom_frame, None)
-
-# # #}
-
     def send_path_to_trajectory_generator(self, path, headings=None):# # #{
         print("SENDING PATH TO TRAJ GENERATOR, LEN: " + str(len(path)))
         msg = mrs_msgs.msg.Path()
@@ -1563,7 +1573,7 @@ class NavNode:
             print("CANT FIND MINIPATH TO 1ST CONN POINT")
             return None
         minipath_res = np.concatenate((minipath_res, self.spheremap.getPointOfConnectionToSubmap(path[0])))
-        minipath_in_global_frame = transformPoints(minipath_res, self.spheremap.T_global_to_imu_at_start)
+        minipath_in_global_frame = transformPoints(minipath_res, self.spheremap.T_global_to_own_origin)
         total_path = minipath_in_global_frame 
         prev_id = n_old_submaps
 
@@ -1576,7 +1586,7 @@ class NavNode:
                 print("CANT FIND MINIPATH AT IDX" + str(i))
                 return None
             minipath_res = np.concatenate((minipath_res, pt2))
-            minipath_in_global_frame = transformPoints(minipath_res, current_planning_map.T_global_to_imu_at_start)
+            minipath_in_global_frame = transformPoints(minipath_res, current_planning_map.T_global_to_own_origin)
             total_path = np.concatenate((total_path, minipath_in_global_frame))
 
             prev_id = path[i]
@@ -1586,7 +1596,7 @@ class NavNode:
         if minipath_res is None:
             print("CANT FIND MINIPATH TO GOAL IN LAST MAP")
             return None
-        minipath_in_global_frame = transformPoints(minipath_res, final_submap.T_global_to_imu_at_start)
+        minipath_in_global_frame = transformPoints(minipath_res, final_submap.T_global_to_own_origin)
         total_path = np.concatenate((total_path, minipath_in_global_frame))
         prev_id = n_old_submaps
 
