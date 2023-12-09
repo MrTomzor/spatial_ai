@@ -1110,6 +1110,12 @@ class NavNode:
             print("FOUND BEST PATH TOO SHORT!")
             return
 
+        # GET FCU TRANSFORM NOWW! AFTER 0.5s OF PLANNING
+        latest_odom_msg = self.odom_buffer[-1]
+        T_global_to_imu = self.odom_msg_to_transformation_matrix(latest_odom_msg)
+        T_global_to_fcu = T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
+        T_smap_origin_to_fcu = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_fcu
+
         pts_fcu, headings_fcu = transformViewpoints(best_path_pts, best_path_headings, np.linalg.inv(T_smap_origin_to_fcu))
         pts_global, headings_global = transformViewpoints(best_path_pts, best_path_headings, self.spheremap.T_global_to_own_origin)
 
