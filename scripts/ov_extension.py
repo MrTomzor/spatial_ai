@@ -490,8 +490,8 @@ class NavNode:
 
 
 
-            if len(self.mchunk.submaps) > 2:
-                self.saveEpisodeFull(None)
+                if len(self.mchunk.submaps) > 2:
+                    self.saveEpisodeFull(None)
             # # #}
 
             # TRANSFORM SLAM PTS TO IMAGE AND COMPUTE THEIR PIXPOSITIONS
@@ -1014,11 +1014,14 @@ class NavNode:
             return
 
         # GET CURRENT POS IN ODOM FRAME
-        T_global_to_imu = self.odom_msg_to_transformation_matrix(self.odom_buffer[-1])
+        latest_odom_msg = self.odom_buffer[-1]
+        T_global_to_imu = self.odom_msg_to_transformation_matrix(latest_odom_msg)
         pos_odom_frame = T_global_to_imu[:3, 3]
         heading_odom_frame = transformationMatrixToHeading(T_global_to_imu)
         print("ODOM FRAME POS:")
         print(pos_odom_frame)
+        print("ODOM FRAME HEADING:")
+        print(heading_odom_frame)
 
         global_to_imu_heading = transformationMatrixToHeading(T_global_to_imu)
         global_to_fcu_heading = np.unwrap(np.array([transformationMatrixToHeading(T_global_to_imu) - np.pi/2]))
@@ -1045,7 +1048,18 @@ class NavNode:
         # GET START VP IN SMAP FRAME
         T_global_to_smap_origin = np.linalg.inv(self.spheremap.T_global_to_imu_at_start)
         T_smap_frame_to_robot = (T_global_to_smap_origin @ T_global_to_imu)
-        current_vp_smap_frame = Viewpoint(T_smap_frame_to_robot[:3, 3], transformationMatrixToHeading(T_smap_frame_to_robot))
+        heading_in_smap_frame = np.arctan2(-T_smap_frame_to_robot[0, 2], T_smap_frame_to_robot[2, 2]) # TODO - figure out how to deal with Z being forward in SMAP frame
+        # heading_in_smap_frame = transformationMatrixToHeading(T_smap_frame_to_robot)
+        current_vp_smap_frame = Viewpoint(T_smap_frame_to_robot[:3, 3], heading_in_smap_frame)
+
+        # print("SUBMAP_ORIG TO IMU HEADING:" + str(heading_in_smap_frame))
+        # print("T_smap_frame_to_robot")
+        # print(T_smap_frame_to_robot)
+        # print("spheremap.T_global_to_imu_at_start")
+        # print(self.spheremap.T_global_to_imu_at_start)
+        # print("T_global_to_imu NOW")
+        # print(T_global_to_imu )
+        # return
 
         # FIND PATHS WITH RRT
         best_path_pts, best_path_headings = self.find_paths_rrt(current_vp_smap_frame, max_comp_time = 0.5)
@@ -1065,6 +1079,9 @@ class NavNode:
         print("ORIG HEADINGS:")
         print(best_path_headings )
 
+        print("INDEX OF SUBMAP:" + str(len(self.mchunk.submaps)))
+        print("ODOM TIMESTAMP:")
+        print(latest_odom_msg.header.stamp.to_sec())
         print("GLOBAL TO IMU HEADING: " + str(global_to_imu_heading))
         print("GLOBAL TO FCU HEADING: " + str(global_to_fcu_heading))
         fcu_to_imu_heading = np.unwrap(np.array([global_to_fcu_heading - global_to_imu_heading]))[0]
@@ -1075,10 +1092,11 @@ class NavNode:
         print("SMAP HEADING DIF: " + str(smap_heading_dif))
         heading_dif = -smap_heading_dif + fcu_to_imu_heading 
         best_path_headings = np.unwrap(best_path_headings - heading_dif)
+
         print("CHANGE OF HEADING TO HEADINGS IN SMAP FRAME: " + str(heading_dif))
         print(T_odom_origin_to_smap)
 
-        print("NEW HEADINGS:")
+        print("HEADINGS IN GLOBAL FRAME:") # GLOBAL IS ROTATED BY 180 DEG FROM VIO ORIGIN!
         print(best_path_headings )
         # HERE IT IS OK! AT LEAST THE FIRST ONE!!!
 
@@ -1154,19 +1172,21 @@ class NavNode:
 
             # FIND ALL CONNECTABLE PTS
             connectable_mask = dists < max_conn_size
-            if not np.any(connectable_mask):
-                print("WARN!!! no connectable nodes!!")
-                print("MIN DIST: " + str(np.min(dists)))
+            # if not np.any(connectable_mask):
+            #     print("WARN!!! no connectable nodes!!")
+            #     print("MIN DIST: " + str(np.min(dists)))
             connectable_indices = np.where(connectable_mask)[0]
 
             # COMPUTE COST TO MOVE FROM NEAREST NODE TO THIS
             # travelcosts = dists[connectable_mask]
             dirvecs = (new_node_pos - tree_pos[connectable_mask, :])
-            potential_headings = np.arctan2(dirvecs[:, 1], dirvecs[:,0])
-            for i in range(dirvecs.shape[0]):
-                print("dirvec:")
-                print(dirvecs[i,:])
-                print("HEADING: " + str(potential_headings[i]))
+            # potential_headings = np.arctan2(dirvecs[:, 1], dirvecs[:,0])
+            potential_headings = np.arctan2(-dirvecs[:, 0], dirvecs[:,2])
+
+            # for i in range(dirvecs.shape[0]):
+            #     print("dirvec:")
+            #     print(dirvecs[i,:])
+            #     print("HEADING: " + str(potential_headings[i]))
             heading_difs = np.abs(np.unwrap(potential_headings - tree_headings[connectable_mask]))
             travelcosts = dists[connectable_mask] + heading_difs * 0.0
 
@@ -1211,14 +1231,22 @@ class NavNode:
         # RECONSTRUCT PATH FROM THERE
         path_idxs = [best_node_index]
         parent = parent_indices[best_node_index]
+
+        dvec = tree_pos[best_node_index, :] - tree_pos[0, :]
+        # TOTALHEADING = np.arctan2(dvec[1], dvec[0])
+        # tree_headings[best_node_index] = TOTALHEADING #TODO temp
+        tree_headings[best_node_index] = start_vp.heading
+
         while parent >= 0:
-            print("node: " + str(parent))
+            # print("node: " + str(parent))
             path_idxs.append(parent)
             dvec = tree_pos[parent, :] - tree_pos[parent_indices[parent]]
-            print("dirvec node from its parent:")
-            print(dvec)
-            print("HEADING at node from tree: " + str(tree_headings[parent]))
-            print("HEADING2 at node from dirvec: " + str(np.arctan2(dvec[1], dvec[0])))
+            # print("dirvec node from its parent:")
+            # print(dvec)
+            # tree_headings[parent] = TOTALHEADING #TODO temp
+            # tree_headings[parent] = start_vp.heading #TODO temp
+            # print("HEADING at node from tree: " + str(tree_headings[parent]))
+            # print("HEADING2 at node from dirvec: " + str(np.arctan2(dvec[1], dvec[0])))
             parent = parent_indices[parent]
 
         print("RETURNING OF LEN: " + str(len(path_idxs)))
