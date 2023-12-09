@@ -21,6 +21,17 @@ def transformPoints(pts, T):
     res = res / res[3, :] # unhomogenize
     return res[:3, :].T
 
+def transformViewpoints(pts, headings, T):
+    # pts = Nx3 matrix, T = transformation matrix to apply
+    res = np.concatenate((pts.T, np.full((1, pts.shape[0]), 1)))
+    res = T @ res 
+    res = res / res[3, :] # unhomogenize
+
+    hdif = transformationMatrixToHeading(T)
+    res_heads = np.unwrap(headings + hdif)
+
+    return res[:3, :].T, res_heads
+
 class Viewpoint(object):
     def __init__(self, position, heading=None):
         self.position = position

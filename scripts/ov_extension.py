@@ -214,14 +214,14 @@ class NavNode:
         # --GET FCU TO IMU and IMU TO CAM TRANSFORMs!!!
         print("GETTING FCU TO CAMERA TRANSFORM")
         # Wait for the transform between the target frame and the source frame
-        imu_frame = '/imu'
-        fcu_frame = '/uav1/fcu'
-        camera_frame = 'cam0'
+        self.imu_frame = 'imu'
+        self.fcu_frame = 'uav1/fcu'
+        self.camera_frame = 'cam0'
         listener = tf.TransformListener()
         
         # Get the transform
-        listener.waitForTransform(fcu_frame, imu_frame, rospy.Time(), rospy.Duration(4.0))
-        (trans, rotation) = listener.lookupTransform(fcu_frame, imu_frame, rospy.Time(0))
+        listener.waitForTransform(self.fcu_frame, self.imu_frame, rospy.Time(), rospy.Duration(4.0))
+        (trans, rotation) = listener.lookupTransform(self.fcu_frame, self.imu_frame, rospy.Time(0))
         # rotation_matrix = tfs.quaternion_matrix([rotation.x, rotation.y, rotation.z, rotation.w])
         rotation_matrix = tfs.quaternion_matrix(rotation)
         print(rotation_matrix)
@@ -230,8 +230,8 @@ class NavNode:
         print("T_fcu_to_imu")
         print(self.T_fcu_to_imu)
 
-        listener.waitForTransform(imu_frame, camera_frame, rospy.Time(), rospy.Duration(4.0))
-        (trans, rotation) = listener.lookupTransform(imu_frame, camera_frame, rospy.Time(0))
+        listener.waitForTransform(self.imu_frame, self.camera_frame, rospy.Time(), rospy.Duration(4.0))
+        (trans, rotation) = listener.lookupTransform(self.imu_frame, self.camera_frame, rospy.Time(0))
         # rotation_matrix = tfs.quaternion_matrix([rotation.x, rotation.y, rotation.z, rotation.w])
         rotation_matrix = tfs.quaternion_matrix(rotation)
         print(rotation_matrix)
@@ -540,7 +540,6 @@ class NavNode:
                     print("WARN: ODOM BUFFER EMPY!")
                 return
 
-            self.verbose_submap_construction = True
             # TRANSFORM SLAM PTS TO -----CAMERA FRAME---- AND COMPUTE THEIR PIXPOSITIONS
             T_global_to_cam = T_global_to_imu @ self.T_imu_to_cam 
             transformed = transformPoints(point_cloud_array, np.linalg.inv(T_global_to_cam)).T
@@ -633,7 +632,7 @@ class NavNode:
                 old_pixpos = self.getPixelPositions(z_ok_points.T)
                 inhull = np.array([img_polygon.contains(geometry.Point(old_pixpos[i, 0], old_pixpos[i, 1])) for i in range(old_pixpos.shape[0])])
                 
-                print("OLD PTS IN HULL:" + str(np.sum(inhull)) + "/" + str(z_ok_points.shape[0]))
+                # print("OLD PTS IN HULL:" + str(np.sum(inhull)) + "/" + str(z_ok_points.shape[0]))
 
                 if np.any(inhull):
                     # remove spheres not projecting to conv hull in 2D
@@ -1067,15 +1066,16 @@ class NavNode:
         # GET CURRENT POS IN ODOM FRAME
         latest_odom_msg = self.odom_buffer[-1]
         T_global_to_imu = self.odom_msg_to_transformation_matrix(latest_odom_msg)
-        pos_odom_frame = T_global_to_imu[:3, 3]
-        heading_odom_frame = transformationMatrixToHeading(T_global_to_imu)
-        print("ODOM FRAME POS:")
-        print(pos_odom_frame)
-        print("ODOM FRAME HEADING:")
-        print(heading_odom_frame)
+        T_global_to_fcu = T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
+        T_smap_origin_to_fcu = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_fcu
 
-        global_to_imu_heading = transformationMatrixToHeading(T_global_to_imu)
-        global_to_fcu_heading = np.unwrap(np.array([transformationMatrixToHeading(T_global_to_imu) - np.pi/2]))
+        # pos_odom_frame = T_global_to_imu[:3, 3]
+        pos_odom_frame = T_global_to_fcu[:3, 3]
+        heading_odom_frame = transformationMatrixToHeading(T_global_to_imu)
+        # print("ODOM FRAME POS:")
+        # print(pos_odom_frame)
+        # print("ODOM FRAME HEADING:")
+        # print(heading_odom_frame)
 
         # IF NAVIGATING ALONG PATH, AND ALL IS OK, DO NOT REPLAN. IF NOT PROGRESSING OR REACHED END - CONTINUE FURTHER IN PLANNIGN NEW PATH!
         if not self.currently_navigating_pts is None:
@@ -1083,6 +1083,7 @@ class NavNode:
             dists_from_path_pts = np.linalg.norm(self.currently_navigating_pts - pos_odom_frame, axis = 1)
             closest_path_pt_idx = np.argmin(dists_from_path_pts)
             if closest_path_pt_idx > self.currently_navigating_reached_node_idx:
+                print("MOVED BY PTS: " + str(closest_path_pt_idx - self.currently_navigating_reached_node_idx))
                 self.currently_navigating_reached_node_idx = closest_path_pt_idx 
                 self.trajectory_following_moved_time = rospy.get_rostime()
             if closest_path_pt_idx == self.currently_navigating_pts.shape[0] - 1:
@@ -1097,20 +1098,19 @@ class NavNode:
                 return
 
         # GET START VP IN SMAP FRAME
-        T_global_to_own_origin = np.linalg.inv(self.spheremap.T_global_to_own_origin)
-        T_smap_frame_to_robot = (T_global_to_own_origin @ T_global_to_imu)
-        heading_in_smap_frame = np.arctan2(-T_smap_frame_to_robot[0, 2], T_smap_frame_to_robot[2, 2]) # TODO - figure out how to deal with Z being forward in SMAP frame
-        # heading_in_smap_frame = transformationMatrixToHeading(T_smap_frame_to_robot)
-        current_vp_smap_frame = Viewpoint(T_smap_frame_to_robot[:3, 3], heading_in_smap_frame)
 
-        # print("SUBMAP_ORIG TO IMU HEADING:" + str(heading_in_smap_frame))
-        # print("T_smap_frame_to_robot")
-        # print(T_smap_frame_to_robot)
-        # print("spheremap.T_global_to_own_origin")
-        # print(self.spheremap.T_global_to_own_origin)
-        # print("T_global_to_imu NOW")
-        # print(T_global_to_imu )
-        # return
+        T_smap_frame_to_fcu = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
+        # heading_in_smap_frame = np.arctan2(-T_smap_frame_to_fcu[0, 2], T_smap_frame_to_fcu[2, 2]) # TODO - figure out how to deal with Z being forward in SMAP frame
+        heading_in_smap_frame = transformationMatrixToHeading(T_smap_frame_to_fcu)
+        current_vp_smap_frame = Viewpoint(T_smap_frame_to_fcu[:3, 3], heading_in_smap_frame)
+
+        print("SUBMAP_ORIG TO IMU HEADING:" + str(heading_in_smap_frame))
+        print("T_smap_frame_to_fcu")
+        print(T_smap_frame_to_fcu)
+        print("spheremap.T_global_to_own_origin")
+        print(self.spheremap.T_global_to_own_origin)
+        print("T_global_to_imu NOW")
+        print(T_global_to_imu )
 
         # FIND PATHS WITH RRT
         best_path_pts, best_path_headings = self.find_paths_rrt(current_vp_smap_frame, max_comp_time = 0.5)
@@ -1125,39 +1125,49 @@ class NavNode:
 
         # -PICK FIRST BEST PATH, SEND IT TO TRAJ GENERATOR, SET AS FOLLOWING
         # TRANSFORM PATH BACK TO ODOM FRAME
-        T_odom_origin_to_smap = self.spheremap.T_global_to_own_origin
 
-        print("ORIG HEADINGS:")
-        print(best_path_headings )
+        # print("ORIG HEADINGS:")
+        # print(best_path_headings )
 
-        print("INDEX OF SUBMAP:" + str(len(self.mchunk.submaps)))
-        print("ODOM TIMESTAMP:")
-        print(latest_odom_msg.header.stamp.to_sec())
-        print("GLOBAL TO IMU HEADING: " + str(global_to_imu_heading))
-        print("GLOBAL TO FCU HEADING: " + str(global_to_fcu_heading))
-        fcu_to_imu_heading = np.unwrap(np.array([global_to_fcu_heading - global_to_imu_heading]))[0]
+        # print("INDEX OF SUBMAP:" + str(len(self.mchunk.submaps)))
+        # print("ODOM TIMESTAMP:")
+        # print(latest_odom_msg.header.stamp.to_sec())
+        # print("GLOBAL TO IMU HEADING: " + str(global_to_imu_heading))
+        # print("GLOBAL TO FCU HEADING: " + str(global_to_fcu_heading))
+        # fcu_to_imu_heading = np.unwrap(np.array([global_to_fcu_heading - global_to_imu_heading]))[0]
 
-        best_path_pts = transformPoints(best_path_pts, T_odom_origin_to_smap)
-        # heading_dif = transformationMatrixToHeading(T_odom_origin_to_smap)
-        smap_heading_dif = transformationMatrixToHeading(T_odom_origin_to_smap)
-        print("SMAP HEADING DIF: " + str(smap_heading_dif))
-        heading_dif = -smap_heading_dif + fcu_to_imu_heading 
-        best_path_headings = np.unwrap(best_path_headings - heading_dif)
+        # print("VP POS IN SMAP FRAME:")
+        # print(current_vp_smap_frame.position)
+        # print("PTS IN SMAP FRAME:")
+        # print(best_path_pts)
+        # best_path_pts_fcu_frame = transformPoints(best_path_pts, np.linalg.inv(T_smap_origin_to_fcu))
 
-        print("CHANGE OF HEADING TO HEADINGS IN SMAP FRAME: " + str(heading_dif))
-        print(T_odom_origin_to_smap)
+        pts_fcu, headings_fcu = transformViewpoints(best_path_pts, best_path_headings, np.linalg.inv(T_smap_origin_to_fcu))
+        pts_global, headings_global = transformViewpoints(best_path_pts, best_path_headings, self.spheremap.T_global_to_own_origin)
 
-        print("HEADINGS IN GLOBAL FRAME:") # GLOBAL IS ROTATED BY 180 DEG FROM VIO ORIGIN!
-        print(best_path_headings )
+        print("PTS IN FCU FRAME (SHOULD START AT ZERO!):")
+        print(pts_fcu)
+
+        # heading_dif = transformationMatrixToHeading(T_global_to_smap_origin)
+
+        # smap_heading_dif = transformationMatrixToHeading(T_smap_origin_to_fcu)
+        # best_path_headings_fcu_frame = np.unwrap(best_path_headings - smap_heading_dif)
+
+        # print("CHANGE OF HEADING TO HEADINGS IN SMAP FRAME: " + str(heading_dif))
+        # print(self.spheremap.T_global_to_own_origin)
+
+        print("HEADINGS IN GLOBAL FRAME (SHOULD START AT ZERO!):") # GLOBAL IS ROTATED BY 180 DEG FROM VIO ORIGIN!
+        print(headings_fcu)
         # HERE IT IS OK! AT LEAST THE FIRST ONE!!!
 
         # SEND IT AND SET FLAGS
-        self.send_path_to_trajectory_generator(best_path_pts, best_path_headings)
-        self.currently_navigating_pts = best_path_pts
+        self.send_path_to_trajectory_generator(pts_fcu, headings_fcu)
+        self.currently_navigating_pts = pts_global
+        self.currently_navigating_headings = headings_global
         self.trajectory_following_moved_time = rospy.get_rostime()
         self.currently_navigating_reached_node_idx = -1
 
-        self.visualize_trajectory(best_path_pts, np.eye(4), best_path_headings, do_line = False)
+        self.visualize_trajectory(pts_global, np.eye(4), headings_global, do_line = False, frame_id = "global")
 
         return
     # # #}
@@ -1231,8 +1241,8 @@ class NavNode:
             # COMPUTE COST TO MOVE FROM NEAREST NODE TO THIS
             # travelcosts = dists[connectable_mask]
             dirvecs = (new_node_pos - tree_pos[connectable_mask, :])
-            # potential_headings = np.arctan2(dirvecs[:, 1], dirvecs[:,0])
-            potential_headings = np.arctan2(-dirvecs[:, 0], dirvecs[:,2])
+            potential_headings = np.arctan2(dirvecs[:, 1], dirvecs[:,0])
+            # potential_headings = np.arctan2(-dirvecs[:, 0], dirvecs[:,2])
 
             # for i in range(dirvecs.shape[0]):
             #     print("dirvec:")
@@ -1445,8 +1455,8 @@ class NavNode:
         msg = mrs_msgs.msg.Path()
         msg.header = std_msgs.msg.Header()
         # msg.header.frame_id = 'global'
-        msg.header.frame_id = 'uav1/vio_origin' #FCU!!!!
-        # msg.header.frame_id = 'uav1/fcu'
+        # msg.header.frame_id = 'uav1/vio_origin' #FCU!!!!
+        msg.header.frame_id = 'uav1/fcu'
         # msg.header.frame_id = 'uav1/local_origin'
         msg.header.stamp = rospy.Time.now()
         msg.use_heading = not headings is None
@@ -1460,15 +1470,15 @@ class NavNode:
         # for p in path:
             p = path[i, :]
             ref = mrs_msgs.msg.Reference()
-            xx = -p[0]
-            yy = -p[1]
+            xx = p[0]
+            yy = p[1]
             zz = p[2]
             ref.position = Point(x=xx, y=yy, z=zz)
             if not headings is None:
-                # ref.heading = headings[i]
-                # ref.heading = headings[0]
+                ref.heading = headings[i]
+                # ref.heading = 0
                 # ref.heading = np.arctan2(yy, xx)
-                ref.heading = ((headings[i]+ np.pi) + np.pi) % (2 * np.pi) - np.pi
+                # ref.heading = ((headings[i]+ np.pi) + np.pi) % (2 * np.pi) - np.pi
             msg.points.append(ref)
         # print("ARR:")
         # print(arr)
@@ -1899,7 +1909,7 @@ class NavNode:
         self.path_planning_vis_pub .publish(marker_array)
 # # #}
 
-    def visualize_trajectory(self,points_untransformed, T_vis, headings=None,do_line=True, start=None, goal=None):# # #{
+    def visualize_trajectory(self,points_untransformed, T_vis, headings=None,do_line=True, start=None, goal=None, frame_id="global"):# # #{
         marker_array = MarkerArray()
         print(points_untransformed.shape)
         pts = transformPoints(points_untransformed, T_vis)
@@ -1910,7 +1920,7 @@ class NavNode:
             goal = transformPoints(goal.reshape((1,3)), T_vis)
 
             marker = Marker()
-            marker.header.frame_id = "global"  # Change this frame_id if necessary
+            marker.header.frame_id = frame_id  # Change this frame_id if necessary
             marker.header.stamp = rospy.Time.now()
             marker.type = Marker.CUBE
             marker.action = Marker.ADD
@@ -1951,7 +1961,7 @@ class NavNode:
         if do_line and not points_untransformed is None:
             line_marker = Marker()
             line_marker = Marker()
-            line_marker.header.frame_id = "global"  # Set your desired frame_id
+            line_marker.header.frame_id = frame_id    # Set your desired frame_id
             line_marker.type = Marker.LINE_LIST
             line_marker.action = Marker.ADD
             line_marker.scale.x = 0.1  # Line width
@@ -1983,7 +1993,7 @@ class NavNode:
         if not headings is None:
            for i in range(pts.shape[0]):
                 marker = Marker()
-                marker.header.frame_id = "global"  # Change this frame_id if necessary
+                marker.header.frame_id = frame_id   # Change this frame_id if necessary
                 marker.header.stamp = rospy.Time.now()
                 marker.type = Marker.ARROW
                 marker.action = Marker.ADD
