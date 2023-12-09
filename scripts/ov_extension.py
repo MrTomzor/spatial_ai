@@ -217,11 +217,11 @@ class NavNode:
         self.imu_frame = 'imu'
         self.fcu_frame = 'uav1/fcu'
         self.camera_frame = 'cam0'
-        listener = tf.TransformListener()
+        self.tf_listener = tf.TransformListener()
         
         # Get the transform
-        listener.waitForTransform(self.fcu_frame, self.imu_frame, rospy.Time(), rospy.Duration(4.0))
-        (trans, rotation) = listener.lookupTransform(self.fcu_frame, self.imu_frame, rospy.Time(0))
+        self.tf_listener.waitForTransform(self.fcu_frame, self.imu_frame, rospy.Time(), rospy.Duration(4.0))
+        (trans, rotation) = self.tf_listener.lookupTransform(self.fcu_frame, self.imu_frame, rospy.Time(0))
         # rotation_matrix = tfs.quaternion_matrix([rotation.x, rotation.y, rotation.z, rotation.w])
         rotation_matrix = tfs.quaternion_matrix(rotation)
         print(rotation_matrix)
@@ -230,8 +230,8 @@ class NavNode:
         print("T_fcu_to_imu")
         print(self.T_fcu_to_imu)
 
-        listener.waitForTransform(self.imu_frame, self.camera_frame, rospy.Time(), rospy.Duration(4.0))
-        (trans, rotation) = listener.lookupTransform(self.imu_frame, self.camera_frame, rospy.Time(0))
+        self.tf_listener.waitForTransform(self.imu_frame, self.camera_frame, rospy.Time(), rospy.Duration(4.0))
+        (trans, rotation) = self.tf_listener.lookupTransform(self.imu_frame, self.camera_frame, rospy.Time(0))
         # rotation_matrix = tfs.quaternion_matrix([rotation.x, rotation.y, rotation.z, rotation.w])
         rotation_matrix = tfs.quaternion_matrix(rotation)
         print(rotation_matrix)
@@ -243,6 +243,9 @@ class NavNode:
 
         # --SUB
         self.sub_cam = rospy.Subscriber(img_topic, Image, self.image_callback, queue_size=10000)
+
+        ptraj_topic = '/uav1/control_manager/mpc_tracker/prediction_full_state'
+        self.sub_predicted_trajectory = rospy.Subscriber(ptraj_topic, mrs_msgs.msg.MpcPredictionFullState, self.predicted_trajectory_callback, queue_size=10000)
 
         self.odom_buffer = []
         self.odom_buffer_maxlen = 1000
@@ -316,6 +319,8 @@ class NavNode:
         self.fragmenting_travel_dist = 5
 
         self.verbose_submap_construction = False
+
+        self.predicted_trajectory_pts_global = None
         
         self.node_initialized = True
         # # #}
@@ -389,6 +394,16 @@ class NavNode:
         return EmptySrvResponse()# # #}
 
     # --SUBSCRIBE CALLBACKS
+
+    def lookupTransformAsMatrix(self, frame1, frame2):# # #{
+        (trans, rotation) = self.tf_listener.lookupTransform(frame1, frame2, rospy.Time(0)) #Time0 = latest
+
+        rotation_matrix = tfs.quaternion_matrix(rotation)
+        res = np.eye(4)
+        res[:3, :3] = rotation_matrix[:3,:3]
+        res[:3, 3] = trans
+        return res# # #}
+
     def points_slam_callback(self, msg):# # #{
         if self.node_offline:
             return
@@ -1048,7 +1063,45 @@ class NavNode:
         comp_time = time.time() - comp_start_time
         print("computation time: " + str((comp_time) * 1000) +  " ms")# # #}
 
+    def predicted_trajectory_callback(self, msg):# # #{
+        # PARSE THE MSG
+        pts = np.array([[pt.x, pt.y, pt.z] for pt in msg.position])
+        headings = np.array([h for h in msg.heading])
+        msg_frame = msg.header.frame_id
+
+        # GET CURRENT ODOM MSG
+        # latest_odom_msg = self.odom_buffer[-1]
+        # T_global_to_imu = self.odom_msg_to_transformation_matrix(latest_odom_msg)
+        # T_global_to_fcu = T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
+
+
+        T_msg_to_fcu = self.lookupTransformAsMatrix(msg_frame, self.fcu_frame)
+        T_fcu_to_global = self.lookupTransformAsMatrix(self.fcu_frame, 'global')
+
+        T_msg_to_global = T_msg_to_fcu @ T_fcu_to_global
+
+        pts_global, headings_global = transformViewpoints(pts, headings, np.linalg.inv(T_msg_to_global))
+        print("PTS GLOBAL: ")
+        print(pts_global)
+
+        print("PTS FCU: ")
+        pts_fcu, headings_fcu = transformViewpoints(pts_global, headings_global, T_fcu_to_global)
+        print(pts_fcu)
+        print(headings_fcu)
+
+        self.predicted_trajectory_stamps = msg.stamps
+        self.predicted_trajectory_pts_global = pts_global
+        self.predicted_trajectory_headings_global = headings_global
+
+    # # #}
+
     # --PLANNING PIPELINE
+
+    def get_predicted_trajectory_fcu_frame(self):
+
+        # return TIMES of reaching pts w.r.t. current time
+        return None
+
     def planning_loop_iter(self, event=None):# # #{
         # print("pes")
         with ScopedLock(self.spheremap_mutex):
