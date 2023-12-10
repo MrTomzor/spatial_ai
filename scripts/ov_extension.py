@@ -1310,7 +1310,7 @@ class NavNode:
                 self.roomba_progress_lasttime = rospy.get_rostime()
             # TODO - replanning totally trigger
 
-        arrow_pos = pos_fcu_in_global_frame
+        arrow_pos = copy.deepcopy(pos_fcu_in_global_frame)
         arrow_pos[2] += 10
         self.visualize_arrow(arrow_pos.flatten(), (arrow_pos + self.roomba_dirvec_global*5).flatten(), r=1, g=0.5, marker_idx=0)
 
@@ -1323,6 +1323,8 @@ class NavNode:
 
             # CHECK IF REACHED
             dist_to_goal = np.linalg.norm(pos_fcu_in_global_frame - self.current_goal_vp_global.position)
+            # print("DIST FROM GOAL:")
+            # print(dist_to_goal)
             if dist_to_goal < self.reaching_dist:
                 print("-------- GOAL REACHED! ----------------")
                 self.current_goal_vp_global = None
@@ -1332,8 +1334,10 @@ class NavNode:
 
         # IF NAVIGATING ALONG PATH, AND ALL IS OK, DO NOT REPLAN. IF NOT PROGRESSING OR REACHED END - CONTINUE FURTHER IN PLANNIGN NEW PATH!
         if not self.currently_navigating_pts is None:
-            path_reaching_dist = 0.3
+            path_reaching_dist = self.reaching_dist
             dists_from_path_pts = np.linalg.norm(self.currently_navigating_pts - pos_fcu_in_global_frame, axis = 1)
+            # print("DISTS FROM PATH")
+            # print(dists_from_path_pts)
             closest_path_pt_idx = np.argmin(dists_from_path_pts)
             if closest_path_pt_idx > self.currently_navigating_reached_node_idx:
                 print("MOVED BY PTS: " + str(closest_path_pt_idx - self.currently_navigating_reached_node_idx))
