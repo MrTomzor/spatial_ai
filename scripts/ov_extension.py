@@ -163,7 +163,7 @@ class NavNode:
         self.return_home_srv = rospy.Service("home", EmptySrv, self.return_home)
 
         # TIMERS
-        self.planning_frequency = 10
+        self.planning_frequency = 1
         self.planning_timer = rospy.Timer(rospy.Duration(1.0 / self.planning_frequency), self.planning_loop_iter)
 
         # PLANNING PUB
@@ -312,15 +312,18 @@ class NavNode:
         self.n_sphere_samples_per_update = 100
         self.carryover_dist = 8
         self.uav_radius = 0.5
-        self.min_planning_odist = self.uav_radius - 0.2
+        self.safety_replanning_trigger_odist = 0.4
+        self.min_planning_odist = 0.65
         self.max_planning_odist = 2
-        self.safety_weight = 1
-        self.fragmenting_travel_dist = 15
-        self.fragmenting_travel_dist = 5
+        self.safety_weight = 2
+        self.fragmenting_travel_dist = 1500
+        self.visual_kf_addition_heading = 3.14159 /2
+        self.visual_kf_addition_dist = 2
 
         self.verbose_submap_construction = False
 
         self.predicted_trajectory_pts_global = None
+
         
         self.node_initialized = True
         # # #}
@@ -392,6 +395,24 @@ class NavNode:
 
         print("VOCAB SAVE SUCCESS")
         return EmptySrvResponse()# # #}
+
+    def get_visited_viewpoints_global(self):# # #{
+        res_pts = None
+        res_headings = None
+        for smap in [self.spheremap] + self.mchunk.submaps:
+            if len(smap.visual_keyframes) > 0:
+                pts_smap = np.array([kf.position for kf in smap.visual_keyframes])
+                headings_smap = np.array([kf.heading for kf in smap.visual_keyframes])
+                pts_global, headings_global = transformViewpoints(pts_smap, headings_smap, smap.T_global_to_own_origin)
+
+                if res_pts is None:
+                    res_pts = pts_global
+                    res_headings = headings_global
+                else:
+                    res_pts = np.concatenate((res_pts, pts_global))
+                    res_headings = np.concatenate((res_headings, headings_global))
+
+        return res_pts, res_headings# # #}
 
     # --SUBSCRIBE CALLBACKS
 
@@ -691,6 +712,7 @@ class NavNode:
 
                     # self.spheremap.removeNodes(np.where(idx_picker)[0])
 
+            # TODO fix - by raycasting!!!
             max_sphere_sampling_z = 60
 
             n_sampled = self.n_sphere_samples_per_update
@@ -847,22 +869,28 @@ class NavNode:
         # ADD NEW VISUAL KEYFRAME IF NEW ENOUGH
         if self.spheremap is None:
             return
-        return
+
         # TODO - FIX TRANSFORMS
 
         # GET ODOM MSG CLOSEST TO CURRENT IMG TIMESTAMP
-        closest_time_odom_msg = self.get_closest_time_odom_msg(self.new_img_stamp)
-        T_odom = self.odom_msg_to_transformation_matrix(closest_time_odom_msg)
-        T_odom_relative_to_smap_start = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_odom
+        # closest_time_odom_msg = self.get_closest_time_odom_msg(self.new_img_stamp)
+        # T_odom = self.odom_msg_to_transformation_matrix(closest_time_odom_msg)
+        # T_odom_relative_to_smap_start = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_odom
 
-        new_kf = SubmapKeyframe(T_odom_relative_to_smap_start)
+        latest_odom_msg  = self.get_closest_time_odom_msg(self.new_img_stamp)
+        T_global_to_imu = self.odom_msg_to_transformation_matrix(latest_odom_msg)
+        T_global_to_fcu = T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
+        T_fcu_relative_to_smap_start  = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_fcu
+#         T_fcu_relative_to_smap_start = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_odom
+
+        new_kf = SubmapKeyframe(T_fcu_relative_to_smap_start)
 
 
         # CHECK IF NEW ENOUGH
         # TODO - check in near certainly connected submaps
         for kf in self.spheremap.visual_keyframes:
             # TODO - scaling
-            if kf.euclid_dist(new_kf) < 5 and kf.heading_dif(new_kf) < 3.14159 /4:
+            if kf.euclid_dist(new_kf) < self.visual_kf_addition_dist and kf.heading_dif(new_kf) < self.visual_kf_addition_heading:
                 # print("KFS: not novel enough, N keyframes: " + str(len(self.spheremap.visual_keyframes)))
                 return
 
@@ -873,6 +901,10 @@ class NavNode:
             self.spheremap.traveled_context_distance += dist_bonus + heading_bonus
 
         print("KFS: adding new visual keyframe!")
+        self.spheremap.visual_keyframes.append(new_kf)
+        return
+
+
         comp_start_time = time.time()
         # COMPUTE DESCRIPTION AND ADD THE KF
         kps, descs = self.orb.detectAndCompute(self.new_frame, None)
@@ -1121,7 +1153,7 @@ class NavNode:
 
     # # #}
 
-    def find_unsafe_pt_idxs_on_global_path(self, pts_global, headings_global, min_odist, clearing_dist = -1, other_submap_idxs = None):
+    def find_unsafe_pt_idxs_on_global_path(self, pts_global, headings_global, min_odist, clearing_dist = -1, other_submap_idxs = None):# # #{
         n_pts = pts_global.shape[0]
         res = []
 
@@ -1136,10 +1168,10 @@ class NavNode:
                 res.append(i)
         odists = np.array(odists)
         # print("ODISTS RANKED:")
-        print("ODISTS:")
-        # odists = np.sort(odists)
-        print(odists)
-        return np.array(res)
+        # print("ODISTS:")
+        # # odists = np.sort(odists)
+        # print(odists)
+        return np.array(res)# # #}
         
     def planning_loop_iter(self, event=None):# # #{
         # print("pes")
@@ -1149,7 +1181,7 @@ class NavNode:
     # # #}
 
     def dumb_forward_flight_rrt_iter(self):# # #{
-        print("--DUMB FORWARD FLIGHT RRT ITER")
+        # print("--DUMB FORWARD FLIGHT RRT ITER")
         if self.spheremap is None:
             return
         if not self.node_initialized:
@@ -1168,7 +1200,11 @@ class NavNode:
         T_smap_frame_to_fcu = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
         heading_in_smap_frame = transformationMatrixToHeading(T_smap_frame_to_fcu)
         planning_start_vp = Viewpoint(T_smap_frame_to_fcu[:3, 3], heading_in_smap_frame)
+
         planning_time = 0.5
+        current_maxodist = self.max_planning_odist
+        current_minodist = self.min_planning_odist
+
 
         # IF NAVIGATING ALONG PATH, AND ALL IS OK, DO NOT REPLAN. IF NOT PROGRESSING OR REACHED END - CONTINUE FURTHER IN PLANNIGN NEW PATH!
         if not self.currently_navigating_pts is None:
@@ -1195,11 +1231,11 @@ class NavNode:
                     future_pts, future_headings, relative_times = self.get_future_predicted_trajectory_global_frame()
                     if not future_pts is None:
                         future_pts_dists = np.linalg.norm(future_pts - pos_fcu_in_global_frame, axis=1)
-                        unsafe_idxs = self.find_unsafe_pt_idxs_on_global_path(future_pts, future_headings, self.min_planning_odist, clearing_dist = self.uav_radius)
+                        unsafe_idxs = self.find_unsafe_pt_idxs_on_global_path(future_pts, future_headings, self.safety_replanning_trigger_odist, clearing_dist = self.uav_radius)
                         if unsafe_idxs.size > 0:
                             print("FOUND UNSAFE PT IN PREDICTED TRAJECTORY AT INDEX:" + str(unsafe_idxs[0]) + " DIST: " + str(future_pts_dists[unsafe_idxs[0]]))
                             time_to_unsafety = relative_times[unsafe_idxs[0]]
-                            triggering_time = 1.5
+                            triggering_time = 2
                             print("TIME TO UNSAFETY: " + str(time_to_unsafety) +" / " + str(triggering_time))
                             # triggering_time = planning_time * 3
                             
@@ -1235,7 +1271,7 @@ class NavNode:
 
 
         # FIND PATHS WITH RRT
-        best_path_pts, best_path_headings = self.find_paths_rrt(planning_start_vp , max_comp_time = planning_time)
+        best_path_pts, best_path_headings = self.find_paths_rrt(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist)
         if best_path_pts is None:
             print("NO OK PATHS FOUND BY RRT!")
             return
@@ -1271,7 +1307,7 @@ class NavNode:
         return
     # # #}
 
-    def find_paths_rrt(self, start_vp, visualize = True, max_comp_time=0.5, max_step_size = 1, max_spread_dist=10, p_greedy = 0.3, max_iter = 700006969420):# # #{
+    def find_paths_rrt(self, start_vp, visualize = True, max_comp_time=0.5, max_step_size = 1, max_spread_dist=10, p_greedy = 0.3, min_odist = 0.1, max_odist = 0.5, max_iter = 700006969420):# # #{
         # print("RRT: STARTING, FROM TO:")
         # print(start_vp)
 
@@ -1287,6 +1323,7 @@ class NavNode:
         comp_start_time = rospy.get_rostime()
         n_iters = 0
         n_unsafe = 0
+        n_rewirings = 0
 
         # INIT TREE
         n_nodes = 1
@@ -1294,12 +1331,13 @@ class NavNode:
         tree_headings = np.array([start_vp.heading])
         odists = np.array([self.spheremap.getMaxDistToFreespaceEdge(start_vp.position)])
         parent_indices = np.array([-1])
-        child_indices = np.array([-1])
+        # child_indices = np.array([-1])
+        child_indices = [[]]
         total_costs = np.array([0])
 
         # so always can move!
-        if odists < self.min_planning_odist:
-            odist = self.min_planning_odist
+        if odists < min_odist:
+            odist = min_odist
 
         while True:
             time_left = max_comp_time - (rospy.get_rostime() - comp_start_time).to_sec()
@@ -1326,13 +1364,14 @@ class NavNode:
             # CHECK IF POINT IS SAFE
             new_node_pos = new_node_pos.reshape((1,3))
             new_node_odist = self.spheremap.getMaxDistToFreespaceEdge(new_node_pos)
-            if new_node_odist < self.min_planning_odist:
+            if new_node_odist < min_odist:
                 n_unsafe += 1
                 continue
 
             # FIND ALL CONNECTABLE PTS
             connectable_mask = dists < max_conn_size
-            if not np.any(connectable_mask):
+            n_connectable = np.sum(connectable_mask)
+            if n_connectable == 0:
                 print("WARN!!! no connectable nodes!!")
                 print("MIN DIST: " + str(np.min(dists)))
             connectable_indices = np.where(connectable_mask)[0]
@@ -1350,7 +1389,7 @@ class NavNode:
 
             heading_difs = np.abs(np.unwrap(potential_headings - tree_headings[connectable_mask]))
             # safety_costs = np.array([self.compute_safety_cost(odists, dists[idx]) for idx in connectable_indices]).flatten() * self.safety_weight
-            safety_costs = self.compute_safety_cost(new_node_odist) * dists[connectable_mask] * self.safety_weight
+            safety_costs = self.compute_safety_cost(new_node_odist, min_odist, max_odist) * dists[connectable_mask] * self.safety_weight
             travelcosts = dists[connectable_mask] + heading_difs * 0.0 + safety_costs
 
             potential_new_total_costs = total_costs[connectable_mask] + travelcosts
@@ -1366,30 +1405,130 @@ class NavNode:
             odists = np.concatenate((odists, np.array([new_node_odist]) ))
             total_costs = np.concatenate((total_costs, np.array([newnode_total_cost]) ))
             parent_indices = np.concatenate((parent_indices, np.array([new_node_parent_idx]) ))
-            child_indices[new_node_parent_idx] = n_nodes
-            child_indices = np.concatenate((child_indices, np.array([-1]) ))
+            # child_indices[new_node_parent_idx] = n_nodes
+            child_indices[new_node_parent_idx].append(n_nodes)
+            # child_indices = np.concatenate((child_indices, np.array([-1]) ))
+            child_indices.append([])
             n_nodes += 1
 
             # CHECK IF CAN REWIRE
-            # TODO
+            do_rewiring = False
+            if do_rewiring and n_connectable > 1:
+                # connectable_mask[new_node_parent_idx] = False
+                # connectable_indices = np.where(connectable_mask)
+                # print("N CONNECT: " + str(n_connectable))
+                # print(travelcosts.shape)
 
-        print("SPREAD FINISHED, HAVE " + str(tree_pos.shape[0]) + " NODES. N ITERS: " +str(n_iters) + " N UNSAFE: " + str(n_unsafe))
+                new_total_costs = newnode_total_cost + travelcosts
+                difs_from_old_cost = new_total_costs - (total_costs[:(n_nodes-1)])[connectable_mask] 
+
+                rewiring_mask = difs_from_old_cost < 0 
+                rewiring_mask[new_node_parent_idx2] = False
+
+                n_to_rewire = np.sum(rewiring_mask)
+                if n_to_rewire > 0:
+                    n_rewirings += 1
+                    rewiring_idxs = connectable_indices[rewiring_mask]
+
+                    for i in range(n_to_rewire):
+                        node_to_rewire = rewiring_idxs[i]
+                        prev_parent = parent_indices[rewiring_idxs[i]]
+
+                        print("REWIRING!")
+                        print(node_to_rewire)
+                        print(child_indices[prev_parent])
+                        # CHANGE PARENT OF OLD NODE TO NEWLY ADDED
+                        child_indices[prev_parent].remove(node_to_rewire)
+                        parent_indices[node_to_rewire] = n_nodes - 1
+                        child_indices[n_nodes-1].append(node_to_rewire)
+
+                        # SPREAD CHANGE IN COST TO ITS CHILDREN
+                        openset = [rewiring_idxs[i]]
+                        discount = -difs_from_old_cost[i]
+                        while len(openset) > 0:
+                            print("OPENSET:")
+                            print(node_to_rewire)
+                            print(openset)
+                            expnd = openset.pop()
+                            total_costs[expnd] -= discount
+                            openset = openset + child_indices[expnd]
+
+
+
+        print("SPREAD FINISHED, HAVE " + str(tree_pos.shape[0]) + " NODES. ITERS: " +str(n_iters) + " UNSAFE: " + str(n_unsafe) + " REWIRINGS: " + str(n_rewirings))
         if visualize:
             self.visualize_rrt_tree(self.spheremap.T_global_to_own_origin, tree_pos, None, odists, parent_indices)
 
         # FIND ALL HEADS, EVALUATE THEM
-        heads_indices = np.where(child_indices < 0)[0]
+        # heads_indices = np.where(child_indices < 0)[0]
+
+        comp_start_time = rospy.get_rostime()
+        heads_indices = np.array([i for i in range(tree_pos.shape[0]) if len(child_indices[i]) == 0])
         print("N HEADS: " + str(heads_indices.size))
         # print(heads_indices)
 
-        # TODO - assign value func here! for now just dist from start!
-        # heads_values = 10 * np.linalg.norm(start_vp.position-tree_pos[heads_indices, :], axis=1)
-        heads_values = 10 * (tree_pos[heads_indices, :] - start_vp.position)[:, 0]
+        # GET GLOBAL AND FCU FRAME POINTS
+
+        heads_global = transformPoints(tree_pos[heads_indices, :], self.spheremap.T_global_to_own_origin)
+        # latest_odom_msg = self.odom_buffer[-1]
+        # T_global_to_imu = self.odom_msg_to_transformation_matrix(latest_odom_msg)
+        # T_global_to_fcu = T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
+        # T_smap_origin_to_fcu = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_fcu
+        # pts_in_fcu_frame = transformPoints(tree_pos[heads_indices, :], T_smap_origin_to_fcu)
+
+        latest_odom_msg = self.odom_buffer[-1]
+        T_global_to_imu = self.odom_msg_to_transformation_matrix(latest_odom_msg)
+        T_global_to_fcu = T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
+        # T_smap_origin_to_fcu = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_fcu
+        # pts_in_fcu_frame = transformPoints(tree_pos[heads_indices, :], T_smap_origin_to_fcu)
+
+        visited_pts, visited_headings = self.get_visited_viewpoints_global()
+        print("N VISITED VPS: " + ("0" if visited_headings is None else str(visited_headings.size)))
+        dists_to_visited = scipy.spatial.distance_matrix(heads_global, visited_pts)
+        novelty = np.min(dists_to_visited, axis=1)
+        d_total_visited = self.visual_kf_addition_dist  * 0.8
+        d_total_unvisited = self.visual_kf_addition_dist  * 5
+        novelty = (novelty - d_total_visited) / (d_total_unvisited - d_total_visited)
+        print("NOVELTY SCALED UNCAPPED:")
+        print(novelty)
+        novelty[novelty > 1] = 1
+
+        totally_not_novel = novelty < 0
+        novelty[totally_not_novel] = -100
+        print("N TOO CLOSE TO VPS: " +str(np.sum(totally_not_novel)))
+
+        # print(novelty)
+
+        # CAP TO SOME DIST AROUND ORIGIN!!!
+        dists_from_global = np.linalg.norm(heads_global, axis = 1)
+        max_explored_dist = 15
+        toofar = dists_from_global > 10
+        # print(toofar)
+        novelty[toofar] = - 200
+        print("N TOO FAR: " +str(np.sum(toofar)))
+        if np.all(toofar):
+            print("ALL TOO FAR! SETTING NOVELTY BASED ON DISTANCE IN DIRECTION TO CENTER")
+            current_fcu_in_global = T_global_to_fcu[:3, 3].reshape((1,3))
+            dirvecs = heads_global - current_fcu_in_global
+            dir_to_center = - current_fcu_in_global / np.linalg.norm(current_fcu_in_global)
+            dists_towards_center = dirvecs @ dir_to_center.T
+            novelty = dists_towards_center.flatten()
+            print(novelty.shape)
+        # print("TOTAL NOVELTY: " + str(np.sum(novelty)))
+        # print("NOVELTY END: " )
+        # print(novelty)
+
+        heads_values = 10 * novelty
+        # heads_values = 10 * (tree_pos[heads_indices, :] - start_vp.position)[:, 0]
+        # print("EVALUTED HEADS in TIME: " + str( (rospy.get_rostime() - comp_start_time).to_sec() ))
         heads_scores = heads_values - total_costs[heads_indices] 
-        print(heads_scores)
+        print(heads_scores.shape)
 
         best_head = np.argmax(heads_scores)
+        print("BEST HEAD: " + str(best_head))
         best_node_index = heads_indices[best_head]
+        print("-----BEST NODE NOVELTY: " +str(novelty[best_head]))
+        print("-----BEST NODE COST: " +str(total_costs[best_node_index]))
 
         # RECONSTRUCT PATH FROM THERE
         path_idxs = [best_node_index]
@@ -1734,13 +1873,14 @@ class NavNode:
             return 0
         saf = (node2_radius - self.min_planning_odist) / (self.max_planning_odist  - self.min_planning_odist)
         return saf * saf * dist
+    # # #}
 
-    def compute_safety_cost(self, node2_radius):# # #{
-        if node2_radius < self.min_planning_odist:
-            node2_radius = self.min_planning_odist
-        if node2_radius > self.max_planning_odist:
+    def compute_safety_cost(self, node2_radius, minodist, maxodist):# # #{
+        if node2_radius < minodist:
+            node2_radius = minodist
+        if node2_radius > maxodist:
             return 0
-        saf = (node2_radius - self.min_planning_odist) / (self.max_planning_odist  - self.min_planning_odist)
+        saf = (node2_radius - minodist) / (maxodist  - minodist)
         return saf * saf
     # # #}
 
@@ -2135,7 +2275,7 @@ class NavNode:
     def visualize_keyframe_scores(self, scores, new_kf):# # #{
         marker_array = MarkerArray()
 
-        new_kf_global_pos = transformPoints(new_kf.pos.reshape((1,3)), self.spheremap.T_global_to_own_origin)
+        new_kf_global_pos = transformPoints(new_kf.position.reshape((1,3)), self.spheremap.T_global_to_own_origin)
         s_min = np.min(scores[:(len(scores)-1)])
         s_max = np.max(scores[:(len(scores)-1)])
         scores = (scores - s_min) / (s_max-s_min)
@@ -2451,7 +2591,7 @@ class NavNode:
         if do_keyframes:
             n_kframes = len(smap.visual_keyframes)
             if n_kframes > 0:
-                kframes_pts = np.array([kf.pos for kf in smap.visual_keyframes])
+                kframes_pts = np.array([kf.position for kf in smap.visual_keyframes])
                 kframes_pts = transformPoints(kframes_pts, T_vis)
                 for i in range(n_kframes):
                     marker = Marker()
@@ -2468,9 +2608,9 @@ class NavNode:
                     # marker.pose.position.z = kframes_pts[i][2]
 
                     # Set the scale
-                    marker.scale.x = ms *0.8
-                    marker.scale.y = ms *2.2
-                    marker.scale.z = ms *1.5
+                    marker.scale.x = ms *0.4
+                    marker.scale.y = ms *2.0
+                    marker.scale.z = ms *1.0
 
                     marker.color.a = 1
                     marker.color.r = 0.0
@@ -2481,7 +2621,7 @@ class NavNode:
                         marker.color.g = 0.0
                         marker.color.b = 1.0
 
-                    arrowlen = 4
+                    arrowlen = 2
                     map_heading = transformationMatrixToHeading(T_vis)
                     xbonus = arrowlen * np.cos(smap.visual_keyframes[i].heading + map_heading)
                     ybonus = arrowlen * np.sin(smap.visual_keyframes[i].heading + map_heading)

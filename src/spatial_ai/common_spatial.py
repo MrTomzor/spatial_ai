@@ -41,14 +41,14 @@ class Viewpoint(object):
 
 class SubmapKeyframe:# # #{
     def __init__(self, T):
-        self.pos = T[:3,3]
+        self.position = T[:3,3]
         self.heading = transformationMatrixToHeading(T)
         # print("HEADING")
         # print(T)
         # print(self.heading)
 
     def euclid_dist(self, other_kf): 
-        return np.linalg.norm(self.pos - other_kf.pos)
+        return np.linalg.norm(self.position - other_kf.position)
 
     def heading_dif(self, other_kf): 
         dif = np.abs(other_kf.heading - self.heading)
