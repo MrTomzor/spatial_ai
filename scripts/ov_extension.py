@@ -174,7 +174,9 @@ class NavNode:
         self.slam_points = None
         self.slam_pcl_pub = rospy.Publisher('extended_slam_points', PointCloud, queue_size=10)
 
-        self.spheremap_spheres_pub = rospy.Publisher('spheres', MarkerArray, queue_size=10)
+        self.spheremap_outline_pub = rospy.Publisher('spheres', MarkerArray, queue_size=10)
+        self.spheremap_freespace_pub = rospy.Publisher('spheremap_freespace', MarkerArray, queue_size=10)
+
         self.recent_submaps_vis_pub = rospy.Publisher('recent_submaps_vis', MarkerArray, queue_size=10)
         self.path_planning_vis_pub = rospy.Publisher('path_planning_vis', MarkerArray, queue_size=10)
         self.visual_similarity_vis_pub = rospy.Publisher('visual_similarity_vis', MarkerArray, queue_size=10)
@@ -301,23 +303,29 @@ class NavNode:
         self.global_roadmap_len = None
         self.roadmap_start_time = None
 
-        self.local_nav_goal = None
         self.local_nav_start_time = rospy.get_rostime()
         self.local_reaching_dist = 3
         self.last_traj_send_time =  rospy.get_rostime()
         self.traj_min_duration = 10
 
         self.currently_navigating_pts = None
+        self.current_goal_vp_global = None
+        self.reaching_dist = 0.5
+        self.reaching_angle = np.pi/2
+
+        self.max_goal_vp_pathfinding_times = 3
+        self.current_goal_vp_pathfinding_times = 0
 
         # META PARAMS
         self.state = 'explore'
         self.n_sphere_samples_per_update = 100
         self.carryover_dist = 8
-        self.uav_radius = 0.5
-        self.safety_replanning_trigger_odist = 0.4
-        self.min_planning_odist = 0.65
+        self.uav_radius = 0.6
+        self.safety_replanning_trigger_odist = 0.6
+        self.min_planning_odist = 0.8
         self.max_planning_odist = 2
-        self.safety_weight = 3
+        self.fspace_bonus_mod = 2
+        self.safety_weight = 5
         self.fragmenting_travel_dist = 20
         self.visual_kf_addition_heading = 3.14159 /2
         self.visual_kf_addition_dist = 2
@@ -326,7 +334,7 @@ class NavNode:
         self.roomba_progress_lasttime = None
         self.roomba_dirvec_global = None
         self.roomba_motion_start_global = None
-        self.roomba_value_weight = 10
+        self.roomba_value_weight = 5
         self.roomba_progress_index = 0
         self.roomba_progress_step = 3
         self.roomba_progress_max_time_per_step = 50
@@ -346,7 +354,6 @@ class NavNode:
     def return_home(self, req):# # #{
         print("RETURN HOME SRV")
         with ScopedLock(self.spheremap_mutex):
-            self.local_nav_goal = None
             self.state = 'home'
         return EmptySrvResponse()# # #}
 
@@ -601,6 +608,10 @@ class NavNode:
             pixpos = self.getPixelPositions(final_points)
 
             # COMPUTE DELAUNAY TRIANG OF VISIBLE SLAM POINTS
+            if final_points.shape[0] < 3:
+                if self.verbose_submap_construction:
+                    print("NOT ENAUGH PTS FOR DELAUNAY!")
+                return
             if self.verbose_submap_construction:
                 print("HAVE DELAUNAY:")
             tri = Delaunay(pixpos)
@@ -727,7 +738,7 @@ class NavNode:
                     # self.spheremap.removeNodes(np.where(idx_picker)[0])
 
             # TODO fix - by raycasting!!!
-            max_sphere_sampling_z = 60
+            max_sphere_sampling_z = 30
 
             n_sampled = self.n_sphere_samples_per_update
             sampling_pts = np.random.rand(n_sampled, 2)  # Random points in [0, 1] range for x and y
@@ -1187,7 +1198,10 @@ class NavNode:
 
         odists = []
         for i in range(n_pts):
-            odist = self.spheremap.getMaxDistToFreespaceEdge(pts_in_smap_frame[i, :])
+            odist_fs = self.spheremap.getMaxDistToFreespaceEdge(pts_in_smap_frame[i, :]) * self.fspace_bonus_mod
+            odist_surf = self.spheremap.getMinDistToSurfaces(pts_in_smap_frame[i, :])
+            odist = min(odist_fs, odist_surf)
+
             odists.append(odist)
             if odist < min_odist and dists_from_start[i] > clearing_dist:
                 res.append(i)
@@ -1203,6 +1217,35 @@ class NavNode:
         with ScopedLock(self.spheremap_mutex):
             # self.dump_forward_flight_astar_iter()
             self.dumb_forward_flight_rrt_iter()
+    # # #}
+
+    def postproc_path(self, pos_in_smap_frame, headings_in_smap_frame):# # #{
+        # MAKE IT SO THAT NOT TOO MANY PTS CLOSE TOGETHER!!! unless close to obstacles!
+        # TODO ALLOW NO HEADING CHANGE IF STILL MOVING IN FOV!
+        keep_idxs = []
+        n_pts = pos_in_smap_frame.shape[0]
+
+        # prev_pos = start_vp.positon
+        # prev_heading = start_vp.heading
+
+        prev_pos = pos_in_smap_frame[0, :]
+
+        min_travers_dist = 0.7
+
+        for i in range(n_pts):
+            dist = np.linalg.norm(prev_pos - pos_in_smap_frame[i,:])
+            if dist > min_travers_dist:
+                keep_idxs.append(i)
+                prev_pos = pos_in_smap_frame[i,:]
+
+        print("postprocessed path to " + str(len(keep_idxs)) + " / " + str(n_pts))
+        if len(keep_idxs) == 0:
+            return None, None
+
+        keep_idxs = np.array(keep_idxs)
+        return pos_in_smap_frame[keep_idxs, :], headings_in_smap_frame[keep_idxs]
+
+
     # # #}
 
     def dumb_forward_flight_rrt_iter(self):# # #{
@@ -1271,6 +1314,21 @@ class NavNode:
         arrow_pos[2] += 10
         self.visualize_arrow(arrow_pos.flatten(), (arrow_pos + self.roomba_dirvec_global*5).flatten(), r=1, g=0.5, marker_idx=0)
 
+        if not self.current_goal_vp_global is None:
+            # VISUALZIE GOAL
+            arrow_pos = self.current_goal_vp_global.position.flatten()
+            ghd = self.current_goal_vp_global.heading
+            arrow_pos2 = arrow_pos + np.array([np.cos(ghd), np.sin(ghd), 0]) * 2
+            self.visualize_arrow(arrow_pos, arrow_pos2, r=0.7, g=0.7, marker_idx=2)
+
+            # CHECK IF REACHED
+            dist_to_goal = np.linalg.norm(pos_fcu_in_global_frame - self.current_goal_vp_global.position)
+            if dist_to_goal < self.reaching_dist:
+                print("-------- GOAL REACHED! ----------------")
+                self.current_goal_vp_global = None
+
+
+        evading_obstacle = False
 
         # IF NAVIGATING ALONG PATH, AND ALL IS OK, DO NOT REPLAN. IF NOT PROGRESSING OR REACHED END - CONTINUE FURTHER IN PLANNIGN NEW PATH!
         if not self.currently_navigating_pts is None:
@@ -1297,7 +1355,7 @@ class NavNode:
                     future_pts, future_headings, relative_times = self.get_future_predicted_trajectory_global_frame()
                     if not future_pts is None:
                         future_pts_dists = np.linalg.norm(future_pts - pos_fcu_in_global_frame, axis=1)
-                        unsafe_idxs, odists = self.find_unsafe_pt_idxs_on_global_path(future_pts, future_headings, self.safety_replanning_trigger_odist, clearing_dist = self.uav_radius)
+                        unsafe_idxs, odists = self.find_unsafe_pt_idxs_on_global_path(future_pts, future_headings, self.safety_replanning_trigger_odist, 0)
                         if unsafe_idxs.size > 0:
 
                             time_to_unsafety = relative_times[unsafe_idxs[0]]
@@ -1341,6 +1399,7 @@ class NavNode:
                                     startpos_smap_frame, startheading_smap_frame = transformViewpoints(future_pts[start_idx, :].reshape((1,3)), np.array([future_headings[start_idx]]), np.linalg.inv(self.spheremap.T_global_to_own_origin))
                                     planning_start_vp = Viewpoint(startpos_smap_frame, startheading_smap_frame[0])
                                     self.currently_navigating_pts = None
+                                evading_obstacle = True
                             # TODO - replaning to goal trigger. If failed -> replanning to any other goal. If failed -> evasive maneuvers n wait!
                             else:
                                 return
@@ -1351,10 +1410,34 @@ class NavNode:
 
 
         # FIND PATHS WITH RRT
-        best_path_pts, best_path_headings = self.find_paths_rrt(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist)
-        if best_path_pts is None:
-            print("NO OK PATHS FOUND BY RRT!")
-            return
+        best_path_pts = None
+        best_path_headings = None
+        save_last_pos_as_goal = False
+
+        if not self.current_goal_vp_global is None:
+
+            # FIND PATH TO GOAL
+            goal_vp_smap_pos, goal_vp_smap_heading = transformViewpoints(self.current_goal_vp_global.position.reshape((1,3)), np.array([self.current_goal_vp_global.heading]), np.linalg.inv(self.spheremap.T_global_to_own_origin))
+            best_path_pts, best_path_headings = self.find_paths_rrt(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist, mode = 'to_goal', goal_vp_smap = Viewpoint(goal_vp_smap_pos, goal_vp_smap_heading))
+
+            if best_path_pts is None:
+                print("NO PATH FOUND TO GOAL VP! TRY: " + str(self.current_goal_vp_pathfinding_times) + "/" + str(self.max_goal_vp_pathfinding_times))
+                self.current_goal_vp_pathfinding_times += 1
+                if self.current_goal_vp_pathfinding_times > self.max_goal_vp_pathfinding_times:
+                    print("GOAL VP UNREACHABLE TOO MANY TIMES, DISCARDING IT!")
+                    self.current_goal_vp_global = None
+                return
+
+        # elif not evading_obstacle:
+        else:
+            best_path_pts, best_path_headings = self.find_paths_rrt(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist)
+
+            if best_path_pts is None:
+                print("NO OK VIABLE REACHABLE GOALS FOUND BY RRT!")
+                return
+
+            print("FOUND SOME REACHABLE GOAL, SETTING IT AS GOAL AND SENDING PATH TO IT!")
+            save_last_pos_as_goal = True
 
         min_path_len = 1
         if np.linalg.norm(best_path_pts[-1, :] - planning_start_vp.position) < min_path_len:
@@ -1370,16 +1453,22 @@ class NavNode:
         pts_fcu, headings_fcu = transformViewpoints(best_path_pts, best_path_headings, np.linalg.inv(T_smap_origin_to_fcu))
         pts_global, headings_global = transformViewpoints(best_path_pts, best_path_headings, self.spheremap.T_global_to_own_origin)
 
-        print("PTS IN FCU FRAME (SHOULD START AT ZERO!):")
+        if save_last_pos_as_goal:
+            self.current_goal_vp_global = Viewpoint(pts_global[-1, :], headings_global[-1])
+            self.current_goal_vp_pathfinding_times = 0
+
+        print("PTS IN FCU FRAME (SHOULD START NEAR ZERO!):")
         print(pts_fcu)
-        print("HEADINGS IN GLOBAL FRAME (SHOULD START AT ZERO!):") # GLOBAL IS ROTATED BY 180 DEG FROM VIO ORIGIN!
+        print("HEADINGS IN GLOBAL FRAME (SHOULD START NEAR ZERO!):") # GLOBAL IS ROTATED BY 180 DEG FROM VIO ORIGIN!
         print(headings_fcu)
 
         # SEND IT AND SET FLAGS
-        if headings_fcu.size > 1:
-            self.send_path_to_trajectory_generator(pts_fcu[1:, :], headings_fcu[1:])
-        else:
-            self.send_path_to_trajectory_generator(pts_fcu, headings_fcu)
+        # if headings_fcu.size > 1:
+        #     self.send_path_to_trajectory_generator(pts_fcu[1:, :], headings_fcu[1:])
+        # else:
+        #     self.send_path_to_trajectory_generator(pts_fcu, headings_fcu)
+        self.send_path_to_trajectory_generator(pts_fcu, headings_fcu)
+
         self.currently_navigating_pts = pts_global
         self.currently_navigating_headings = headings_global
         self.trajectory_following_moved_time = rospy.get_rostime()
@@ -1390,15 +1479,13 @@ class NavNode:
         return
     # # #}
 
-    def find_paths_rrt(self, start_vp, visualize = True, max_comp_time=0.5, max_step_size = 0.2, max_spread_dist=15, p_greedy = 0.3, min_odist = 0.1, max_odist = 0.5, max_iter = 700006969420):# # #{
+    def find_paths_rrt(self, start_vp, visualize = True, max_comp_time=0.5, max_step_size = 0.5, max_spread_dist=15, min_odist = 0.1, max_odist = 0.5, max_iter = 700006969420, goal_vp_smap=None, p_greedy = 0.3, mode='find_goals'):# # #{
         # print("RRT: STARTING, FROM TO:")
         # print(start_vp)
 
-        # bounds = np.abs((start_vp.position - goal_vp.position))
         bounds = np.ones((1,3)) * max_spread_dist
         # bounds += 10
 
-        # epicenter = (start_vp.position + goal_vp.position) / 2
         epicenter = start_vp.position 
 
         max_conn_size = max_step_size * 1.05
@@ -1430,6 +1517,8 @@ class NavNode:
 
             # SAMPLE PT IN SPACE
             sampling_goal_pt = (np.random.rand(1, 3)*2 - np.ones((1,3))) * bounds * 0.6  + epicenter
+            if not (goal_vp_smap is None) and np.random.rand() < p_greedy:
+                sampling_goal_pt = goal_vp_smap.position
 
             # FIND NEAREST POINT TO THE SAMPLING DIRPOINT
             dists = np.array(np.linalg.norm(sampling_goal_pt - tree_pos, axis=1)).flatten()
@@ -1448,15 +1537,17 @@ class NavNode:
             new_node_pos = new_node_pos.reshape((1,3))
 
             # IF IN SPHERE
-            new_node_fspace_dist = self.spheremap.getMaxDistToFreespaceEdge(new_node_pos) 
-            if new_node_fspace_dist < 0.1:
+            new_node_fspace_dist = self.spheremap.getMaxDistToFreespaceEdge(new_node_pos) * self.fspace_bonus_mod 
+            if new_node_fspace_dist < min_odist:
                 n_unsafe += 1
                 continue
+
             # new_node_odist = self.spheremap.getMaxDistToFreespaceEdge(new_node_pos)
             new_node_odist = self.spheremap.getMinDistToSurfaces(new_node_pos)
             if new_node_odist < min_odist:
                 n_unsafe += 1
                 continue
+            new_node_odist = min(new_node_odist, new_node_fspace_dist)
 
             # FIND ALL CONNECTABLE PTS
             connectable_mask = dists < max_conn_size
@@ -1561,33 +1652,53 @@ class NavNode:
         T_global_to_imu = self.odom_msg_to_transformation_matrix(latest_odom_msg)
         T_global_to_fcu = T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
 
-        toofar = np.logical_not(check_points_in_box(heads_global, self.roomba_bounds_global))
-
         heads_values = None
-        if np.all(toofar):
-            print("ALL PTS OUTSIDE OF ROOMBA BBX! SETTING NOVELTY BASED ON DISTANCE IN DIRECTION TO CENTER")
-            current_fcu_in_global = T_global_to_fcu[:3, 3].reshape((1,3))
-            dirvecs = heads_global - current_fcu_in_global
-            dir_to_center = - current_fcu_in_global / np.linalg.norm(current_fcu_in_global)
-            dists_towards_center = (dirvecs @ dir_to_center.T).flatten()
+        acceptance_thresh = -1000
+        heads_scores = np.full((1, heads_indices.size), acceptance_thresh-1).flatten()
+        heads_values = np.full((1, heads_indices.size), acceptance_thresh-1).flatten()
 
-            heads_values = self.roomba_value_weight * dists_towards_center
-        else:
-            current_fcu_in_global = T_global_to_fcu[:3, 3].reshape((1,3))
-            dirvecs = heads_global - current_fcu_in_global
-            roombadir = self.roomba_dirvec_global 
-            dists_in_dir = (dirvecs @ roombadir.T).flatten()
+        if mode == 'find_goals':
+            acceptance_thresh = 0
+            toofar = np.logical_not(check_points_in_box(heads_global, self.roomba_bounds_global))
+            if np.all(toofar):
+                print("ALL PTS OUTSIDE OF ROOMBA BBX! SETTING NOVELTY BASED ON DISTANCE IN DIRECTION TO CENTER")
+                current_fcu_in_global = T_global_to_fcu[:3, 3].reshape((1,3))
+                dirvecs = heads_global - current_fcu_in_global
+                dir_to_center = - current_fcu_in_global / np.linalg.norm(current_fcu_in_global)
+                dists_towards_center = (dirvecs @ dir_to_center.T).flatten()
 
-            heads_values = self.roomba_value_weight * dists_in_dir
+                heads_values = self.roomba_value_weight * dists_towards_center
+            else:
+                current_fcu_in_global = T_global_to_fcu[:3, 3].reshape((1,3))
+                dirvecs = heads_global - current_fcu_in_global
+                roombadir = self.roomba_dirvec_global 
+                dists_in_dir = (dirvecs @ roombadir.T).flatten()
 
-        heads_scores = heads_values - total_costs[heads_indices] 
-        # print(heads_scores.shape)
+                heads_values = self.roomba_value_weight * dists_in_dir
+                heads_values[toofar] = acceptance_thresh-1
+
+            heads_scores = heads_values - total_costs[heads_indices] 
+        elif mode == 'to_goal':
+            dists_from_goal = np.linalg.norm(tree_pos[heads_indices, :] - goal_vp_smap.position, axis = 1)
+            # heading_difs_from_goal = tree_headings[heads_indices] - goal_vp.heading
+            reaching_goal = dists_from_goal <= self.reaching_dist
+            print("N REACHING GOAL: " + str(np.sum(reaching_goal)))
+            print(heads_scores.shape)
+            print(reaching_goal.shape)
+            print(heads_indices.shape)
+
+            heads_values[reaching_goal] = acceptance_thresh + 1
+            heads_scores[reaching_goal] = -total_costs[heads_indices[reaching_goal]]
 
         best_head = np.argmax(heads_scores)
         print("BEST HEAD: " + str(best_head))
         best_node_index = heads_indices[best_head]
-        print("-----BEST NODE VALUE: " +str(heads_values[best_head]))
+        print("-----BEST NODE VALUE (mode:"+mode+ ") : " +str(heads_values[best_head]))
         print("-----BEST NODE COST: " +str(total_costs[best_node_index]))
+
+        if heads_values[best_head] <= acceptance_thresh:
+            print("-----BEST HEAD IS BELOW ACCEPTANCE THRESHOLD, RETURNING NO VIABLE PATHS!!!")
+            return None, None
 
 
         # RECONSTRUCT PATH FROM THERE
@@ -1605,134 +1716,11 @@ class NavNode:
         path_idxs.reverse()
         path_idxs = np.array(path_idxs)
 
-        return tree_pos[path_idxs, :], tree_headings[path_idxs]
+        # return tree_pos[path_idxs, :], tree_headings[path_idxs]
+        pp_pts, pp_headings = self.postproc_path(tree_pos[path_idxs, :], tree_headings[path_idxs]) #WILL ALWAYS DISCARD ORIGIN!
+        return pp_pts, pp_headings
 
     # # #}
-
-    def findPathAstarInSubmap(self, smap, startpoint, endpoint, maxdist_to_graph=10, visual = False):# # #{
-        print("PATHFIND: STARTING, FROM TO:")
-        print(startpoint)
-        print(endpoint)
-
-        if smap.points is None: 
-            print("PATHFIND: MAP IS EMPTY!!!")
-            return None
-
-        # FIND NEAREST NODES TO START AND END
-
-        # CHECK ALL SEGMENTS
-        start_seg_id = None
-        start_node_index = None
-        end_node_index = None
-        dist_from_startpoint = np.linalg.norm((smap.points - startpoint), axis=1) - smap.radii
-        dist_from_endpoint = np.linalg.norm((smap.points - endpoint), axis=1) - smap.radii
-
-        best_sumdist = None
-        # print("N UNIQUE SEGMENTS:")
-
-        for seg_id in np.unique(smap.connectivity_labels):
-            print("SEG")
-            print(seg_id)
-            seg_mask = smap.connectivity_labels == seg_id
-            mask_idxs = np.where(seg_mask)[0]
-
-            # if smap.connectivity_labels is None:
-            #     print("WARN! NO CONNECTIVITY LABELS!")
-            #     smap.labelSpheresByConnectivity()
-
-            # ONLY CONSIDER GOAL POINTS IN THE SAME CONNECTIVITY REGION
-
-            t_start_node_index = mask_idxs[np.argmin(dist_from_startpoint[seg_mask])]
-            t_end_node_index = mask_idxs[np.argmin(dist_from_endpoint[seg_mask])]
-
-            enddist = dist_from_startpoint[t_start_node_index]
-            startdist = dist_from_endpoint[t_end_node_index]
-
-            print(enddist)
-            print(startdist)
-            if(enddist > maxdist_to_graph or startdist > maxdist_to_graph):
-                continue
-            sumdist = enddist + startdist
-            if (best_sumdist is None) or sumdist < best_sumdist:
-                print("found better seg with sumdist: " + str(sumdist))
-                print(enddist)
-                print(startdist)
-                best_sumdist = sumdist
-                start_seg_id = seg_id
-                start_node_index = t_start_node_index 
-                end_node_index = t_end_node_index 
-
-        if best_sumdist is None:
-            print("PATHFIND: start or end too far form graph!")
-            # print("N SPHERES:")
-            # print(smap.points.shape[0])
-            return None
-
-        goal_node_pt = smap.points[end_node_index]
-        open_set = []
-        # closed_set = set()
-        closed_set = {start_node_index: None}
-
-        # Priority queue for efficient retrieval of the node with the lowest total cost
-        heapq.heappush(open_set, (0, start_node_index, None))
-
-        # Dictionary to store the cost of reaching each node from the start
-        g_score = {start_node_index: 0}
-
-        # Dictionary to store the estimated total cost from start to goal passing through the node
-        startned_dist = np.linalg.norm(smap.points[start_node_index] - goal_node_pt)
-        print("PATHFIND: startnend dist:" + str(startned_dist))
-        f_score = {start_node_index: startned_dist }
-
-        path = []
-        while open_set:
-            current_f, current_index, parent = heapq.heappop(open_set)
-            # print("POPPED: " + str(current_index) + " F: " + str(current_f))
-
-            if current_index == end_node_index:
-                path = [current_index]
-                while not parent is None:
-                    path.append(parent)
-                    current_index = parent
-                    parent = closed_set[current_index]
-                break
-
-            # closed_set.add(current_index)
-
-            conns = smap.connections[current_index]
-            # print("CONNS:")
-            # print(conns)
-            if conns is None:
-                continue
-
-            for neighbor_index in conns:
-                euclid_dist = np.linalg.norm(smap.points[current_index] - smap.points[neighbor_index])
-                neighbor_rad = smap.radii[neighbor_index]
-                if neighbor_rad < self.min_planning_odist:
-                    continue
-                safety_g = self.compute_safety_cost(neighbor_rad, euclid_dist) * self.safety_weight
-
-                tentative_g = g_score[current_index] + euclid_dist + safety_g
-
-                if neighbor_index not in g_score or tentative_g < g_score[neighbor_index]:
-                    g_score[neighbor_index] = tentative_g
-                    f_score[neighbor_index] = tentative_g + np.linalg.norm(smap.points[neighbor_index] - goal_node_pt)
-                    heapq.heappush(open_set, (f_score[neighbor_index], neighbor_index, current_index))
-                    closed_set[neighbor_index] = current_index
-
-        path.reverse()
-        print("PATHFIND: RES PATH: ")
-        print(path)
-        print("N CLOSED NODES: " + str(len(closed_set.keys())))
-
-        if len(path) == 0:
-            return None
-
-        if visual:
-            self.visualize_trajectory(smap.points[np.array(path), :], smap.T_global_to_own_origin, startpoint, endpoint)
-
-        return smap.points[np.array(path), :]
-# # #}
 
     def set_global_roadmap(rm):# # #{
         self.global_roadmap = rm
@@ -1779,130 +1767,6 @@ class NavNode:
         print("SENT PATH TO TRAJ GENERATOR, N PTS: " + str(n_pts))
 
         return None
-# # #}
-
-    def findGlobalPath(self, start_vp, goal_vp, goal_vp_map_index):# # #{
-        # VIEWPOINTS SHOULD BE IN RELATIVE COORDS OF THE SUBMAPS!!!
-        # TEST TOPOLOGICAL REACHABILITY FIRST!
-        print("GLOBAL PATHFINDING TO POINT AND SUBMAP_ID:")
-        print(goal_vp.position)
-        print(goal_vp_map_index)
-    
-        n_old_submaps = len(self.mchunk.submaps)
-        reached_flags = np.full((n_old_submaps), False)
-        reaching_costs = np.zeros((n_old_submaps))
-
-
-        open_set = []
-        # closed_set = set()
-        closed_set = {}
-
-        # Priority queue for efficient retrieval of the node with the lowest total cost
-
-        # heapq.heappush(open_set, (0, start_node_index, None))
-        # g_score = {start_node_index: 0}
-        g_score = {}
-
-        for conn in self.spheremap.map2map_conns:
-            euclid_dist = np.linalg.norm(conn.pt_in_first_map_frame - start_vp.position)
-            heapq.heappush(open_set, (euclid_dist, conn.second_map_id, n_old_submaps))
-            # print("STARTING CONN TO: " + str(conn.second_map_id))
-            closed_set[conn.second_map_id] = n_old_submaps
-            g_score[conn.second_map_id] = euclid_dist
-
-        # Dictionary to store the cost of reaching each node from the start
-
-        # Dictionary to store the estimated total cost from start to goal passing through the node
-        # startned_dist = np.linalg.norm(smap.points[start_node_index] - goal_node_pt)
-        # print("PATHFIND: startnend dist:" + str(startned_dist))
-        # f_score = {start_node_index: startned_dist }
-        # print("TOPO PLANNING! N SUBMAPS IN HISTORY: " + str(n_old_submaps))
-
-        path = []
-        while open_set:
-            current_f, current_index, parent = heapq.heappop(open_set)
-            # print("POPPED: " + str(current_index) + " F: " + str(current_f))
-
-            smap = self.mchunk.submaps[current_index]
-            reached_flags[current_index] = True
-
-            if current_index == goal_vp_map_index:
-                path = [current_index]
-                # while not parent is None:
-                while parent != n_old_submaps:
-                    path.append(parent)
-                    current_index = parent
-                    parent = closed_set[current_index]
-                break
-
-            # closed_set.add(current_index)
-
-            conns = smap.map2map_conns
-            if conns is None:
-                continue
-
-            for c in conns:
-                neighbor_index = c.second_map_id
-                # print("NEIGHBOR: " + str(neighbor_index))
-                if neighbor_index == n_old_submaps or reached_flags[neighbor_index]:
-                    continue
-                pt_prev = smap.getPointOfConnectionToSubmap(parent)
-                pt_next = c.pt_in_first_map_frame 
-
-                # euclid_dist = np.linalg.norm(smap.points[current_index] - smap.points[neighbor_index])
-                euclid_dist = np.linalg.norm(pt_prev - pt_next)
-                tentative_g = g_score[current_index] + euclid_dist
-
-                # if neighbor_index not in g_score or tentative_g < g_score[neighbor_index]:
-                if neighbor_index not in g_score or tentative_g < g_score[neighbor_index]:
-                    g_score[neighbor_index] = tentative_g
-                    heapq.heappush(open_set, (g_score[neighbor_index], neighbor_index, current_index))
-                    closed_set[neighbor_index] = current_index
-        path.reverse()
-        print("TOPO PLANNING FOUND PATH:")
-        print(path)
-        if len(path) == 0:
-            print("EMPTY TOPO PATH!")
-            return None
-
-        # CONSTRUCT PATH OUT OF SPHERES
-        # current_planning_map = self.spheremap
-        # pt1 = start_vp.position
-        # pt2 = current_planning_map.getPointOfConnectionToSubmap(path[0])
-        minipath_res = self.findPathAstarInSubmap(self.spheremap, start_vp.position, self.spheremap.getPointOfConnectionToSubmap(path[0]))
-        if minipath_res is None:
-            print("CANT FIND MINIPATH TO 1ST CONN POINT")
-            return None
-        minipath_res = np.concatenate((minipath_res, self.spheremap.getPointOfConnectionToSubmap(path[0])))
-        minipath_in_global_frame = transformPoints(minipath_res, self.spheremap.T_global_to_own_origin)
-        total_path = minipath_in_global_frame 
-        prev_id = n_old_submaps
-
-        for i in range(len(path)-1):
-            current_planning_map = self.mchunk.submaps[path[i]]
-            pt1 = current_planning_map.getPointOfConnectionToSubmap(prev_id)
-            pt2 = current_planning_map.getPointOfConnectionToSubmap(path[i+1])
-            minipath_res = self.findPathAstarInSubmap(current_planning_map, pt1, pt2)
-            if minipath_res is None:
-                print("CANT FIND MINIPATH AT IDX" + str(i))
-                return None
-            minipath_res = np.concatenate((minipath_res, pt2))
-            minipath_in_global_frame = transformPoints(minipath_res, current_planning_map.T_global_to_own_origin)
-            total_path = np.concatenate((total_path, minipath_in_global_frame))
-
-            prev_id = path[i]
-
-        final_submap = self.mchunk.submaps[goal_vp_map_index]
-        minipath_res = self.findPathAstarInSubmap(final_submap, final_submap.getPointOfConnectionToSubmap(prev_id), goal_vp.position)
-        if minipath_res is None:
-            print("CANT FIND MINIPATH TO GOAL IN LAST MAP")
-            return None
-        minipath_in_global_frame = transformPoints(minipath_res, final_submap.T_global_to_own_origin)
-        total_path = np.concatenate((total_path, minipath_in_global_frame))
-        prev_id = n_old_submaps
-
-        print("--FOUND TOTAL ROADMAP IN GLOBAL FRAME!!!")
-        return total_path
 # # #}
 
     def odom_msg_to_transformation_matrix(self, closest_time_odom_msg):# # #{
@@ -2441,13 +2305,14 @@ class NavNode:
         # # marker.ns = self.marker_ns
         # marker.action = Marker.DELETEALL
         # clear_msg.markers.append(marker)
-        # self.spheremap_spheres_pub.publish(clear_msg)
 
         marker_array = MarkerArray()
+        self.get_spheremap_marker_array(marker_array, self.spheremap, self.spheremap.T_global_to_own_origin, ms=self.marker_scale, do_spheres=False, do_surfels=True)
+        self.spheremap_outline_pub.publish(marker_array)
 
-        self.get_spheremap_marker_array(marker_array, self.spheremap, self.spheremap.T_global_to_own_origin, ms=self.marker_scale)
-
-        self.spheremap_spheres_pub.publish(marker_array)
+        marker_array = MarkerArray()
+        self.get_spheremap_marker_array(marker_array, self.spheremap, self.spheremap.T_global_to_own_origin, ms=self.marker_scale, do_spheres=True, do_surfels=False, do_keyframes=False)
+        self.spheremap_freespace_pub.publish(marker_array)
 # # #}
     
     def visualize_depth(self, pixpos, tri):# # #{
@@ -2466,7 +2331,7 @@ class NavNode:
         return res
 # # #}
 
-    def get_spheremap_marker_array(self, marker_array, smap, T_inv, alternative_look=False, do_connections=False,  do_surfels=True, do_spheres=True, do_keyframes=True, do_normals=False, do_map2map_conns=True, ms=1, clr_index =0):# # #{
+    def get_spheremap_marker_array(self, marker_array, smap, T_inv, alternative_look=False, do_connections=False,  do_surfels=True, do_spheres=True, do_keyframes=False, do_normals=False, do_map2map_conns=True, ms=1, clr_index =0):# # #{
         # T_vis = np.linalg.inv(T_inv)
         T_vis = T_inv
         pts = transformPoints(smap.points, T_vis)
@@ -2560,19 +2425,9 @@ class NavNode:
                 for j in range(len(smap.connections[i])):
                     point1 = Point()
                     point2 = Point()
-                    # trpt = transformPoints(np.array([[smap.points[i, :]], smap.points[smap.connections[i][j], :]]), T_vis)
-                    # p1 = smap.points[i, :]
-                    # p2 = smap.points[smap.connections[i][j], :][0]
-                    # p1 = trpt[0, :]
-                    # p2 = trpt[1, :]
 
                     p1 = pts[i, :]
                     p2 = pts[smap.connections[i].flatten()[j], :]
-                    # print(p1)
-                    # print(p2)
-                    # print("KURVA")
-                    # print(smap.connections[i].flatten())
-                    # print(smap.connections[i][j])
                     
                     point1.x = p1[0]
                     point1.y = p1[1]

@@ -233,6 +233,8 @@ class SphereMap:
         return True# # #}
 
     def getMinDistToSurfaces(self, pt):# # #{
+        if self.surfel_points is None:
+            return np.inf
         dists = np.linalg.norm(self.surfel_points - pt, axis=1)
 
         # inside_mask = dists < 0
@@ -383,12 +385,13 @@ class SphereMap:
             peek_thresh = 2
             ratio_thresh = 1
             # pdt = peeking_dists < peek_thresh
-            magic = norms < ((others_radii + radius) / 2) * 0.9
-            trsh = others_radii > ratio_thresh * radius
-            wp = self.wouldPruningNodeMakeConnectedNodesNotFullGraph(idx)
+            magic = norms < ((others_radii + radius) / 2) * 0.5
+            # trsh = others_radii > ratio_thresh * radius
+            # wp = self.wouldPruningNodeMakeConnectedNodesNotFullGraph(idx)
+            # smallerenough = 
 
-            if (not wp) and np.any(magic):
-            # if np.any(np.logical_and(pdt, trsh)):
+            # if (not wp) and np.any(magic):
+            if np.any(magic):
                 shouldkeep[idx] = False
                 n_remove += 1
         # print("REMOVING REDUNDANT: " + str(n_remove))
