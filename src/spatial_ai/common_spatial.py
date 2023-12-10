@@ -32,6 +32,34 @@ def transformViewpoints(pts, headings, T):
 
     return res[:3, :].T, res_heads
 
+def check_points_in_box(points, bounds):
+    """
+    Check if all 3D points fall within the specified box.
+
+    Parameters:
+    - points: NumPy array of shape (N, 3) representing 3D points.
+    - x1, x2: Range of x values for the box.
+    - y1, y2: Range of y values for the box.
+    - z1, z2: Range of z values for the box.
+
+    Returns:
+    - A boolean array indicating whether each point is inside the box.
+    """
+    x1 = bounds[0]
+    x2 = bounds[1]
+    y1 = bounds[2]
+    y2 = bounds[3]
+    z1 = bounds[4]
+    z2 = bounds[5]
+    within_x = np.logical_and(points[:, 0] >= x1, points[:, 0] <= x2)
+    within_y = np.logical_and(points[:, 1] >= y1, points[:, 1] <= y2)
+    within_z = np.logical_and(points[:, 2] >= z1, points[:, 2] <= z2)
+
+    # Combine the conditions for all three dimensions
+    points_within_box = np.logical_and(np.logical_and(within_x, within_y), within_z)
+
+    return points_within_box
+
 class Viewpoint(object):
     def __init__(self, position, heading=None):
         self.position = position
@@ -75,6 +103,7 @@ class SphereMap:
         self.surfels_filtering_radius = 1
         self.map2map_conns = []
 
+        self.surfels_kdtree = None
         self.surfel_points = None
         self.surfel_radii = None
         self.surfel_normals = None
@@ -182,6 +211,7 @@ class SphereMap:
         # self.surfel_normals = self.surfel_normals[keep_surfels_mask, :] / n_considered
         self.surfel_normals = self.surfel_normals[keep_surfels_mask, :] / np.linalg.norm(self.surfel_normals[keep_surfels_mask, :], axis=1).reshape(n_keep, 1)
 
+        # self.surfel_kdtree = 
 
         return True
     # # #}
@@ -201,6 +231,15 @@ class SphereMap:
                     print(otherconns)
                     return False
         return True# # #}
+
+    def getMinDistToSurfaces(self, pt):# # #{
+        dists = np.linalg.norm(self.surfel_points - pt, axis=1)
+
+        # inside_mask = dists < 0
+        # if not np.any(inside_mask):
+        #     return -1
+        # largest_inside_dist = np.max(-dists[inside_mask])
+        return np.min(dists)# # #}
 
     def getMaxDistToFreespaceEdge(self, pt):# # #{
         # query_res = self.spheres_kdtree.query(pt.reshape((1,3), k=10, distance_upper_bound=affection_distance)

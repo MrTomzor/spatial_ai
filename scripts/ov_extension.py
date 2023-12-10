@@ -156,6 +156,7 @@ class NavNode:
         self.noprior_triangulation_points = None
         self.odomprior_triangulation_points = None
         self.spheremap_mutex = threading.Lock()
+        self.predicted_traj_mutex = threading.Lock()
 
         # SRV
         self.vocab_srv = rospy.Service("save_vocabulary", EmptySrv, self.saveCurrentVisualDatabaseToVocabFile)
@@ -177,6 +178,7 @@ class NavNode:
         self.recent_submaps_vis_pub = rospy.Publisher('recent_submaps_vis', MarkerArray, queue_size=10)
         self.path_planning_vis_pub = rospy.Publisher('path_planning_vis', MarkerArray, queue_size=10)
         self.visual_similarity_vis_pub = rospy.Publisher('visual_similarity_vis', MarkerArray, queue_size=10)
+        self.unsorted_vis_pub = rospy.Publisher('unsorted_markers', MarkerArray, queue_size=10)
 
         self.kp_pub = rospy.Publisher('tracked_features_img', Image, queue_size=1)
         self.depth_pub = rospy.Publisher('estim_depth_img', Image, queue_size=1)
@@ -315,10 +317,22 @@ class NavNode:
         self.safety_replanning_trigger_odist = 0.4
         self.min_planning_odist = 0.65
         self.max_planning_odist = 2
-        self.safety_weight = 2
-        self.fragmenting_travel_dist = 1500
+        self.safety_weight = 3
+        self.fragmenting_travel_dist = 20
         self.visual_kf_addition_heading = 3.14159 /2
         self.visual_kf_addition_dist = 2
+
+        # ROOMBA PARAMS
+        self.roomba_progress_lasttime = None
+        self.roomba_dirvec_global = None
+        self.roomba_motion_start_global = None
+        self.roomba_value_weight = 10
+        self.roomba_progress_index = 0
+        self.roomba_progress_step = 3
+        self.roomba_progress_max_time_per_step = 50
+        self.roomba_doubletime = False
+
+        self.roomba_bounds_global = [-20, 20, -30, 30, -10, 20]
 
         self.verbose_submap_construction = False
 
@@ -1096,34 +1110,35 @@ class NavNode:
         print("computation time: " + str((comp_time) * 1000) +  " ms")# # #}
 
     def predicted_trajectory_callback(self, msg):# # #{
-        # PARSE THE MSG
-        pts = np.array([[pt.x, pt.y, pt.z] for pt in msg.position])
-        headings = np.array([h for h in msg.heading])
-        msg_frame = msg.header.frame_id
+        with ScopedLock(self.predicted_traj_mutex):
+            # PARSE THE MSG
+            pts = np.array([[pt.x, pt.y, pt.z] for pt in msg.position])
+            headings = np.array([h for h in msg.heading])
+            msg_frame = msg.header.frame_id
 
-        # GET CURRENT ODOM MSG
-        # latest_odom_msg = self.odom_buffer[-1]
-        # T_global_to_imu = self.odom_msg_to_transformation_matrix(latest_odom_msg)
-        # T_global_to_fcu = T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
+            # GET CURRENT ODOM MSG
+            # latest_odom_msg = self.odom_buffer[-1]
+            # T_global_to_imu = self.odom_msg_to_transformation_matrix(latest_odom_msg)
+            # T_global_to_fcu = T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
 
 
-        T_msg_to_fcu = self.lookupTransformAsMatrix(msg_frame, self.fcu_frame)
-        T_fcu_to_global = self.lookupTransformAsMatrix(self.fcu_frame, 'global')
+            T_msg_to_fcu = self.lookupTransformAsMatrix(msg_frame, self.fcu_frame)
+            T_fcu_to_global = self.lookupTransformAsMatrix(self.fcu_frame, 'global')
 
-        T_msg_to_global = T_msg_to_fcu @ T_fcu_to_global
+            T_msg_to_global = T_msg_to_fcu @ T_fcu_to_global
 
-        pts_global, headings_global = transformViewpoints(pts, headings, np.linalg.inv(T_msg_to_global))
-        # print("PTS GLOBAL: ")
-        # print(pts_global)
+            pts_global, headings_global = transformViewpoints(pts, headings, np.linalg.inv(T_msg_to_global))
+            # print("PTS GLOBAL: ")
+            # print(pts_global)
 
-        # print("PTS FCU: ")
-        pts_fcu, headings_fcu = transformViewpoints(pts_global, headings_global, T_fcu_to_global)
-        # print(pts_fcu)
-        # print(headings_fcu)
+            # print("PTS FCU: ")
+            pts_fcu, headings_fcu = transformViewpoints(pts_global, headings_global, T_fcu_to_global)
+            # print(pts_fcu)
+            # print(headings_fcu)
 
-        self.predicted_trajectory_stamps = msg.stamps
-        self.predicted_trajectory_pts_global = pts_global
-        self.predicted_trajectory_headings_global = headings_global
+            self.predicted_trajectory_stamps = msg.stamps
+            self.predicted_trajectory_pts_global = pts_global
+            self.predicted_trajectory_headings_global = headings_global
 
     # # #}
 
@@ -1132,22 +1147,32 @@ class NavNode:
     def get_future_predicted_trajectory_global_frame(self):# # #{
         now = rospy.get_rostime()
 
+        stamps = None
+        pts = None
+        headings = None
+
         if self.predicted_trajectory_pts_global is None:
             return None, None, None
-        n_pred_pts = self.predicted_trajectory_pts_global.shape[0]
+
+        with ScopedLock(self.predicted_traj_mutex):
+            stamps = self.predicted_trajectory_stamps
+            pts = self.predicted_trajectory_pts_global
+            headings = self.predicted_trajectory_headings_global
+
+        n_pred_pts = pts.shape[0]
 
         first_future_index = -1
         for i in range(n_pred_pts):
-            if (self.predicted_trajectory_stamps[i] - now).to_sec() > 0:
+            if (stamps[i] - now).to_sec() > 0:
                 first_future_index = i
                 break
         if first_future_index == -1:
             print("WARN! - predicted trajectory is pretty old!")
             return None, None, None
 
-        pts_global = self.predicted_trajectory_pts_global[first_future_index:, :]
-        headings_global = self.predicted_trajectory_headings_global[first_future_index:]
-        relative_times = np.array([(self.predicted_trajectory_stamps[i] - now).to_sec() for i in range(first_future_index, n_pred_pts)])
+        pts_global = pts[first_future_index:, :]
+        headings_global = headings[first_future_index:]
+        relative_times = np.array([(stamps[i] - now).to_sec() for i in range(first_future_index, n_pred_pts)])
 
         return pts_global, headings_global, relative_times
 
@@ -1171,7 +1196,7 @@ class NavNode:
         # print("ODISTS:")
         # # odists = np.sort(odists)
         # print(odists)
-        return np.array(res)# # #}
+        return np.array(res), odists# # #}
         
     def planning_loop_iter(self, event=None):# # #{
         # print("pes")
@@ -1205,6 +1230,47 @@ class NavNode:
         current_maxodist = self.max_planning_odist
         current_minodist = self.min_planning_odist
 
+        # CHECK ROOMBA DIR
+        roombatime =  self.roomba_progress_max_time_per_step*2 if self.roomba_doubletime else self.roomba_progress_max_time_per_step
+        if self.roomba_progress_lasttime is None or (rospy.get_rostime() - self.roomba_progress_lasttime).to_sec() > roombatime:
+            print("--RRR------CHANGING ROOMBA DIR!")
+            theta = np.random.rand(1) * 2 * np.pi
+            dirvec2 = np.array([np.cos(theta), np.sin(theta)]).reshape((1,2))
+
+            if not self.roomba_dirvec_global is None:
+                # FIND VERY DIFFERENT DIR!
+                while dirvec2.dot(self.roomba_dirvec_global[0,:2]) > 0.1:
+                    print("RAND")
+                    theta = np.random.rand(1) * 2 * np.pi
+                    dirvec2 = np.array([np.cos(theta), np.sin(theta)]).reshape((1,2))
+
+            self.roomba_dirvec_global = np.zeros((1,3))
+            self.roomba_dirvec_global[0, :2] = dirvec2 
+            print(self.roomba_dirvec_global)
+
+            self.roomba_progress_lasttime = rospy.get_rostime()
+            self.roomba_motion_start_global = pos_fcu_in_global_frame
+
+            # if self.roomba_progress_index == 0:
+            #     print("didnt reach far, giving this dir 2x the time!")
+            #     self.roomba_doubletime = True
+            # else:
+            #     self.roomba_doubletime = False
+            self.roomba_progress_index = 0
+        else:
+            # Update roomba progress
+            current_progress = np.linalg.norm(pos_fcu_in_global_frame - self.roomba_motion_start_global)
+            current_index = current_progress // self.roomba_progress_step
+            if current_index > self.roomba_progress_index:
+                print("--RRR------ROOMBA PROGRESS TO INDEX " + str(current_index))
+                self.roomba_progress_index = current_index 
+                self.roomba_progress_lasttime = rospy.get_rostime()
+            # TODO - replanning totally trigger
+
+        arrow_pos = pos_fcu_in_global_frame
+        arrow_pos[2] += 10
+        self.visualize_arrow(arrow_pos.flatten(), (arrow_pos + self.roomba_dirvec_global*5).flatten(), r=1, g=0.5, marker_idx=0)
+
 
         # IF NAVIGATING ALONG PATH, AND ALL IS OK, DO NOT REPLAN. IF NOT PROGRESSING OR REACHED END - CONTINUE FURTHER IN PLANNIGN NEW PATH!
         if not self.currently_navigating_pts is None:
@@ -1231,20 +1297,34 @@ class NavNode:
                     future_pts, future_headings, relative_times = self.get_future_predicted_trajectory_global_frame()
                     if not future_pts is None:
                         future_pts_dists = np.linalg.norm(future_pts - pos_fcu_in_global_frame, axis=1)
-                        unsafe_idxs = self.find_unsafe_pt_idxs_on_global_path(future_pts, future_headings, self.safety_replanning_trigger_odist, clearing_dist = self.uav_radius)
+                        unsafe_idxs, odists = self.find_unsafe_pt_idxs_on_global_path(future_pts, future_headings, self.safety_replanning_trigger_odist, clearing_dist = self.uav_radius)
                         if unsafe_idxs.size > 0:
-                            print("FOUND UNSAFE PT IN PREDICTED TRAJECTORY AT INDEX:" + str(unsafe_idxs[0]) + " DIST: " + str(future_pts_dists[unsafe_idxs[0]]))
+
                             time_to_unsafety = relative_times[unsafe_idxs[0]]
                             triggering_time = 2
-                            print("TIME TO UNSAFETY: " + str(time_to_unsafety) +" / " + str(triggering_time))
-                            # triggering_time = planning_time * 3
-                            
 
                             if time_to_unsafety < triggering_time:
-                            # if True:
                                 print("-----TRIGGERING UNSAFETY REPLANNING!!!")
-                                planning_time = time_to_unsafety * 0.6
+
+                                print("FOUND UNSAFE PT IN PREDICTED TRAJECTORY AT INDEX:" + str(unsafe_idxs[0]) + " DIST: " + str(future_pts_dists[unsafe_idxs[0]]))
+                                print("ODISTS UP TO PT:")
+                                print(odists[:unsafe_idxs[0]+1])
+                                print("DISTS UP TO PT:")
+                                print(future_pts_dists[:unsafe_idxs[0]+1])
+                                print("FUTURE PTS:")
+                                print(future_pts)
+                                print("FCU POS:")
+                                print(pos_fcu_in_global_frame)
+                                print("TIME TO UNSAFETY: " + str(time_to_unsafety) +" / " + str(triggering_time))
+
+                                planning_time = time_to_unsafety * 0.5
                                 print("PLANNING TIME: " +str(planning_time))
+
+                                # VISUALIZE OFFENDING PT
+                                arrow_pos2 = future_pts[unsafe_idxs[0], :]
+                                arrow_pos = copy.deepcopy(arrow_pos2)
+                                arrow_pos[2] -= 10
+                                self.visualize_arrow(arrow_pos.flatten(), arrow_pos2.flatten(), r=0.5, scale=0.5, marker_idx=1)
 
                                 # if time_to_unsafety < planning_time
 
@@ -1261,13 +1341,13 @@ class NavNode:
                                     startpos_smap_frame, startheading_smap_frame = transformViewpoints(future_pts[start_idx, :].reshape((1,3)), np.array([future_headings[start_idx]]), np.linalg.inv(self.spheremap.T_global_to_own_origin))
                                     planning_start_vp = Viewpoint(startpos_smap_frame, startheading_smap_frame[0])
                                     self.currently_navigating_pts = None
+                            # TODO - replaning to goal trigger. If failed -> replanning to any other goal. If failed -> evasive maneuvers n wait!
                             else:
                                 return
                         else:
                             return
                     else:
                         return
-
 
 
         # FIND PATHS WITH RRT
@@ -1296,7 +1376,10 @@ class NavNode:
         print(headings_fcu)
 
         # SEND IT AND SET FLAGS
-        self.send_path_to_trajectory_generator(pts_fcu, headings_fcu)
+        if headings_fcu.size > 1:
+            self.send_path_to_trajectory_generator(pts_fcu[1:, :], headings_fcu[1:])
+        else:
+            self.send_path_to_trajectory_generator(pts_fcu, headings_fcu)
         self.currently_navigating_pts = pts_global
         self.currently_navigating_headings = headings_global
         self.trajectory_following_moved_time = rospy.get_rostime()
@@ -1307,7 +1390,7 @@ class NavNode:
         return
     # # #}
 
-    def find_paths_rrt(self, start_vp, visualize = True, max_comp_time=0.5, max_step_size = 1, max_spread_dist=10, p_greedy = 0.3, min_odist = 0.1, max_odist = 0.5, max_iter = 700006969420):# # #{
+    def find_paths_rrt(self, start_vp, visualize = True, max_comp_time=0.5, max_step_size = 0.2, max_spread_dist=15, p_greedy = 0.3, min_odist = 0.1, max_odist = 0.5, max_iter = 700006969420):# # #{
         # print("RRT: STARTING, FROM TO:")
         # print(start_vp)
 
@@ -1363,7 +1446,14 @@ class NavNode:
 
             # CHECK IF POINT IS SAFE
             new_node_pos = new_node_pos.reshape((1,3))
-            new_node_odist = self.spheremap.getMaxDistToFreespaceEdge(new_node_pos)
+
+            # IF IN SPHERE
+            new_node_fspace_dist = self.spheremap.getMaxDistToFreespaceEdge(new_node_pos) 
+            if new_node_fspace_dist < 0.1:
+                n_unsafe += 1
+                continue
+            # new_node_odist = self.spheremap.getMaxDistToFreespaceEdge(new_node_pos)
+            new_node_odist = self.spheremap.getMinDistToSurfaces(new_node_pos)
             if new_node_odist < min_odist:
                 n_unsafe += 1
                 continue
@@ -1460,95 +1550,55 @@ class NavNode:
             self.visualize_rrt_tree(self.spheremap.T_global_to_own_origin, tree_pos, None, odists, parent_indices)
 
         # FIND ALL HEADS, EVALUATE THEM
-        # heads_indices = np.where(child_indices < 0)[0]
-
         comp_start_time = rospy.get_rostime()
         heads_indices = np.array([i for i in range(tree_pos.shape[0]) if len(child_indices[i]) == 0])
         print("N HEADS: " + str(heads_indices.size))
-        # print(heads_indices)
 
         # GET GLOBAL AND FCU FRAME POINTS
-
         heads_global = transformPoints(tree_pos[heads_indices, :], self.spheremap.T_global_to_own_origin)
-        # latest_odom_msg = self.odom_buffer[-1]
-        # T_global_to_imu = self.odom_msg_to_transformation_matrix(latest_odom_msg)
-        # T_global_to_fcu = T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
-        # T_smap_origin_to_fcu = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_fcu
-        # pts_in_fcu_frame = transformPoints(tree_pos[heads_indices, :], T_smap_origin_to_fcu)
 
         latest_odom_msg = self.odom_buffer[-1]
         T_global_to_imu = self.odom_msg_to_transformation_matrix(latest_odom_msg)
         T_global_to_fcu = T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
-        # T_smap_origin_to_fcu = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_fcu
-        # pts_in_fcu_frame = transformPoints(tree_pos[heads_indices, :], T_smap_origin_to_fcu)
 
-        visited_pts, visited_headings = self.get_visited_viewpoints_global()
-        print("N VISITED VPS: " + ("0" if visited_headings is None else str(visited_headings.size)))
-        dists_to_visited = scipy.spatial.distance_matrix(heads_global, visited_pts)
-        novelty = np.min(dists_to_visited, axis=1)
-        d_total_visited = self.visual_kf_addition_dist  * 0.8
-        d_total_unvisited = self.visual_kf_addition_dist  * 5
-        novelty = (novelty - d_total_visited) / (d_total_unvisited - d_total_visited)
-        print("NOVELTY SCALED UNCAPPED:")
-        print(novelty)
-        novelty[novelty > 1] = 1
+        toofar = np.logical_not(check_points_in_box(heads_global, self.roomba_bounds_global))
 
-        totally_not_novel = novelty < 0
-        novelty[totally_not_novel] = -100
-        print("N TOO CLOSE TO VPS: " +str(np.sum(totally_not_novel)))
-
-        # print(novelty)
-
-        # CAP TO SOME DIST AROUND ORIGIN!!!
-        dists_from_global = np.linalg.norm(heads_global, axis = 1)
-        max_explored_dist = 15
-        toofar = dists_from_global > 10
-        # print(toofar)
-        novelty[toofar] = - 200
-        print("N TOO FAR: " +str(np.sum(toofar)))
+        heads_values = None
         if np.all(toofar):
-            print("ALL TOO FAR! SETTING NOVELTY BASED ON DISTANCE IN DIRECTION TO CENTER")
+            print("ALL PTS OUTSIDE OF ROOMBA BBX! SETTING NOVELTY BASED ON DISTANCE IN DIRECTION TO CENTER")
             current_fcu_in_global = T_global_to_fcu[:3, 3].reshape((1,3))
             dirvecs = heads_global - current_fcu_in_global
             dir_to_center = - current_fcu_in_global / np.linalg.norm(current_fcu_in_global)
-            dists_towards_center = dirvecs @ dir_to_center.T
-            novelty = dists_towards_center.flatten()
-            print(novelty.shape)
-        # print("TOTAL NOVELTY: " + str(np.sum(novelty)))
-        # print("NOVELTY END: " )
-        # print(novelty)
+            dists_towards_center = (dirvecs @ dir_to_center.T).flatten()
 
-        heads_values = 10 * novelty
-        # heads_values = 10 * (tree_pos[heads_indices, :] - start_vp.position)[:, 0]
-        # print("EVALUTED HEADS in TIME: " + str( (rospy.get_rostime() - comp_start_time).to_sec() ))
+            heads_values = self.roomba_value_weight * dists_towards_center
+        else:
+            current_fcu_in_global = T_global_to_fcu[:3, 3].reshape((1,3))
+            dirvecs = heads_global - current_fcu_in_global
+            roombadir = self.roomba_dirvec_global 
+            dists_in_dir = (dirvecs @ roombadir.T).flatten()
+
+            heads_values = self.roomba_value_weight * dists_in_dir
+
         heads_scores = heads_values - total_costs[heads_indices] 
-        print(heads_scores.shape)
+        # print(heads_scores.shape)
 
         best_head = np.argmax(heads_scores)
         print("BEST HEAD: " + str(best_head))
         best_node_index = heads_indices[best_head]
-        print("-----BEST NODE NOVELTY: " +str(novelty[best_head]))
+        print("-----BEST NODE VALUE: " +str(heads_values[best_head]))
         print("-----BEST NODE COST: " +str(total_costs[best_node_index]))
+
 
         # RECONSTRUCT PATH FROM THERE
         path_idxs = [best_node_index]
         parent = parent_indices[best_node_index]
 
         dvec = tree_pos[best_node_index, :] - tree_pos[0, :]
-        # TOTALHEADING = np.arctan2(dvec[1], dvec[0])
-        # tree_headings[best_node_index] = TOTALHEADING #TODO temp
         tree_headings[best_node_index] = start_vp.heading
 
         while parent >= 0:
-            # print("node: " + str(parent))
             path_idxs.append(parent)
-            dvec = tree_pos[parent, :] - tree_pos[parent_indices[parent]]
-            # print("dirvec node from its parent:")
-            # print(dvec)
-            # tree_headings[parent] = TOTALHEADING #TODO temp
-            # tree_headings[parent] = start_vp.heading #TODO temp
-            # print("HEADING at node from tree: " + str(tree_headings[parent]))
-            # print("HEADING2 at node from dirvec: " + str(np.arctan2(dvec[1], dvec[0])))
             parent = parent_indices[parent]
 
         print("RETURNING OF LEN: " + str(len(path_idxs)))
@@ -1886,6 +1936,33 @@ class NavNode:
 
 
     # --VISUALIZATIONS
+    def visualize_arrow(self, pos, endpos, frame_id='global', r=1,g=0,b=0, scale=1,marker_idx=0):
+        marker_array = MarkerArray()
+
+        marker = Marker()
+        marker.header.frame_id = frame_id
+        marker.header.stamp = rospy.Time.now()
+        marker.type = Marker.ARROW
+        marker.action = Marker.ADD
+        marker.id = marker_idx
+
+        # Set the scale
+        marker.scale.x = scale *0.4
+        marker.scale.y = scale *2.0
+        marker.scale.z = scale *1.0
+
+        marker.color.a = 1
+        marker.color.r = r
+        marker.color.g = g
+        marker.color.b = b
+
+        points_msg = [Point(x=pos[0], y=pos[1], z=pos[2]), Point(x=endpos[0], y=endpos[1], z=endpos[2])]
+        marker.points = points_msg
+
+        # Add the marker to the MarkerArray
+        marker_array.markers.append(marker)
+        self.unsorted_vis_pub.publish(marker_array)
+
     def visualize_rrt_tree(self, T_vis, tree_pos, tree_headings, odists, parent_indices):# # #{
         marker_array = MarkerArray()
         pts = transformPoints(tree_pos, T_vis)
