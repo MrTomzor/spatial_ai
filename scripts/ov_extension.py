@@ -226,7 +226,6 @@ class NavNode:
         # Get the transform
         self.tf_listener.waitForTransform(self.fcu_frame, self.imu_frame, rospy.Time(), rospy.Duration(4.0))
         (trans, rotation) = self.tf_listener.lookupTransform(self.fcu_frame, self.imu_frame, rospy.Time(0))
-        # rotation_matrix = tfs.quaternion_matrix([rotation.x, rotation.y, rotation.z, rotation.w])
         rotation_matrix = tfs.quaternion_matrix(rotation)
         print(rotation_matrix)
         self.T_fcu_to_imu[:3, :3] = rotation_matrix[:3,:3]
@@ -236,7 +235,6 @@ class NavNode:
 
         self.tf_listener.waitForTransform(self.imu_frame, self.camera_frame, rospy.Time(), rospy.Duration(4.0))
         (trans, rotation) = self.tf_listener.lookupTransform(self.imu_frame, self.camera_frame, rospy.Time(0))
-        # rotation_matrix = tfs.quaternion_matrix([rotation.x, rotation.y, rotation.z, rotation.w])
         rotation_matrix = tfs.quaternion_matrix(rotation)
         print(rotation_matrix)
         self.T_imu_to_cam[:3, :3] = rotation_matrix[:3,:3]
@@ -513,7 +511,9 @@ class NavNode:
                         # SAVE OLD SPHEREMAP
                         print("SPLITTING SUBMAP!")
                         # TODO give it the transform to the next ones origin from previous origin
-                        memorized_transform_to_prev_map = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_imu
+                        # memorized_transform_to_prev_map = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_imu
+                        memorized_transform_to_prev_map = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_fcu
+
                         self.mchunk.submaps.append(self.spheremap)
                         init_new_spheremap = True
                         self.visualize_episode_submaps()
@@ -2289,9 +2289,9 @@ class NavNode:
         for i in range(max_maps_to_vis):
             idx = len(self.mchunk.submaps)-(1+i)
             clr_index = idx % max_clrs
-            if self.mchunk.submaps[idx].memorized_transform_to_prev_map is None:
-                break
-            self.get_spheremap_marker_array(marker_array, self.mchunk.submaps[-(i+1)], self.mchunk.submaps[-(i+1)].T_global_to_own_origin, alternative_look = True, do_connections = False, do_surfels = True, do_spheres = True, ms=self.marker_scale, clr_index = clr_index)
+            # if self.mchunk.submaps[idx].memorized_transform_to_prev_map is None:
+            #     break
+            self.get_spheremap_marker_array(marker_array, self.mchunk.submaps[-(i+1)], self.mchunk.submaps[-(i+1)].T_global_to_own_origin, alternative_look = True, do_connections = False, do_surfels = True, do_spheres = False, ms=self.marker_scale, clr_index = clr_index)
 
         self.recent_submaps_vis_pub.publish(marker_array)
 

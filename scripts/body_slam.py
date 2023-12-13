@@ -12,6 +12,8 @@ from scipy.spatial import Delaunay
 from scipy.spatial import ConvexHull
 # import pcl
 import inspect
+
+import tf.transformations as tfs
 # import shapely
 # from shapely.geometry import Point2D
 # from shapely.geometry.polygon import Polygon
@@ -98,6 +100,10 @@ class Tracked2DPoint:
         self.keyframe_observations = {keyframe_id: pos}
         self.current_pos = pos
         self.age = 1
+        self.last_measurement_kf_id = keyframe_id
+
+        self.invdepth_mean = None
+        self.invdepth_cov = None
 
         self.last_observed_keyframe_id = keyframe_id
         self.body_index = None
@@ -115,9 +121,10 @@ class Tracked2DPoint:
         return len(self.keyframe_observations)
 
 class KeyFrame:
-    def __init__(self, img_timestamp):
+    def __init__(self, img_timestamp, T_odom ):
         self.triangulated_points = []
         self.img_timestamp = img_timestamp
+        self.T_odom = T_odom 
 
 class OdomNode:
     def __init__(self):
@@ -170,6 +177,15 @@ class OdomNode:
         self.P = np.zeros((3,4))
         self.P[:3, :3] = self.K
         print(self.P)
+
+
+        # self.camera_frame_id = "uav1/rgb"
+        # self.odom_orig_frame_id = "uav1/fixed_origin"
+
+        self.camera_frame_id = "cam0"
+        self.odom_orig_frame_id = "global"
+
+        self.tf_listener = tf.TransformListener()
 
         # NEW
         self.new_frame = None
@@ -343,11 +359,6 @@ class OdomNode:
                     # self.tracking_stats = np.concatenate((self.tracking_stats, inside_stats))
                     continue
 
-        # DELETION = DEACTIVATION OF POINT IN DICT
-        # nondel = np.full( (1, len(active_ids)), True)
-        # nondel[deletion_ids] =  False
-        # nondel_i
-
         # NONDEACTIVATED POINTS ... ARENT CHANGED AT ALL! OH JUST INCREASED AGE (NUMBER OF IMGS LIVED)
         for px_id in active_ids:
             self.tracked_2d_points[px_id].age += 1
@@ -507,6 +518,57 @@ class OdomNode:
         print("before optimization:", np.sqrt(sse[0] / len(inliers)))
         print("after  optimization:", np.sqrt(sse[1] / len(inliers)))
 
+    def triangulateDepthLineNearestPoint(self, T_cam, pos1, pos2):
+        # TRANSFORM TO RAY DIRECTIONS IN 3D
+        dir1 = np.array([pos1[0], pos1[1], 1]).reshape(3,1)
+        dir2 = np.array([pos2[0], pos2[1], 1]).reshape(3,1)
+
+        invK = np.linalg.inv(self.K)
+        dir1 = invK @ dir1
+        dir2 = invK @ dir2
+
+        dir1 = (dir1 / np.linalg.norm(dir1)).flatten() 
+        dir2 = (dir2 / np.linalg.norm(dir2)).flatten()
+        # print("DIRS:")
+        print(dir1)
+        print(dir2)
+
+        linepos2 = T_cam[:3,3]
+        print("LINEPOS2:")
+        print(linepos2)
+
+        # ROTATE DIR2 BY THE T_CAM
+        dir2 = T_cam[:3,:3] @ dir2
+
+        angle_thresh = 0.001
+        dirdot = (dir1).dot(dir2)
+        if dirdot <= angle_thresh:
+            print("DIRVECS TOO PARALLEL! " + str(dirdot) + "/" + str(angle_thresh))
+            return None
+
+        crossprod = np.cross(dir1, dir2)
+        crossprod_normalized = crossprod / np.linalg.norm(crossprod)
+        # print("CROSSPROD_N:")
+        # print(crossprod_normalized)
+
+        dist_lines = linepos2.dot(crossprod_normalized)
+        print("DIST LINES:")
+        print(dist_lines)
+
+        # vec_along_line1 = (dir2-dir1) - pricka_vec
+        dist_pt_on_line2 = (dist_lines - linepos2.dot(dir1)) / (dir2.dot(dir1))
+        print("DIST ON LINE2: ")
+        print(dist_pt_on_line2 )
+
+        # TEST:
+        testpt = linepos2 + dir2 * dist_pt_on_line2
+        testdist = testpt.dot(dir1)
+        print("TESTDIST:")
+        print(testdist)
+
+        # RETURN DEPTH ESTIMATE IN 2ND FRAME(dist along ray2)
+        return dist_pt_on_line2
+
     def image_callback(self, msg):
         if self.node_offline:
             return
@@ -584,36 +646,82 @@ class OdomNode:
             time_since_last_keyframe = (self.new_img_stamp - self.keyframes[-1].img_timestamp).to_sec()
         print("TIME SINCE LAST KF:" + str(time_since_last_keyframe ))
 
+        # TODO - GET ODOM HERE!!
+
+        # GET CURRENT ODOM POSE
+        (trans, rotation) = self.tf_listener.lookupTransform(self.odom_orig_frame_id , self.camera_frame_id, rospy.Time(0))
+        rotation_matrix = tfs.quaternion_matrix(rotation)
+        T_odom = np.eye(4)
+        T_odom[:3, :3] = rotation_matrix[:3,:3]
+        T_odom[:3, 3] = trans
+
+        if not time_since_last_keyframe is None :
+            dist_since_last_keyframe = np.linalg.norm((np.linalg.inv(self.keyframes[self.keyframe_idx-1].T_odom) @ T_odom)[:3, 3])
+
         # if self.px_ref is None or ( time_since_last_keyframe > keyframe_time_threshold and dist_since_last_keyframe > keyframe_distance_threshold):
-        if time_since_last_keyframe is None or time_since_last_keyframe > keyframe_time_threshold:
-            # print("ATTEMPTING TO ADD NEW KEYFRAME! " + str(len(self.keyframes)) + ", dist: " + str(dist_since_last_keyframe) + ", time: " + str(time_since_last_keyframe))
+        if time_since_last_keyframe is None or (time_since_last_keyframe > keyframe_time_threshold and dist_since_last_keyframe > keyframe_distance_threshold):
             print("ATTEMPTING TO ADD NEW KEYFRAME! " + str(len(self.keyframes)))
 
             # IF YOU CAN - FIRST TRIANGULATE WITHOUT SCALE! - JUST TO DISCARD OUTLIERS
-            # can_triangulate = not self.px_cur is None TODO
-            # can_triangulate = True
-            n_optim_keyfames = 4
-            can_init = self.keyframe_idx >= n_optim_keyfames 
-            if can_init:
-                print("INITIALIIZNG")
-                optim_kf_idxs = range(self.keyframe_idx - n_optim_keyfames - 1, self.keyframe_idx)
-                optim_pt_ids = []
+            # n_optim_keyfames = 4
+            # can_init = self.keyframe_idx >= n_optim_keyfames 
+            # if can_init:
+            #     print("INITIALIIZNG")
+            #     optim_kf_idxs = range(self.keyframe_idx - n_optim_keyfames - 1, self.keyframe_idx)
+            #     optim_pt_ids = []
 
-                # FIND WHICH PTS ARE OBSERVED FROM AT LEAST 2 OF THE OPTIMIZED KFS
-                # TODO - and are not part of some body
-                for pt_id, pt in self.tracked_2d_points.items():
-                    point_kfs_in_optim_kfs = []
-                    for k in optim_kf_idxs:
-                        if k in pt.keyframe_observations.keys():
-                            point_kfs_in_optim_kfs.append(k)
-                    if len(point_kfs_in_optim_kfs) > 1:
-                        optim_pt_ids.append(pt_id)
+            #     # FIND WHICH PTS ARE OBSERVED FROM AT LEAST 2 OF THE OPTIMIZED KFS
+            #     # TODO - and are not part of some body
+            #     for pt_id, pt in self.tracked_2d_points.items():
+            #         point_kfs_in_optim_kfs = []
+            #         for k in optim_kf_idxs:
+            #             if k in pt.keyframe_observations.keys():
+            #                 point_kfs_in_optim_kfs.append(k)
+            #         if len(point_kfs_in_optim_kfs) > 1:
+            #             optim_pt_ids.append(pt_id)
 
-                # print("OPTIM KF IDXS: ")
-                # print(optim_kf_idxs)
-                # print("OPTIM POINT IDXS: ")
-                # print(optim_pt_ids)
-                self.visualBatchOptimization(optim_kf_idxs, optim_pt_ids)
+            #     # print("OPTIM KF IDXS: ")
+            #     # print(optim_kf_idxs)
+            #     # print("OPTIM POINT IDXS: ")
+            #     # print(optim_pt_ids)
+            #     # self.visualBatchOptimization(optim_kf_idxs, optim_pt_ids)
+
+            # FOR ALL PTS THAT ARE BEING TRACKED:
+            #     IF CAN TRIANGULATE (parallax + motion since last depth meas time) - TRY TRIANGULATION IF OK, ADD MEAS! 
+            self.active_2d_points_ids = [pt_id for pt_id, pt in self.tracked_2d_points.items() if pt.active]
+            min_parallax = 10
+
+            for pt_id in self.active_2d_points_ids:
+                prev_kf_id = self.tracked_2d_points[pt_id].last_measurement_kf_id
+                if prev_kf_id == self.keyframe_idx:
+                    continue
+                prev_pos =  self.tracked_2d_points[pt_id].keyframe_observations[prev_kf_id]
+                cur_pos = self.tracked_2d_points[pt_id].current_pos
+                parallax_last_meas = np.linalg.norm(cur_pos - prev_pos)
+                if parallax_last_meas < min_parallax:
+                    continue
+
+                T_delta_odom = (np.linalg.inv(self.keyframes[prev_kf_id].T_odom) @ T_odom)
+                # T_delta_odom = T_odom @ np.linalg.inv(self.keyframes[prev_kf_id].T_odom) 
+
+                # print("T ODOM:")
+                # print(T_odom)
+                print("T DELTAAA ODOM:")
+                print(T_delta_odom)
+                # print("IN 1st KF FRAME:")
+
+                # print(T_delta_odom)
+
+                depth_meas = self.triangulateDepthLineNearestPoint(T_delta_odom, prev_pos, cur_pos)
+
+                # CHECK IF ENOUGH PARALLAX
+                if not depth_meas is None:
+                    # if self.tracked_2d_points[pt_id].last_measurement_kf_id is None
+
+                    self.tracked_2d_points[pt_id].last_measurement_kf_id = self.keyframe_idx
+                    self.tracked_2d_points[pt_id].invdepth_mean = 1.0 / depth_meas
+
+            # VISUALIZE BY PROJECTING PTS THRU CAMERA WITH ESTIMATED DEPTH!!!
 
             # CONTROL FEATURE POPULATION - ADDING AND PRUNING
             self.control_features_population()
@@ -626,7 +734,9 @@ class OdomNode:
 
             # HAVE ENOUGH POINTS, ADD KEYFRAME
             print("ADDED NEW KEYFRAME! KF: " + str(len(self.keyframes)))
-            new_kf = KeyFrame(self.new_img_stamp)
+
+            new_kf = KeyFrame(self.new_img_stamp, T_odom)
+
 
             # ADD SLAM POINTS INTO THIS KEYFRAME (submap)
             new_kf.slam_points = self.slam_points
@@ -642,7 +752,7 @@ class OdomNode:
         # VISUALIZE FEATURES
         vis = self.visualize_tracking()
         self.kp_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
-        # self.visualize_slampoints_in_space()
+        self.visualize_slampoints_in_space()
 
         comp_time = time.time() - comp_start_time
         print("computation time: " + str((comp_time) * 1000) +  " ms")
@@ -739,28 +849,24 @@ class OdomNode:
     def visualize_slampoints_in_space(self):
         point_cloud = PointCloud()
         point_cloud.header.stamp = rospy.Time.now()
-        point_cloud.header.frame_id = 'global'  # Set the frame ID according to your robot's configuration
+        point_cloud.header.frame_id = self.camera_frame_id  # Set the frame ID according to your robot's configuration
 
+        self.active_2d_points_ids = [pt_id for pt_id, pt in self.tracked_2d_points.items() if pt.active]
+        for pt_id in self.active_2d_points_ids:
+            cur_pos = self.tracked_2d_points[pt_id].current_pos
+            if not self.tracked_2d_points[pt_id].invdepth_mean is None:
+                d = 1.0 / self.tracked_2d_points[pt_id].invdepth_mean
+                dir1 = np.array([cur_pos[0], cur_pos[1], 1]).reshape(3,1)
 
-        for k in range(len(self.keyframes)):
-            kps = self.keyframes[k].slam_points
-            if kps is None:
-                return
-            for i in range(kps.shape[0]):
-                # if kps[2, i] > 0:
+                invK = np.linalg.inv(self.K)
+                dir1 = invK @ dir1
+                dir1 = d * (dir1 / np.linalg.norm(dir1)).flatten() 
+
                 point1 = Point32()
-                point1.x = kps[i, 0] 
-                point1.y = kps[i, 1] 
-                point1.z = kps[i, 2] 
+                point1.x = dir1[0] 
+                point1.y = dir1[1] 
+                point1.z = dir1[2] 
                 point_cloud.points.append(point1)
-
-        # for i in range(self.slam_points.shape[0]):
-        #     # if kps[2, i] > 0:
-        #     point1 = Point32()
-        #     point1.x = kps[0, i] 
-        #     point1.y = kps[1, i] 
-        #     point1.z = kps[2, i] 
-        #     point_cloud.points.append(point1)
 
         self.slam_pcl_pub.publish(point_cloud)
 

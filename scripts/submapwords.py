@@ -197,11 +197,12 @@ desc_size = n_vert_bins * n_horiz_bins
 
 # fpath = rospkg.RosPack().get_path('spatial_ai') + "/memories/almost_loop.pickle"
 # fpath = rospkg.RosPack().get_path('spatial_ai') + "/memories/big_ep.pickle"
-fpath = rospkg.RosPack().get_path('spatial_ai') + "/memories/forest_uav.pickle"
+# fpath = rospkg.RosPack().get_path('spatial_ai') + "/memories/forest_uav.pickle"
+fpath = rospkg.RosPack().get_path('spatial_ai') + "/memories/schools_loop1.pickle"
 mchunk = CoherentSpatialMemoryChunk.load(fpath)
 
 # MERGE SUBMAPS OF MCHUNK
-merging_factor = 2
+merging_factor = 1
 n_submaps_old = len(mchunk.submaps)
 new_submaps = []
 n_new_maps = int(n_submaps_old / merging_factor)
@@ -212,9 +213,13 @@ for i in range(n_new_maps):
     if endindex > n_submaps_old:
         endindex = n_submaps_old
     print("indices:")
+    if mchunk.submaps[i].points is None or mchunk.submaps[i].surfel_points is None:
+        print("NONE PTS IN SUBMAP! SKIPPING!")
+        continue
     indices = range(i*merging_factor, endindex)
     print(indices)
     new_submaps.append(mchunk.mergeSubmaps(indices))
+
 mchunk.submaps = new_submaps
 print("MERGING DONE")
 
