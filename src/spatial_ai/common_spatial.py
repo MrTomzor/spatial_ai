@@ -15,11 +15,12 @@ def transformationMatrixToHeading(T):
     return np.arctan2(T[1,0], T[0, 0])
 
 def transformPoints(pts, T):
-    # pts = Nx3 matrix, T = transformation matrix to apply
+    # pts = NxM matrix, T = transformation matrix to apply
+    M = pts.shape[1]
     res = np.concatenate((pts.T, np.full((1, pts.shape[0]), 1)))
     res = T @ res 
-    res = res / res[3, :] # unhomogenize
-    return res[:3, :].T
+    res = res / res[M, :] # unhomogenize
+    return res[:M, :].T
 
 def transformViewpoints(pts, headings, T):
     # pts = Nx3 matrix, T = transformation matrix to apply
