@@ -155,8 +155,8 @@ class OdomNode:
         self.marker_pub = rospy.Publisher('/vo_odom', Marker, queue_size=10)
         self.kp_pcl_pub = rospy.Publisher('tracked_features_space', PointCloud, queue_size=10)
         self.kp_pcl_pub_invdepth = rospy.Publisher('tracked_features_space_invdepth', PointCloud, queue_size=10)
+        self.keyframes_marker_pub = rospy.Publisher('/keyframe_vis', MarkerArray, queue_size=10)
 
-        self.sub_cam = rospy.Subscriber('/robot1/camera1/raw', Image, self.image_callback, queue_size=10000)
 
         self.odom_buffer = []
         self.odom_buffer_maxlen = 1000
@@ -169,8 +169,24 @@ class OdomNode:
         self.orb = cv2.ORB_create(nfeatures=3000)
 
         # Load calib
+        # self.width = 800
+        # self.height = 600
         # self.K = np.array([642.8495341420769, 0, 400, 0, 644.5958939934509, 300, 0, 0, 1]).reshape((3,3))
-        self.K = np.array([643.3520818301457, 0, 400, 0, 643.3520818301457, 300, 0, 0, 1]).reshape((3,3))
+        # self.K = np.array([643.3520818301457, 0, 400, 0, 643.3520818301457, 300, 0, 0, 1]).reshape((3,3))
+        # self.camera_frame_id = "cam0"
+        # self.odom_orig_frame_id = "global"
+        # self.rgb_topic = '/robot1/camera1/raw'
+
+        self.width = 960
+        self.height = 720
+        self.K = np.array([933.5640667549508, 0.0, 500.5657553739987, 0.0, 931.5001605952165, 379.0130687255228, 0.0, 0.0, 1.0]).reshape((3,3))
+        self.camera_frame_id = "uav1/rgb"
+        self.odom_orig_frame_id = "uav1/local_origin"
+        self.rgb_topic = '/uav1/tellopy_wrapper/rgb/image_raw'
+
+
+        # SUBSCRIBE CAM
+        self.sub_cam = rospy.Subscriber(self.rgb_topic, Image, self.image_callback, queue_size=10000)
 
         # self.K = np.array([, 644.5958939934509, 400.0503960299562, 300.5824096896595]).reshape((3,3))
         self.imu_to_cam_T = np.array( [[0, -1, 0, 0], [0, 0, -1, 0], [1, 0, 0, 0], [0.0, 0.0, 0.0, 1.0]])
@@ -190,9 +206,6 @@ class OdomNode:
         # self.camera_frame_id = "uav1/rgb"
         # self.odom_orig_frame_id = "uav1/fixed_origin"
 
-        self.camera_frame_id = "cam0"
-        self.odom_orig_frame_id = "global"
-
         self.tf_listener = tf.TransformListener()
 
         # NEW
@@ -208,11 +221,9 @@ class OdomNode:
         # self.pp = (cam.cx, cam.cy)
         self.focal = 643.3520818301457
         self.pp = (400, 300)
-        self.width = 800
-        self.height = 600
         self.tracking_bin_width = 100
         self.min_features_per_bin = 1
-        self.max_features_per_bin = 10
+        self.max_features_per_bin = 5
         # self.max_features_per_bin = 1
         self.tracking_history_len = 4
         self.node_offline = False
@@ -530,9 +541,9 @@ class OdomNode:
     def triangulateDepthLineNearestPoint(self, T_cam, pos1, pos2, visualize=False):
         # TRANSFORM TO RAY DIRECTIONS IN 3D
 
-        print("PIXPOS")
-        print(pos1)
-        print(pos2)
+        # print("PIXPOS")
+        # print(pos1)
+        # print(pos2)
         if visualize:
             self.triang_vis_px1.append(pos1)
             self.triang_vis_px2.append(pos2)
@@ -552,27 +563,33 @@ class OdomNode:
         dir1 = invK @ dir1
         dir2 = invK @ dir2
 
-        print("DIRS:")
-        print(dir1)
-        print(dir2)
+        # print("DIRS:")
+        # print(dir1)
+        # print(dir2)
 
 
         dir1 = (dir1 / np.linalg.norm(dir1)).flatten() 
         dir2 = (dir2 / np.linalg.norm(dir2)).flatten()
 
         linepos2 = T_cam[:3,3]
-        print("LINEPOS2:")
-        print(linepos2)
+        # print("LINEPOS2:")
+        # print(linepos2)
 
         # ROTATE DIR2 BY THE T_CAM
         # dir2 = np.linalg.inv(T_cam)[:3,:3] @ dir2
         dir2 = T_cam[:3,:3] @ dir2
 
-        angle_thresh = 0.001
+        angle_thresh = 0.1
         dirdot = (dir1).dot(dir2)
-        if dirdot <= angle_thresh:
+        angle = np.arccos(dirdot)
+        print("ANGLE:")
+        print(angle)
+        if angle <= angle_thresh:
             print("DIRVECS TOO PARALLEL! " + str(dirdot) + "/" + str(angle_thresh))
+            self.triang_vis_d.append(-1)
+            self.triang_vis_reproj.append(pos2)
             return None
+        # TODO perpendicular motion threshold
 
         crossprod = np.cross(dir1, dir2)
         crossprod_normalized = crossprod / np.linalg.norm(crossprod)
@@ -587,28 +604,28 @@ class OdomNode:
         # dist_pt_on_line2 = ((dist_lines - linepos2.dot(dir1)) / (dir2.dot(dir1)))
 
         dist_pt_on_line2 = ((np.cross(dir1, crossprod)).dot(linepos2)) / (crossprod.dot(crossprod))
-        print("DIST ON LINE2: ")
+        print("DEPTH: ")
         print(dist_pt_on_line2 )
 
         # TEST:
         pt_on_line_2 = linepos2 + dir2 * dist_pt_on_line2
         pt_on_line_1 = pt_on_line_2  - crossprod_normalized * dist_lines
-        print("PROJECTION OF CLOSEST POINT ON LINE2 TO LINE1:")
-        print(pt_on_line_2.dot(dir1))
+        # print("PROJECTION OF CLOSEST POINT ON LINE2 TO LINE1:")
+        # print(pt_on_line_2.dot(dir1))
 
-        print("DIST LINES:")
-        print(np.linalg.norm(pt_on_line_1 - pt_on_line_2))
+        # print("DIST LINES:")
+        # print(np.linalg.norm(pt_on_line_1 - pt_on_line_2))
 
-        print("ALIGNMENT OF TESTPT2 ON DIR1")
-        print(pt_on_line_1.dot(dir1))
-        print("DIST ON LINE1: ")
-        print(np.linalg.norm(pt_on_line_1))
+        # print("ALIGNMENT OF TESTPT2 ON DIR1")
+        # print(pt_on_line_1.dot(dir1))
+        # print("DIST ON LINE1: ")
+        # print(np.linalg.norm(pt_on_line_1))
 
         # TRY REPROJECTING PT1 TO CAM1
         reproj1 = self.K @ pt_on_line_1
         reproj1 = reproj1[:2] / reproj1[2]
-        print("REPROJECTION TO CAM1:")
-        print(reproj1)
+        # print("REPROJECTION TO CAM1:")
+        # print(reproj1)
 
         res_pt = np.ones((4))
         res_pt[:3] = (pt_on_line_2 + pt_on_line_1) / 2
@@ -617,12 +634,13 @@ class OdomNode:
 
         reproj2 = self.K @ (res_pt)
         reproj2 = reproj2[:2] / reproj2[2]
+
         # reproj2 = reproj2[:2] 
-        print("REPROJECTION TO CAM2:")
-        print(reproj2)
+        # print("REPROJECTION TO CAM2:")
+        # print(reproj2)
         reproj_error = np.linalg.norm(reproj2 - pos2)
-        print("REPROJ ERROR:" )
-        print(reproj_error)
+        # print("REPROJ ERROR:" )
+        # print(reproj_error)
 
         # depth = np.linalg.norm(res_pt)
         depth = dist_pt_on_line2
@@ -706,7 +724,8 @@ class OdomNode:
         # TODO - REMOVE 2D POINTS THAT HAVE NOT BEEN OBSERVED FOR N FRAMES
 
         keyframe_time_threshold = 0.1
-        keyframe_distance_threshold = 2.5
+        # keyframe_distance_threshold = 2.5
+        keyframe_distance_threshold = 0.2
 
         time_since_last_keyframe = None
         dist_since_last_keyframe = None
@@ -756,21 +775,23 @@ class OdomNode:
             # FOR ALL PTS THAT ARE BEING TRACKED:
             #     IF CAN TRIANGULATE (parallax + motion since last depth meas time) - TRY TRIANGULATION IF OK, ADD MEAS! 
             self.active_2d_points_ids = [pt_id for pt_id, pt in self.tracked_2d_points.items() if pt.active]
-            min_parallax = 30
+            # min_parallax = 30
 
             self.triang_vis_px1 = []
             self.triang_vis_px2 = []
             self.triang_vis_d = []
             self.triang_vis_reproj = []
+
+            n_ok_meas = 0
             for pt_id in self.active_2d_points_ids:
                 prev_kf_id = self.tracked_2d_points[pt_id].last_measurement_kf_id
                 if prev_kf_id == self.keyframe_idx:
                     continue
                 prev_pos =  self.tracked_2d_points[pt_id].keyframe_observations[prev_kf_id]
                 cur_pos = self.tracked_2d_points[pt_id].current_pos
-                parallax_last_meas = np.linalg.norm(cur_pos - prev_pos)
-                if parallax_last_meas < min_parallax:
-                    continue
+                # parallax_last_meas = np.linalg.norm(cur_pos - prev_pos)
+                # if parallax_last_meas < min_parallax:
+                #     continue
 
                 T_delta_odom = (np.linalg.inv(self.keyframes[prev_kf_id].T_odom) @ T_odom)
                 # T_delta_odom = T_odom @ np.linalg.inv(self.keyframes[prev_kf_id].T_odom) 
@@ -787,11 +808,13 @@ class OdomNode:
 
                 # CHECK IF ENOUGH PARALLAX
                 if not depth_meas is None:
+                    n_ok_meas += 1
                     # if self.tracked_2d_points[pt_id].last_measurement_kf_id is None
 
                     self.tracked_2d_points[pt_id].last_measurement_kf_id = self.keyframe_idx
                     # self.tracked_2d_points[pt_id].invdepth_mean = -1.0 / depth_meas
                     self.tracked_2d_points[pt_id].depth = depth_meas
+            print("N OK MEAS: " + str(n_ok_meas) + "/" + str(len(self.active_2d_points_ids)))
 
             # VISUALIZE BY PROJECTING PTS THRU CAMERA WITH ESTIMATED DEPTH!!!
 
@@ -820,12 +843,13 @@ class OdomNode:
             # STORE THE PIXELPOSITIONS OF ALL CURRENT POINTS FOR THIS GIVEN KEYFRAME 
             # for i in range(self.px_cur.shape[0]):
             #     self.tracking_stats[i].prev_keyframe_pixel_pos = self.px_cur[i, :]
+            self.visualize_slampoints_in_space()
 
         # VISUALIZE FEATURES
         # vis = self.visualize_tracking()
-        vis = self.visualize_triang()
-        self.kp_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
-        self.visualize_slampoints_in_space()
+        self.kp_pub.publish(self.bridge.cv2_to_imgmsg(self.visualize_triang(), "bgr8"))
+
+        self.keyframes_marker_pub.publish(self.visualize_keyframes())
 
         comp_time = time.time() - comp_start_time
         print("computation time: " + str((comp_time) * 1000) +  " ms")
@@ -870,8 +894,9 @@ class OdomNode:
                 size = minsize + (maxsize - minsize) * (1 - rel_d)
 
 
-                rgb = cv2.line(rgb, (int(self.triang_vis_px1[i][0]), int(self.triang_vis_px1[i][1])), (int(self.triang_vis_reproj[i][0]), int(self.triang_vis_reproj[i][1])), (0, 0, 0), 3)
-                rgb = cv2.line(rgb, (int(self.triang_vis_px2[i][0]), int(self.triang_vis_px2[i][1])), (int(self.triang_vis_reproj[i][0]), int(self.triang_vis_reproj[i][1])), (0, 0, 0), 3)
+                # rgb = cv2.line(rgb, (int(self.triang_vis_px1[i][0]), int(self.triang_vis_px1[i][1])), (int(self.triang_vis_reproj[i][0]), int(self.triang_vis_reproj[i][1])), (0, 0, 0), 3)
+                # rgb = cv2.line(rgb, (int(self.triang_vis_px2[i][0]), int(self.triang_vis_px2[i][1])), (int(self.triang_vis_reproj[i][0]), int(self.triang_vis_reproj[i][1])), (0, 0, 0), 3)
+                rgb = cv2.line(rgb, (int(self.triang_vis_px2[i][0]), int(self.triang_vis_px2[i][1])), (int(self.triang_vis_px1[i][0]), int(self.triang_vis_px1[i][1])), (0, 0, 0), 3)
 
                 rgb = cv2.circle(rgb, (int(self.triang_vis_px1[i][0]), int(self.triang_vis_px1[i][1])), int(size), 
                                (255, 0, 0), -1) 
@@ -879,8 +904,8 @@ class OdomNode:
                 rgb = cv2.circle(rgb, (int(self.triang_vis_px2[i][0]), int(self.triang_vis_px2[i][1])), int(size), 
                                (0, 255, 0), -1) 
 
-                rgb = cv2.circle(rgb, (int(self.triang_vis_reproj[i][0]), int(self.triang_vis_reproj[i][1])), int(size), 
-                               (255, 0, 255), -1) 
+                # rgb = cv2.circle(rgb, (int(self.triang_vis_reproj[i][0]), int(self.triang_vis_reproj[i][1])), int(size), 
+                #                (255, 0, 255), -1) 
 
 
         res = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
@@ -905,7 +930,7 @@ class OdomNode:
             inside_pix_idxs = px_cur[inidx].astype(int)
 
             growsize = 7
-            minsize = 4
+            minsize = 10
 
             for i in range(inside_pix_idxs.shape[0]):
                 # size = self.tracking_stats[inidx][i].age / growsize
@@ -951,10 +976,51 @@ class OdomNode:
         flow_vis = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         return flow_vis
 
+    def visualize_keyframes(self):
+        marker_array = MarkerArray()
+        marker_id = 0
+        ms = 1
+
+        for i in range(len(self.keyframes)):
+            marker = Marker()
+            marker.header.frame_id = self.odom_orig_frame_id  # Change this frame_id if necessary
+            marker.header.stamp = rospy.Time.now()
+            marker.type = Marker.ARROW
+            marker.action = Marker.ADD
+            marker.id = marker_id
+            marker_id += 1
+
+            # Set the scale
+            marker.scale.x = ms *0.1
+            marker.scale.y = ms *0.2
+            marker.scale.z = ms *0.2
+
+            marker.color.a = 1
+            marker.color.r = 1.0
+            marker.color.g = 0.0
+            marker.color.b = 0.0
+
+            arrowlen = 1 * ms
+            # xbonus = arrowlen * np.cos(smap.visual_keyframes[i].heading + map_heading)
+            # ybonus = arrowlen * np.sin(smap.visual_keyframes[i].heading + map_heading)
+            pt1 = self.keyframes[i].T_odom[:3, 3]
+            pt2 = pt1 + self.keyframes[i].T_odom[:3, 2]
+
+            points_msg = [Point(x=pt1[0], y=pt1[1], z=pt1[2]), Point(x=pt2[0], y=pt2[1], z=pt2[2])]
+            marker.points = points_msg
+
+            marker_array.markers.append(marker)
+
+        return marker_array
+
     def visualize_slampoints_in_space(self):
         point_cloud = PointCloud()
         point_cloud.header.stamp = rospy.Time.now()
-        point_cloud.header.frame_id = self.camera_frame_id  # Set the frame ID according to your robot's configuration
+        # point_cloud.header.frame_id = self.camera_frame_id  # Set the frame ID according to your robot's configuration
+        # point_cloud.header.frame_id = 'uav1/fcu'  # Set the frame ID according to your robot's configuration
+        point_cloud.header.frame_id = self.odom_orig_frame_id  # Set the frame ID according to your robot's configuration
+
+        pts = []
 
         self.active_2d_points_ids = [pt_id for pt_id, pt in self.tracked_2d_points.items() if pt.active]
         for pt_id in self.active_2d_points_ids:
@@ -972,44 +1038,29 @@ class OdomNode:
                 dir1 = invK @ dir1
                 dir1 = d * (dir1 / np.linalg.norm(dir1)).flatten() 
 
-                point1 = Point32()
-                point1.x = dir1[0] 
-                point1.y = dir1[1] 
-                point1.z = dir1[2] 
-                point_cloud.points.append(point1)
+                # point1 = Point32()
+                # point1.x = dir1[0] 
+                # point1.y = dir1[1] 
+                # point1.z = dir1[2] 
+                # point_cloud.points.append(point1)
+                pts.append([dir1[0], dir1[1], dir1[2]])
 
-        self.slam_pcl_pub.publish(point_cloud)
+        pts_np = np.array(pts)
+        (trans, rotation) = self.tf_listener.lookupTransform(self.odom_orig_frame_id, self.camera_frame_id, rospy.Time(0))
+        rotation_matrix = tfs.quaternion_matrix(rotation)
+        T_odom = np.eye(4)
+        T_odom[:3, :3] = rotation_matrix[:3,:3]
+        T_odom[:3, 3] = trans
 
-    def visualize_keypoints_in_space(self, use_invdepth):
-        point_cloud = PointCloud()
-        point_cloud.header.stamp = rospy.Time.now()
-        # point_cloud.header.frame_id = 'mission_origin'  # Set the frame ID according to your robot's configuration
-        point_cloud.header.frame_id = 'cam0'  # Set the frame ID according to your robot's configuration
-
-        # maxnorm = np.max(np.linalg.norm(self.triangulated_points), axis=0)
-        # kps = 10 * self.triangulated_points / maxnorm
-        # kps = self.odomprior_triangulation_points
-        kps = self.noprior_triangulation_points
-        if kps is None:
-            return
-
-        for i in range(self.tracking_stats.shape[0]):
-            # if kps[2, i] > 0:
-            scaling_factor = 1
-            if use_invdepth and self.tracking_stats[i].invdepth_measurements > 0:
-                invdepth = self.tracking_stats[i].invdepth_mean
-                if invdepth > 0:
-                    scaling_factor = (1/invdepth) / np.linalg.norm(kps[:, i])
+        pts_trans = transformPoints(pts_np, T_odom)
+        for i in range(pts_trans.shape[0]):
             point1 = Point32()
-            point1.x = kps[0, i] * scaling_factor
-            point1.y = kps[1, i] * scaling_factor
-            point1.z = kps[2, i] * scaling_factor
+            point1.x = pts_trans[i, 0] 
+            point1.y = pts_trans[i, 1] 
+            point1.z = pts_trans[i, 2] 
             point_cloud.points.append(point1)
 
-        if use_invdepth:
-            self.kp_pcl_pub_invdepth.publish(point_cloud)
-        else:
-            self.kp_pcl_pub.publish(point_cloud)
+        self.slam_pcl_pub.publish(point_cloud)
 
     def visualize_spheremap(self, T_current_cam_to_orig):
         if self.spheremap is None:
