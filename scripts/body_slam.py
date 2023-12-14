@@ -103,6 +103,7 @@ class Tracked2DPoint:
         self.last_measurement_kf_id = keyframe_id
 
         self.invdepth_mean = None
+        self.depth = None
         self.invdepth_cov = None
 
         self.last_observed_keyframe_id = keyframe_id
@@ -168,7 +169,9 @@ class OdomNode:
         self.orb = cv2.ORB_create(nfeatures=3000)
 
         # Load calib
-        self.K = np.array([642.8495341420769, 0, 400, 0, 644.5958939934509, 300, 0, 0, 1]).reshape((3,3))
+        # self.K = np.array([642.8495341420769, 0, 400, 0, 644.5958939934509, 300, 0, 0, 1]).reshape((3,3))
+        self.K = np.array([643.3520818301457, 0, 400, 0, 643.3520818301457, 300, 0, 0, 1]).reshape((3,3))
+
         # self.K = np.array([, 644.5958939934509, 400.0503960299562, 300.5824096896595]).reshape((3,3))
         self.imu_to_cam_T = np.array( [[0, -1, 0, 0], [0, 0, -1, 0], [1, 0, 0, 0], [0.0, 0.0, 0.0, 1.0]])
         print("IMUTOCAM", self.imu_to_cam_T)
@@ -177,6 +180,11 @@ class OdomNode:
         self.P = np.zeros((3,4))
         self.P[:3, :3] = self.K
         print(self.P)
+
+        self.triang_vis_px1 = []
+        self.triang_vis_px2 = []
+        self.triang_vis_d = []
+        self.triang_vis_reproj = []
 
 
         # self.camera_frame_id = "uav1/rgb"
@@ -205,12 +213,13 @@ class OdomNode:
         self.tracking_bin_width = 100
         self.min_features_per_bin = 1
         self.max_features_per_bin = 10
+        # self.max_features_per_bin = 1
         self.tracking_history_len = 4
         self.node_offline = False
         self.last_tried_landmarks_pxs = None
 
         self.trueX, self.trueY, self.trueZ = 0, 0, 0
-        self.detector = cv2.FastFeatureDetector_create(threshold=30, nonmaxSuppression=True)
+        self.detector = cv2.FastFeatureDetector_create(threshold=20, nonmaxSuppression=True)
 
         self.tracking_colors = np.random.randint(0, 255, (100, 3)) 
 
@@ -518,26 +527,45 @@ class OdomNode:
         print("before optimization:", np.sqrt(sse[0] / len(inliers)))
         print("after  optimization:", np.sqrt(sse[1] / len(inliers)))
 
-    def triangulateDepthLineNearestPoint(self, T_cam, pos1, pos2):
+    def triangulateDepthLineNearestPoint(self, T_cam, pos1, pos2, visualize=False):
         # TRANSFORM TO RAY DIRECTIONS IN 3D
+
+        print("PIXPOS")
+        print(pos1)
+        print(pos2)
+        if visualize:
+            self.triang_vis_px1.append(pos1)
+            self.triang_vis_px2.append(pos2)
+
+        # pos1 = copy.deepcopy(pos1)
+        # pos2 = copy.deepcopy(pos2)
+        # pos1[0] = self.width - pos1[0]
+        # pos1[1] = self.height - pos1[1]
+        # pos2[0] = self.width - pos2[0]
+        # pos2[1] = self.height - pos2[1]
+
         dir1 = np.array([pos1[0], pos1[1], 1]).reshape(3,1)
         dir2 = np.array([pos2[0], pos2[1], 1]).reshape(3,1)
 
         invK = np.linalg.inv(self.K)
+        # invK = self.K
         dir1 = invK @ dir1
         dir2 = invK @ dir2
 
-        dir1 = (dir1 / np.linalg.norm(dir1)).flatten() 
-        dir2 = (dir2 / np.linalg.norm(dir2)).flatten()
-        # print("DIRS:")
+        print("DIRS:")
         print(dir1)
         print(dir2)
+
+
+        dir1 = (dir1 / np.linalg.norm(dir1)).flatten() 
+        dir2 = (dir2 / np.linalg.norm(dir2)).flatten()
 
         linepos2 = T_cam[:3,3]
         print("LINEPOS2:")
         print(linepos2)
 
         # ROTATE DIR2 BY THE T_CAM
+        # dir2 = np.linalg.inv(T_cam)[:3,:3] @ dir2
         dir2 = T_cam[:3,:3] @ dir2
 
         angle_thresh = 0.001
@@ -551,27 +579,70 @@ class OdomNode:
         # print("CROSSPROD_N:")
         # print(crossprod_normalized)
 
-        dist_lines = linepos2.dot(crossprod_normalized)
+        dist_lines = np.abs(linepos2.dot(crossprod_normalized))
         print("DIST LINES:")
         print(dist_lines)
 
         # vec_along_line1 = (dir2-dir1) - pricka_vec
-        dist_pt_on_line2 = (dist_lines - linepos2.dot(dir1)) / (dir2.dot(dir1))
+        # dist_pt_on_line2 = ((dist_lines - linepos2.dot(dir1)) / (dir2.dot(dir1)))
+
+        dist_pt_on_line2 = ((np.cross(dir1, crossprod)).dot(linepos2)) / (crossprod.dot(crossprod))
         print("DIST ON LINE2: ")
         print(dist_pt_on_line2 )
 
         # TEST:
-        testpt = linepos2 + dir2 * dist_pt_on_line2
-        testdist = testpt.dot(dir1)
-        print("TESTDIST:")
-        print(testdist)
+        pt_on_line_2 = linepos2 + dir2 * dist_pt_on_line2
+        pt_on_line_1 = pt_on_line_2  - crossprod_normalized * dist_lines
+        print("PROJECTION OF CLOSEST POINT ON LINE2 TO LINE1:")
+        print(pt_on_line_2.dot(dir1))
 
-        # RETURN DEPTH ESTIMATE IN 2ND FRAME(dist along ray2)
-        return dist_pt_on_line2
+        print("DIST LINES:")
+        print(np.linalg.norm(pt_on_line_1 - pt_on_line_2))
+
+        print("ALIGNMENT OF TESTPT2 ON DIR1")
+        print(pt_on_line_1.dot(dir1))
+        print("DIST ON LINE1: ")
+        print(np.linalg.norm(pt_on_line_1))
+
+        # TRY REPROJECTING PT1 TO CAM1
+        reproj1 = self.K @ pt_on_line_1
+        reproj1 = reproj1[:2] / reproj1[2]
+        print("REPROJECTION TO CAM1:")
+        print(reproj1)
+
+        res_pt = np.ones((4))
+        res_pt[:3] = (pt_on_line_2 + pt_on_line_1) / 2
+        # res_pt[:3] = pt_on_line_2
+        res_pt = (np.linalg.inv(T_cam) @ res_pt)[:3]
+
+        reproj2 = self.K @ (res_pt)
+        reproj2 = reproj2[:2] / reproj2[2]
+        # reproj2 = reproj2[:2] 
+        print("REPROJECTION TO CAM2:")
+        print(reproj2)
+        reproj_error = np.linalg.norm(reproj2 - pos2)
+        print("REPROJ ERROR:" )
+        print(reproj_error)
+
+        # depth = np.linalg.norm(res_pt)
+        depth = dist_pt_on_line2
+        if visualize:
+            self.triang_vis_d.append(depth)
+            self.triang_vis_reproj.append(reproj2)
+
+        return depth
 
     def image_callback(self, msg):
         if self.node_offline:
             return
+
+        # GET CURRENT ODOM POSE
+        (trans, rotation) = self.tf_listener.lookupTransform(self.odom_orig_frame_id , self.camera_frame_id, rospy.Time(0))
+        rotation_matrix = tfs.quaternion_matrix(rotation)
+        T_odom = np.eye(4)
+        T_odom[:3, :3] = rotation_matrix[:3,:3]
+        T_odom[:3, 3] = trans
+
         img = self.bridge.imgmsg_to_cv2(msg, "bgr8")
 
         comp_start_time = rospy.get_rostime()
@@ -642,18 +713,14 @@ class OdomNode:
 
         # CHECK IF SHOULD ADD KEYFRAME FOR TRIANGULATION OF POINTS
         # TODO - and prev keyframe parallax condition
+        timedist_to_img = (rospy.get_rostime() - self.new_img_stamp).to_sec()
+        print("TIMEDIST IMG: " + str(timedist_to_img))
         if len(self.keyframes) > 0:
             time_since_last_keyframe = (self.new_img_stamp - self.keyframes[-1].img_timestamp).to_sec()
         print("TIME SINCE LAST KF:" + str(time_since_last_keyframe ))
 
         # TODO - GET ODOM HERE!!
 
-        # GET CURRENT ODOM POSE
-        (trans, rotation) = self.tf_listener.lookupTransform(self.odom_orig_frame_id , self.camera_frame_id, rospy.Time(0))
-        rotation_matrix = tfs.quaternion_matrix(rotation)
-        T_odom = np.eye(4)
-        T_odom[:3, :3] = rotation_matrix[:3,:3]
-        T_odom[:3, 3] = trans
 
         if not time_since_last_keyframe is None :
             dist_since_last_keyframe = np.linalg.norm((np.linalg.inv(self.keyframes[self.keyframe_idx-1].T_odom) @ T_odom)[:3, 3])
@@ -689,8 +756,12 @@ class OdomNode:
             # FOR ALL PTS THAT ARE BEING TRACKED:
             #     IF CAN TRIANGULATE (parallax + motion since last depth meas time) - TRY TRIANGULATION IF OK, ADD MEAS! 
             self.active_2d_points_ids = [pt_id for pt_id, pt in self.tracked_2d_points.items() if pt.active]
-            min_parallax = 10
+            min_parallax = 30
 
+            self.triang_vis_px1 = []
+            self.triang_vis_px2 = []
+            self.triang_vis_d = []
+            self.triang_vis_reproj = []
             for pt_id in self.active_2d_points_ids:
                 prev_kf_id = self.tracked_2d_points[pt_id].last_measurement_kf_id
                 if prev_kf_id == self.keyframe_idx:
@@ -712,14 +783,15 @@ class OdomNode:
 
                 # print(T_delta_odom)
 
-                depth_meas = self.triangulateDepthLineNearestPoint(T_delta_odom, prev_pos, cur_pos)
+                depth_meas = self.triangulateDepthLineNearestPoint(T_delta_odom, prev_pos, cur_pos, visualize=True)
 
                 # CHECK IF ENOUGH PARALLAX
                 if not depth_meas is None:
                     # if self.tracked_2d_points[pt_id].last_measurement_kf_id is None
 
                     self.tracked_2d_points[pt_id].last_measurement_kf_id = self.keyframe_idx
-                    self.tracked_2d_points[pt_id].invdepth_mean = 1.0 / depth_meas
+                    # self.tracked_2d_points[pt_id].invdepth_mean = -1.0 / depth_meas
+                    self.tracked_2d_points[pt_id].depth = depth_meas
 
             # VISUALIZE BY PROJECTING PTS THRU CAMERA WITH ESTIMATED DEPTH!!!
 
@@ -750,13 +822,69 @@ class OdomNode:
             #     self.tracking_stats[i].prev_keyframe_pixel_pos = self.px_cur[i, :]
 
         # VISUALIZE FEATURES
-        vis = self.visualize_tracking()
+        # vis = self.visualize_tracking()
+        vis = self.visualize_triang()
         self.kp_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
         self.visualize_slampoints_in_space()
 
         comp_time = time.time() - comp_start_time
         print("computation time: " + str((comp_time) * 1000) +  " ms")
 
+
+    def visualize_triang(self):
+        # rgb = np.zeros((self.new_frame.shape[0], self.new_frame.shape[1], 3), dtype=np.uint8)
+        # print(self.new_frame.shape)
+        rgb = np.repeat(copy.deepcopy(self.new_frame)[:, :, np.newaxis], 3, axis=2)
+        # rgb = np.repeat((self.new_frame)[:, :, np.newaxis], 3, axis=2)
+
+        px_cur = np.array([self.tracked_2d_points[p].current_pos for p in self.active_2d_points_ids])
+        print("PX CUR SHAPE:")
+        print(px_cur.shape)
+        # print(px_cur)
+
+        n_pts = len(self.triang_vis_px1)
+        if n_pts  > 0:
+            depths = np.array(self.triang_vis_d)
+
+            # min_d = np.min(depths)
+            # max_d = np.max(depths)
+            min_d = 1
+            max_d = 10
+
+            minsize = 3
+            maxsize = 12
+
+            for i in range(n_pts):
+                # size = self.tracking_stats[inidx][i].age / growsize
+                # if size > growsize:
+                #     size = growsize
+                # size += minsize
+
+                # size = minsize
+                rel_d = (self.triang_vis_d[i] - min_d) / (max_d - min_d)
+                if rel_d < 0:
+                    rel_d = 0
+                elif rel_d > 1:
+                    rel_d = 1
+
+                size = minsize + (maxsize - minsize) * (1 - rel_d)
+
+
+                rgb = cv2.line(rgb, (int(self.triang_vis_px1[i][0]), int(self.triang_vis_px1[i][1])), (int(self.triang_vis_reproj[i][0]), int(self.triang_vis_reproj[i][1])), (0, 0, 0), 3)
+                rgb = cv2.line(rgb, (int(self.triang_vis_px2[i][0]), int(self.triang_vis_px2[i][1])), (int(self.triang_vis_reproj[i][0]), int(self.triang_vis_reproj[i][1])), (0, 0, 0), 3)
+
+                rgb = cv2.circle(rgb, (int(self.triang_vis_px1[i][0]), int(self.triang_vis_px1[i][1])), int(size), 
+                               (255, 0, 0), -1) 
+
+                rgb = cv2.circle(rgb, (int(self.triang_vis_px2[i][0]), int(self.triang_vis_px2[i][1])), int(size), 
+                               (0, 255, 0), -1) 
+
+                rgb = cv2.circle(rgb, (int(self.triang_vis_reproj[i][0]), int(self.triang_vis_reproj[i][1])), int(size), 
+                               (255, 0, 255), -1) 
+
+
+        res = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+        return res
 
     def visualize_tracking(self):
         # rgb = np.zeros((self.new_frame.shape[0], self.new_frame.shape[1], 3), dtype=np.uint8)
@@ -788,29 +916,6 @@ class OdomNode:
 
                 rgb = cv2.circle(rgb, (inside_pix_idxs[i,0], inside_pix_idxs[i,1]), int(size), 
                                (255, 0, 255), -1) 
-
-                # rgb = cv2.circle(rgb, (inside_pix_idxs[i,0], inside_pix_idxs[i,1]), 5, 
-                #                (255, 0, 255), 2) 
-
-                # triang_pix = self.K.dot(self.triangulated_points[:, inidx][:, i])
-                # triang_pix = triang_pix  / triang_pix[2]
-                # rgb = cv2.line(rgb, (int(triang_pix[0]), int(triang_pix[1])), (inside_pix_idxs[i,0], inside_pix_idxs[i,1]), (255, 0, 0), 3)
-                # rgb = cv2.circle(rgb, (int(triang_pix[0]), int(triang_pix[1])), int(size), 
-                #                (0, 0, 255), 3) 
-
-            # if not self.noprior_triangulation_points is None:
-            #     for i in range(self.noprior_triangulation_points .shape[1]):
-            #         pixpos = self.K.dot(self.noprior_triangulation_points [:, i])
-            #         pixpos = pixpos / pixpos[2]
-            #         rgb = cv2.circle(rgb, (int(pixpos[0]), int(pixpos[1])), minsize+growsize+2, 
-            #                        (0, 0, 255), 2) 
-
-            # if not self.odomprior_triangulation_points  is None:
-            #     for i in range(self.odomprior_triangulation_points  .shape[1]):
-            #         pixpos = self.K.dot(self.odomprior_triangulation_points [:, i])
-            #         pixpos = pixpos / pixpos[2]
-            #         rgb = cv2.circle(rgb, (int(pixpos[0]), int(pixpos[1])), minsize+growsize+5, 
-            #                        (0, 255, 255), 2) 
 
         res = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         return res
@@ -854,9 +959,14 @@ class OdomNode:
         self.active_2d_points_ids = [pt_id for pt_id, pt in self.tracked_2d_points.items() if pt.active]
         for pt_id in self.active_2d_points_ids:
             cur_pos = self.tracked_2d_points[pt_id].current_pos
-            if not self.tracked_2d_points[pt_id].invdepth_mean is None:
-                d = 1.0 / self.tracked_2d_points[pt_id].invdepth_mean
-                dir1 = np.array([cur_pos[0], cur_pos[1], 1]).reshape(3,1)
+            # if not self.tracked_2d_points[pt_id].invdepth_mean is None:
+            if not self.tracked_2d_points[pt_id].depth is None:
+                # d = 1.0 / self.tracked_2d_points[pt_id].invdepth_mean
+                last_observed_keyframe_id = self.tracked_2d_points[pt_id].last_observed_keyframe_id 
+                obsv_pos = self.tracked_2d_points[pt_id].keyframe_observations[last_observed_keyframe_id]
+
+                d = self.tracked_2d_points[pt_id].depth
+                dir1 = np.array([obsv_pos[0], obsv_pos[1], 1]).reshape(3,1)
 
                 invK = np.linalg.inv(self.K)
                 dir1 = invK @ dir1
