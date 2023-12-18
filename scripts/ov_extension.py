@@ -172,7 +172,7 @@ class NavNode:
 
         # VIS PUB
         self.slam_points = None
-        self.slam_pcl_pub = rospy.Publisher('extended_slam_points', PointCloud, queue_size=10)
+        # self.slam_pcl_pub = rospy.Publisher('extended_slam_points', PointCloud, queue_size=10)
 
         self.spheremap_outline_pub = rospy.Publisher('spheres', MarkerArray, queue_size=10)
         self.spheremap_freespace_pub = rospy.Publisher('spheremap_freespace', MarkerArray, queue_size=10)
@@ -182,11 +182,13 @@ class NavNode:
         self.visual_similarity_vis_pub = rospy.Publisher('visual_similarity_vis', MarkerArray, queue_size=10)
         self.unsorted_vis_pub = rospy.Publisher('unsorted_markers', MarkerArray, queue_size=10)
 
-        self.kp_pub = rospy.Publisher('tracked_features_img', Image, queue_size=1)
+        # self.kp_pub = rospy.Publisher('tracked_features_img', Image, queue_size=1)
         self.depth_pub = rospy.Publisher('estim_depth_img', Image, queue_size=1)
         self.marker_pub = rospy.Publisher('/vo_odom', Marker, queue_size=10)
-        self.kp_pcl_pub = rospy.Publisher('tracked_features_space', PointCloud, queue_size=10)
-        self.kp_pcl_pub_invdepth = rospy.Publisher('tracked_features_space_invdepth', PointCloud, queue_size=10)
+        # self.kp_pcl_pub = rospy.Publisher('tracked_features_space', PointCloud, queue_size=10)
+        # self.kp_pcl_pub_invdepth = rospy.Publisher('tracked_features_space_invdepth', PointCloud, queue_size=10)
+
+        self.tf_listener = tf.TransformListener()
 
         # --Load calib
         # UNITY
@@ -201,47 +203,85 @@ class NavNode:
         # self.marker_scale = 1
 
         # BLUEFOX UAV
-        self.K = np.array([227.4, 0, 376, 0, 227.4, 240, 0, 0, 1]).reshape((3,3))
-        self.P = np.zeros((3,4))
-        self.P[:3, :3] = self.K
-        print(self.P)
+        # self.K = np.array([227.4, 0, 376, 0, 227.4, 240, 0, 0, 1]).reshape((3,3))
+        # self.P = np.zeros((3,4))
+        # self.P[:3, :3] = self.K
+        # print(self.P)
+
+        # self.T_imu_to_cam = np.eye(4)
+        # self.T_fcu_to_imu = np.eye(4)
+        # self.width = 752
+        # self.height = 480
+        # ov_slampoints_topic = '/ov_msckf/points_slam'
+        # img_topic = '/uav1/vio/camera/image_raw'
+        # odom_topic = '/ov_msckf/odomimu'
+        # self.imu_frame = 'imu'
+        # self.fcu_frame = 'uav1/fcu'
+        # self.camera_frame = 'cam0'
+        # self.odom_frame = 'global'
+        # self.marker_scale = 0.5
+
+        # # Get the transform
+        # self.tf_listener.waitForTransform(self.fcu_frame, self.imu_frame, rospy.Time(), rospy.Duration(4.0))
+        # (trans, rotation) = self.tf_listener.lookupTransform(self.fcu_frame, self.imu_frame, rospy.Time(0))
+        # rotation_matrix = tfs.quaternion_matrix(rotation)
+        # print(rotation_matrix)
+        # self.T_fcu_to_imu[:3, :3] = rotation_matrix[:3,:3]
+        # self.T_fcu_to_imu[:3, 3] = trans
+        # print("T_fcu_to_imu")
+        # print(self.T_fcu_to_imu)
+
+        # self.tf_listener.waitForTransform(self.imu_frame, self.camera_frame, rospy.Time(), rospy.Duration(4.0))
+        # (trans, rotation) = self.tf_listener.lookupTransform(self.imu_frame, self.camera_frame, rospy.Time(0))
+        # rotation_matrix = tfs.quaternion_matrix(rotation)
+        # print(rotation_matrix)
+        # self.T_imu_to_cam[:3, :3] = rotation_matrix[:3,:3]
+        # self.T_imu_to_cam[:3, 3] = trans
+        # print("T_imu_to_cam")
+        # print(self.T_imu_to_cam)
+
+        # self.carryover_dist = 8
+        # self.uav_radius = 0.6
+        # self.safety_replanning_trigger_odist = 0.6
+        # self.min_planning_odist = 0.8
+        # self.max_planning_odist = 2
+
+
+
+        # TELLo (imu = fcu)
+        self.K = np.array([933.5640667549508, 0.0, 500.5657553739987, 0.0, 931.5001605952165, 379.0130687255228, 0.0, 0.0, 1.0]).reshape((3,3))
 
         self.T_imu_to_cam = np.eye(4)
         self.T_fcu_to_imu = np.eye(4)
-        self.width = 752
-        self.height = 480
-        ov_slampoints_topic = '/ov_msckf/points_slam'
-        img_topic = '/uav1/vio/camera/image_raw'
-        odom_topic = '/ov_msckf/odomimu'
-        self.marker_scale = 0.5
+        self.width = 960
+        self.height = 720
+        ov_slampoints_topic = 'extended_slam_points'
+        img_topic = '/uav1/tellopy_wrapper/rgb/image_raw'
+        odom_topic = '/uav1/estimation_manager/odom_main'
 
-        # --GET FCU TO IMU and IMU TO CAM TRANSFORMs!!!
-        print("GETTING FCU TO CAMERA TRANSFORM")
-        # Wait for the transform between the target frame and the source frame
         self.imu_frame = 'imu'
         self.fcu_frame = 'uav1/fcu'
-        self.camera_frame = 'cam0'
-        self.tf_listener = tf.TransformListener()
-        
-        # Get the transform
-        self.tf_listener.waitForTransform(self.fcu_frame, self.imu_frame, rospy.Time(), rospy.Duration(4.0))
-        (trans, rotation) = self.tf_listener.lookupTransform(self.fcu_frame, self.imu_frame, rospy.Time(0))
-        rotation_matrix = tfs.quaternion_matrix(rotation)
-        print(rotation_matrix)
-        self.T_fcu_to_imu[:3, :3] = rotation_matrix[:3,:3]
-        self.T_fcu_to_imu[:3, 3] = trans
-        print("T_fcu_to_imu")
-        print(self.T_fcu_to_imu)
+        self.odom_frame = 'uav1/passthrough_origin'
+        self.camera_frame = "uav1/rgb"
 
-        self.tf_listener.waitForTransform(self.imu_frame, self.camera_frame, rospy.Time(), rospy.Duration(4.0))
-        (trans, rotation) = self.tf_listener.lookupTransform(self.imu_frame, self.camera_frame, rospy.Time(0))
+        self.marker_scale = 0.15
+
+        self.tf_listener.waitForTransform(self.fcu_frame, self.camera_frame, rospy.Time(), rospy.Duration(4.0))
+        (trans, rotation) = self.tf_listener.lookupTransform(self.fcu_frame, self.camera_frame, rospy.Time(0))
         rotation_matrix = tfs.quaternion_matrix(rotation)
-        print(rotation_matrix)
         self.T_imu_to_cam[:3, :3] = rotation_matrix[:3,:3]
         self.T_imu_to_cam[:3, 3] = trans
-        print("T_imu_to_cam")
+        # self.T_imu_to_cam = np.linalg.inv(self.T_imu_to_cam)
+        print("T_imu(fcu)_to_cam")
         print(self.T_imu_to_cam)
 
+        self.carryover_dist = 4
+        self.uav_radius = 0.2
+        self.safety_replanning_trigger_odist = 0.2
+        self.min_planning_odist = 0.2
+        self.max_planning_odist = 2
+
+        
 
         # --SUB
         self.sub_cam = rospy.Subscriber(img_topic, Image, self.image_callback, queue_size=10000)
@@ -317,11 +357,8 @@ class NavNode:
         # META PARAMS
         self.state = 'explore'
         self.n_sphere_samples_per_update = 100
-        self.carryover_dist = 8
-        self.uav_radius = 0.6
-        self.safety_replanning_trigger_odist = 0.6
-        self.min_planning_odist = 0.8
-        self.max_planning_odist = 2
+
+
         self.fspace_bonus_mod = 2
         self.safety_weight = 5
         self.fragmenting_travel_dist = 20
@@ -340,7 +377,7 @@ class NavNode:
 
         self.roomba_bounds_global = [-20, 20, -30, 30, -10, 20]
 
-        self.verbose_submap_construction = False
+        self.verbose_submap_construction = True
 
         self.predicted_trajectory_pts_global = None
 
@@ -473,6 +510,8 @@ class NavNode:
                     print("NO POINTS?")
                 return
             point_cloud_array = point_cloud_array[nonzero_pts, :]
+            print("PCL ARRAY SHAPE:")
+            print(point_cloud_array.shape)
 # # #}
 
             # DECIDE WHETHER TO UPDATE SPHEREMAP OR INIT NEW ONE# #{
@@ -615,8 +654,14 @@ class NavNode:
             if self.verbose_submap_construction:
                 print("HAVE DELAUNAY:")
             tri = Delaunay(pixpos)
-            # vis = self.visualize_depth(pixpos, tri)
-            # self.depth_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
+
+            # print("INPUT: " )
+            # print(point_cloud_array)
+            # print("TRANSFORMED TO CAM FRAME: " )
+            # print(final_points.T)
+
+            vis = self.visualize_depth(pixpos, tri)
+            self.depth_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
 
             # CONSTRUCT OBSTACLE MESH
             comp_mesh = time.time()
@@ -738,7 +783,7 @@ class NavNode:
                     # self.spheremap.removeNodes(np.where(idx_picker)[0])
 
             # TODO fix - by raycasting!!!
-            max_sphere_sampling_z = 30
+            max_sphere_sampling_z = 10
 
             n_sampled = self.n_sphere_samples_per_update
             sampling_pts = np.random.rand(n_sampled, 2)  # Random points in [0, 1] range for x and y
@@ -762,6 +807,7 @@ class NavNode:
             invK = np.linalg.inv(self.K)
             sampling_pts = invK @ sampling_pts
             rand_z = np.random.rand(1, n_sampled) * max_sphere_sampling_z
+            rand_z[rand_z > max_sphere_sampling_z] = max_sphere_sampling_z
 
             # FILTER PTS - CHECK THAT THE MAX DIST IS NOT BEHIND THE OBSTACLE MESH BY RAYCASTING
             ray_hit_pts, index_ray, index_tri = obstacle_mesh.ray.intersects_location(
@@ -786,6 +832,8 @@ class NavNode:
             if self.verbose_submap_construction:
                 print("PUTATIVE SPHERES THAT PASSED FIRST RADIUS CHECKS: " + str(n_spheres_to_add))
             if n_spheres_to_add == 0:
+                if self.verbose_submap_construction:
+                    print("NO NEW SPHERES TO ADD")
                 self.spheremap.labelSpheresByConnectivity()
                 return
 
@@ -819,6 +867,7 @@ class NavNode:
             comp_time = time.time() - comp_start_time
             if self.verbose_submap_construction:
                 print("SPHEREMAP integration time: " + str((comp_time) * 1000) +  " ms")
+                print("N SPHERES: " + str(self.spheremap.points.shape[0]))
 
             comp_start_time = time.time()
             self.spheremap.spheres_kdtree = KDTree(self.spheremap.points)
@@ -1250,6 +1299,7 @@ class NavNode:
 
     def dumb_forward_flight_rrt_iter(self):# # #{
         # print("--DUMB FORWARD FLIGHT RRT ITER")
+        return
         if self.spheremap is None:
             return
         if not self.node_initialized:
@@ -2353,7 +2403,8 @@ class NavNode:
             spts = transformPoints(untr_pts, T_vis)
 
             marker = Marker()
-            marker.header.frame_id = "global"  # Adjust the frame_id as needed
+            # marker.header.frame_id = "global"  # Adjust the frame_id as needed
+            marker.header.frame_id = self.odom_frame  # Adjust the frame_id as needed
             marker.type = Marker.POINTS
             marker.action = Marker.ADD
             marker.pose.orientation.w = 1.0
@@ -2378,7 +2429,7 @@ class NavNode:
 
             # LINES BETWEEN CONN POINTS
             line_marker = Marker()
-            line_marker.header.frame_id = "global"  # Set your desired frame_id
+            line_marker.header.frame_id = self.odom_frame  # Set your desired frame_id
             line_marker.type = Marker.LINE_LIST
             line_marker.action = Marker.ADD
             line_marker.scale.x =ms* 1  # Line width
@@ -2412,7 +2463,7 @@ class NavNode:
 
         if do_connections:
             line_marker = Marker()
-            line_marker.header.frame_id = "global"  # Set your desired frame_id
+            line_marker.header.frame_id = self.odom_frame  # Set your desired frame_id
             line_marker.type = Marker.LINE_LIST
             line_marker.action = Marker.ADD
             line_marker.scale.x = ms* 0.2  # Line width
@@ -2448,7 +2499,7 @@ class NavNode:
                 spts = transformPoints(smap.surfel_points, T_vis)
 
                 marker = Marker()
-                marker.header.frame_id = "global"  # Adjust the frame_id as needed
+                marker.header.frame_id = self.odom_frame  # Adjust the frame_id as needed
                 marker.type = Marker.POINTS
                 marker.action = Marker.ADD
                 marker.pose.orientation.w = 1.0
@@ -2495,7 +2546,7 @@ class NavNode:
             if not smap.surfel_points is None:
                 for i in range(smap.surfel_points.shape[0]):
                     marker = Marker()
-                    marker.header.frame_id = "global"  # Change this frame_id if necessary
+                    marker.header.frame_id = self.odom_frame  # Change this frame_id if necessary
                     marker.header.stamp = rospy.Time.now()
                     marker.type = Marker.ARROW
                     marker.action = Marker.ADD
@@ -2531,7 +2582,7 @@ class NavNode:
                 kframes_pts = transformPoints(kframes_pts, T_vis)
                 for i in range(n_kframes):
                     marker = Marker()
-                    marker.header.frame_id = "global"  # Change this frame_id if necessary
+                    marker.header.frame_id = self.odom_frame  # Change this frame_id if necessary
                     marker.header.stamp = rospy.Time.now()
                     marker.type = Marker.ARROW
                     marker.action = Marker.ADD
@@ -2570,7 +2621,7 @@ class NavNode:
         if do_spheres:
             for i in range(smap.points.shape[0]):
                 marker = Marker()
-                marker.header.frame_id = "global"  # Change this frame_id if necessary
+                marker.header.frame_id = self.odom_frame  # Change this frame_id if necessary
                 marker.header.stamp = rospy.Time.now()
                 marker.type = Marker.SPHERE
                 marker.action = Marker.ADD
@@ -2838,7 +2889,7 @@ class NavNode:
 # #}
 
 if __name__ == '__main__':
-    rospy.init_node('visual_odom_node')
+    rospy.init_node('spheremap_mapper_node')
     optical_flow_node = NavNode()
     rospy.spin()
     cv2.destroyAllWindows()
