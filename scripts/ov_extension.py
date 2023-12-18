@@ -1299,7 +1299,6 @@ class NavNode:
 
     def dumb_forward_flight_rrt_iter(self):# # #{
         # print("--DUMB FORWARD FLIGHT RRT ITER")
-        return
         if self.spheremap is None:
             return
         if not self.node_initialized:
@@ -1528,7 +1527,7 @@ class NavNode:
         self.trajectory_following_moved_time = rospy.get_rostime()
         self.currently_navigating_reached_node_idx = -1
 
-        self.visualize_trajectory(pts_global, np.eye(4), headings_global, do_line = False, frame_id = "global")
+        self.visualize_trajectory(pts_global, np.eye(4), headings_global, do_line = False, frame_id = self.odom_frame)
 
         return
     # # #}
@@ -1854,8 +1853,10 @@ class NavNode:
 
 
     # --VISUALIZATIONS
-    def visualize_arrow(self, pos, endpos, frame_id='global', r=1,g=0,b=0, scale=1,marker_idx=0):
+    def visualize_arrow(self, pos, endpos, frame_id=None, r=1,g=0,b=0, scale=1,marker_idx=0):
         marker_array = MarkerArray()
+        if frame_id is None:
+            frame_id = self.odom_frame
 
         marker = Marker()
         marker.header.frame_id = frame_id
@@ -1888,7 +1889,7 @@ class NavNode:
         marker_id = 0
         if not tree_pos is None:
             line_marker = Marker()
-            line_marker.header.frame_id = "global"  # Set your desired frame_id
+            line_marker.header.frame_id = self.odom_frame  # Set your desired frame_id
             line_marker.type = Marker.LINE_LIST
             line_marker.action = Marker.ADD
             line_marker.scale.x = 0.04  # Line width
@@ -2081,7 +2082,7 @@ class NavNode:
             # goal = transformPoints(goal.reshape((1,3)), T_vis)
 
             marker = Marker()
-            marker.header.frame_id = "global"  # Change this frame_id if necessary
+            marker.header.frame_id = self.odom_frame  # Change this frame_id if necessary
             marker.ns = "roadmap"
             marker.header.stamp = rospy.Time.now()
             marker.type = Marker.CUBE
@@ -2122,7 +2123,7 @@ class NavNode:
         if not pts is None:
             line_marker = Marker()
             
-            line_marker.header.frame_id = "global"  # Set your desired frame_id
+            line_marker.header.frame_id = self.odom_frame  # Set your desired frame_id
             line_marker.type = Marker.LINE_LIST
             line_marker.action = Marker.ADD
             line_marker.scale.x = 0.5  # Line width
@@ -2154,7 +2155,9 @@ class NavNode:
         self.path_planning_vis_pub .publish(marker_array)
 # # #}
 
-    def visualize_trajectory(self,points_untransformed, T_vis, headings=None,do_line=True, start=None, goal=None, frame_id="global"):# # #{
+    def visualize_trajectory(self,points_untransformed, T_vis, headings=None,do_line=True, start=None, goal=None, frame_id=None):# # #{
+        if frame_id is None:
+            frame_id = self.odom_frame
         marker_array = MarkerArray()
         print(points_untransformed.shape)
         pts = transformPoints(points_untransformed, T_vis)
