@@ -184,7 +184,7 @@ class OdomNode:
         self.camera_frame_id = "uav1/rgb"
         self.odom_orig_frame_id = "uav1/local_origin"
         self.rgb_topic = '/uav1/tellopy_wrapper/rgb/image_raw'
-        self.kf_dist_thr = 0.5
+        self.kf_dist_thr = 0.2
         self.toonear_vis_dist = 1
 
 
@@ -799,27 +799,62 @@ class OdomNode:
             ransacable_ids = [pt_id for pt_id, pt in self.tracked_2d_points.items() if pt.active and pt.age > 1]
             n_ransac = len(ransacable_ids)
             print("N RANSACABLE: " + str(n_ransac))
-            if n_ransac > 4:
+            if n_ransac > 4 and self.keyframe_idx > 0:
                 kfi = self.keyframe_idx-1
                 dst_pts = np.array([[self.tracked_2d_points[i].current_pos[0], self.tracked_2d_points[i].current_pos[1]] for i in ransacable_ids])
                 src_pts = np.array([[self.tracked_2d_points[i].keyframe_observations[kfi][0], self.tracked_2d_points[i].keyframe_observations[kfi][1]] for i in ransacable_ids])
-                M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
-                reproj_pts = transformPoints(src_pts, M)
+                # M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 15.0)
+                M, mask = cv2.findEssentialMat(src_pts, dst_pts, self.K, threshold=1)
+                mask = mask.flatten() == 1
+                # reproj_pts = transformPoints(src_pts, M)
+
+                print("INLIERS: " + str(np.sum(mask)))
+                print(M)
+                # print(mask)
+                # print(mask)
+                print("DECOMPOSING")
+                # print(mask.shape)
+                decomp_res = self.decomp_essential_mat(M, src_pts[mask, :], dst_pts[mask, :])
+                T_ransac = np.linalg.inv(self._form_transf(decomp_res[0], decomp_res[1]))
+                print("DECOMPOSING DONE")
+                print(T_ransac)
+                T_delta_odom = (np.linalg.inv(self.keyframes[kfi].T_odom) @ T_odom)
+                print("T ODOM: ")
+                print(T_delta_odom)
+                dist_traveled_odom = np.linalg.norm(T_delta_odom[:3,3])
+                ransac_translation = T_ransac[:3, 3]
+                scaling_factor = (dist_traveled_odom / np.linalg.norm(ransac_translation))
+                T_ransac[:3, 3] = T_ransac[:3, 3] * scaling_factor
+                print("T RANSAC RESCALED:")
+                print(T_ransac)
+
+                self.triangulated_points = self.triangulated_points * scaling_factor
+
+                # print(self.triangulated_points.T)
+
+
+                reproj_pts = transformPoints(copy.deepcopy(src_pts), M)
+
+                mask_idxs = np.where(mask)[0]
+                inlier_idx = 0 
                 for i in range(n_ransac):
-                    if mask[i] == 1:
-                        self.tracked_2d_points[ransacable_ids[i]].has_reproj = True
-                        self.tracked_2d_points[ransacable_ids[i]].reproj = reproj_pts[i, :]
-                        reproj_dist = np.linalg.norm(reproj_pts[i, :] - dst_pts[i,:])
+                    if mask[i]:
+
+                        self.tracked_2d_points[ransacable_ids[i]].last_measurement_kf_id = self.keyframe_idx
+                        self.tracked_2d_points[ransacable_ids[i]].depth = np.linalg.norm(self.triangulated_points[:, inlier_idx])
+                        inlier_idx += 1 
+
+                        # self.tracked_2d_points[ransacable_ids[i]].has_reproj = True
+                        # self.tracked_2d_points[ransacable_ids[i]].reproj = reproj_pts[i, :]
+                        # reproj_dist = np.linalg.norm(reproj_pts[i, :] - dst_pts[i,:])
+
                         # print(dst_pts[i, :])
                         # print(reproj_pts[i, :])
-                        print("REPROJ DIST: " + str(reproj_dist))
+                        # print("REPROJ DIST: " + str(reproj_dist))
                     else:
                         self.tracked_2d_points[ransacable_ids[i]].has_reproj = False
-
-
                 self.triang_vis_pub.publish(self.bridge.cv2_to_imgmsg(self.visualize_ransac_reproj(), "bgr8"))
-                print(M)
-                print(mask)
+
 
             # for pt_id in self.active_2d_points_ids:
             #     prev_kf_id = self.tracked_2d_points[pt_id].last_measurement_kf_id
@@ -1303,6 +1338,8 @@ class OdomNode:
         -------
         right_pair (list): Contains the rotation matrix and translation vector
         """
+        # print(q1.shape)
+        # print(q2.shape)
         def sum_z_cal_relative_scale(R, t, store=False):
             # Get the transformation matrix
             T = self._form_transf(R, t)
@@ -1318,6 +1355,9 @@ class OdomNode:
             uhom_Q1 = hom_Q1[:3, :] / hom_Q1[3, :]
             uhom_Q2 = hom_Q2[:3, :] / hom_Q2[3, :]
 
+            # print("uhom Q1:")
+            # print(uhom_Q1.T)
+
             if store:
                 return uhom_Q2
 
@@ -1328,6 +1368,13 @@ class OdomNode:
             # Form point pairs and calculate the relative scale
             relative_scale = np.mean(np.linalg.norm(uhom_Q1.T[:-1] - uhom_Q1.T[1:], axis=-1)/
                                      np.linalg.norm(uhom_Q2.T[:-1] - uhom_Q2.T[1:], axis=-1))
+            print("R, t:")
+            print(R)
+            print(t)
+            print("REL SCALE:")
+            print(relative_scale)
+            print(sum_of_pos_z_Q1)
+            print(sum_of_pos_z_Q2)
             return sum_of_pos_z_Q1 + sum_of_pos_z_Q2, relative_scale
 
         # Decompose the essential matrix
