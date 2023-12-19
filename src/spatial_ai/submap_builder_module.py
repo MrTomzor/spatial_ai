@@ -121,7 +121,7 @@ class SubmapBuilderModule:
 
         # META PARAMS
         self.n_sphere_samples_per_update = 100
-        self.fragmenting_travel_dist = 20
+        self.fragmenting_travel_dist = 7
         self.visual_kf_addition_heading = 3.14159 /2
         self.visual_kf_addition_dist = 2
         
