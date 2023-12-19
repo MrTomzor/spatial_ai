@@ -16,6 +16,7 @@ import rospkg
 from spatial_ai.common_spatial import *
 from spatial_ai.fire_slam_module import *
 from spatial_ai.submap_builder_module import *
+from spatial_ai.local_navigator_module import *
 
 from sensor_msgs.msg import Image, CompressedImage, PointCloud2
 import sensor_msgs.point_cloud2 as pc2
@@ -267,7 +268,7 @@ class NavNode:
 
         self.submap_builder_module = SubmapBuilderModule(self.width, self.height, self.K, self.camera_frame, self.odom_frame,self.fcu_frame, self.tf_listener, self.T_imu_to_cam, self.T_fcu_to_imu)
         self.submap_builder_rate = 10
-        self.submap_builder_timer = rospy.Timer(rospy.Duration(1.0 / self.submap_builder_rate), self.submap_builder_update_callback)
+        self.submap_builder_timer = rospy.Timer(rospy.Duration(1.0 / self.submap_builder_rate), self.submap_builder_update_iter)
 
         # LOCAL NAVIGATOR
         ptraj_topic = '/uav1/control_manager/mpc_tracker/prediction_full_state'
@@ -281,13 +282,8 @@ class NavNode:
         self.odom_buffer_maxlen = 1000
         self.sub_odom = rospy.Subscriber(odom_topic, Odometry, self.odometry_callback, queue_size=10000)
 
-        # self.sub_slam_points = rospy.Subscriber(ov_slampoints_topic, PointCloud2, self.points_slam_callback, queue_size=3)
-
-        # self.sub_odom = rospy.Subscriber('/ov_msckf/poseimu', PoseWithCovarianceStamped, self.odometry_callback, queue_size=10000)
-
         self.tf_broadcaster = tf.TransformBroadcaster()
 
-        # self.orb = cv2.ORB_create(nfeatures=3000)
         self.orb = cv2.ORB_create(nfeatures=30)
 
         # LOAD VOCAB FOR DBOW
@@ -296,7 +292,6 @@ class NavNode:
         # self.test_db = dbow.Database(self.visual_vocab)
         # self.test_db_n_kframes = 0
         # self.test_db_indexing = {}
-
 
 
         # NEW
@@ -384,42 +379,18 @@ class NavNode:
 
     # -- MEMORY MANAGING
     def saveEpisodeFull(self, req):# # #{
-        self.node_offline = True
-        print("SAVING EPISODE MEMORY CHUNK")
-
-        fpath = rospkg.RosPack().get_path('spatial_ai') + "/memories/last_episode.pickle"
-        self.mchunk.submaps.append(self.spheremap)
-        self.mchunk.save(fpath)
-        self.mchunk.submaps.pop()
-
-        self.node_offline = False
-        print("EPISODE SAVED TO " + str(fpath))
+        with ScopedLock(self.spheremap_mutex):
+            self.submap_builder_module.saveEpisodeFull(None)
         return EmptySrvResponse()# # #}
-
-    def get_visited_viewpoints_global(self):# # #{
-        res_pts = None
-        res_headings = None
-        for smap in [self.spheremap] + self.mchunk.submaps:
-            if len(smap.visual_keyframes) > 0:
-                pts_smap = np.array([kf.position for kf in smap.visual_keyframes])
-                headings_smap = np.array([kf.heading for kf in smap.visual_keyframes])
-                pts_global, headings_global = transformViewpoints(pts_smap, headings_smap, smap.T_global_to_own_origin)
-
-                if res_pts is None:
-                    res_pts = pts_global
-                    res_headings = headings_global
-                else:
-                    res_pts = np.concatenate((res_pts, pts_global))
-                    res_headings = np.concatenate((res_headings, headings_global))
-
-        return res_pts, res_headings# # #}
 
     # --SUBSCRIBE CALLBACKS
 
     def planning_loop_iter(self, event):# # #{
+        print("PLANNING ITER")
         if not self.node_initialized:
             return
-        self.local_navigator_module.planning_loop_iter()
+        with ScopedLock(self.spheremap_mutex):
+            self.local_navigator_module.planning_loop_iter()
     # # #}
 
     def lookupTransformAsMatrix(self, frame1, frame2):# # #{
@@ -473,67 +444,10 @@ class NavNode:
         self.n_frames += 1
 
 
-        # ADD NEW VISUAL KEYFRAME IF NEW ENOUGH
-        if self.spheremap is None:
-            return
-
-        latest_odom_msg  = self.get_closest_time_odom_msg(self.new_img_stamp)
-        T_global_to_imu = self.odom_msg_to_transformation_matrix(latest_odom_msg)
-        T_global_to_fcu = T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
-        T_fcu_relative_to_smap_start  = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_fcu
-#         T_fcu_relative_to_smap_start = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_odom
-
-        new_kf = SubmapKeyframe(T_fcu_relative_to_smap_start)
-
-
-        # CHECK IF NEW ENOUGH
-        # TODO - check in near certainly connected submaps
-        for kf in self.spheremap.visual_keyframes:
-            # TODO - scaling
-            if kf.euclid_dist(new_kf) < self.visual_kf_addition_dist and kf.heading_dif(new_kf) < self.visual_kf_addition_heading:
-                # print("KFS: not novel enough, N keyframes: " + str(len(self.spheremap.visual_keyframes)))
-                return
-
-        if len(self.spheremap.visual_keyframes) > 0:
-            dist_bonus = new_kf.euclid_dist(self.spheremap.visual_keyframes[-1])
-            heading_bonus = new_kf.heading_dif(self.spheremap.visual_keyframes[-1]) * 0.2
-
-            self.spheremap.traveled_context_distance += dist_bonus + heading_bonus
-
-        print("KFS: adding new visual keyframe!")
-        self.spheremap.visual_keyframes.append(new_kf)
-        return
-
-
-        comp_start_time = time.time()
-        # COMPUTE DESCRIPTION AND ADD THE KF
-        kps, descs = self.orb.detectAndCompute(self.new_frame, None)
-        print(len(kps))
-        descs = [dbow.ORB.from_cv_descriptor(desc) for desc in descs]
-        new_kf.descs = descs
-
-        # self.test_db.add(descs)
-        # self.test_db_n_kframes += 1
-        self.spheremap.visual_keyframes.append(new_kf)
-
-
-
-        # self.test_db_indexing[self.test_db_n_kframes - 1] = (len(self.mchunk.submaps), len(self.spheremap.visual_keyframes)-1) 
-
-        # scores = self.test_db.query(descs)
-
-        # self.visualize_keyframe_scores(scores, new_kf)
-        # print("SCORES:")
-        # print(scores)
-
-
-        comp_time = time.time() - comp_start_time
-        print("KFS: kf addition time: " + str((comp_time) * 1000) +  " ms")
-
 
         # # #}
 
-    def submap_builder_update_callback(self, event=None):# # #{
+    def submap_builder_update_iter(self, event=None):# # #{
 
         # copy deepcopy the input data, its not that big! then can leave mutex!! (so rest of img callback is not held up)
         pcl_msg = None
@@ -547,7 +461,8 @@ class NavNode:
             pcl_msg = copy.deepcopy(self.submap_builder_input_pcl)
             points_info = copy.deepcopy(self.submap_builder_input_point_ids)
 
-        self.submap_builder_module.camera_update_iter(pcl_msg, points_info) 
+        with ScopedLock(self.spheremap_mutex):
+            self.submap_builder_module.camera_update_iter(pcl_msg, points_info) 
     # # #}
 
     # --VISUALIZATIONS
@@ -633,7 +548,7 @@ class NavNode:
 # #}
 
 if __name__ == '__main__':
-    rospy.init_node('spheremap_mapper_node')
+    rospy.init_node('ultra_navigation_node')
     optical_flow_node = NavNode()
     rospy.spin()
     cv2.destroyAllWindows()

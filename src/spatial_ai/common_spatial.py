@@ -389,7 +389,7 @@ class SphereMap:
 
             # dont take into account the ones decided for deletion
             conns = ([c for c in conns if shouldkeep[c]])
-            if len(conns)== 0:
+            if len(conns) == 0 or conns is None:
                 continue
             conns = np.array(conns, dtype=int)
 

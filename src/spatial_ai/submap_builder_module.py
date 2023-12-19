@@ -74,7 +74,6 @@ class SubmapBuilderModule:
 
         self.verbose_submap_construction = False
 
-        self.mapping_offline = False
         self.bridge = CvBridge()
         self.prev_image = None
         self.prev_time = None
@@ -121,26 +120,13 @@ class SubmapBuilderModule:
 
         # META PARAMS
         self.n_sphere_samples_per_update = 100
-        self.fragmenting_travel_dist = 7
+        self.fragmenting_travel_dist = 10
         self.visual_kf_addition_heading = 3.14159 /2
         self.visual_kf_addition_dist = 2
         
         # # #}
 
-
-    def saveEpisodeFull(self, req):# # #{
-        self.mapping_offline  = True
-        print("SAVING EPISODE MEMORY CHUNK")
-
-        fpath = rospkg.RosPack().get_path('spatial_ai') + "/memories/last_episode.pickle"
-        self.mchunk.submaps.append(self.spheremap)
-        self.mchunk.save(fpath)
-        self.mchunk.submaps.pop()
-
-        self.mapping_offline = False
-        print("EPISODE SAVED TO " + str(fpath))
-        return EmptySrvResponse()# # #}
-
+    # CORE
 
     def camera_update_iter(self, msg, points_info = None):# # #{
         if self.verbose_submap_construction:
@@ -149,6 +135,32 @@ class SubmapBuilderModule:
         if self.verbose_submap_construction:
             print("PCL MSG PROCESSING NOW")
         comp_start_time = time.time()
+
+        # CHECK TRAVELED DIST
+        if not self.spheremap is None:
+            T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
+            T_fcu_relative_to_smap_start  = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_fcu
+
+            new_kf = SubmapKeyframe(T_fcu_relative_to_smap_start)
+
+
+            # CHECK IF NEW ENOUGH
+            # TODO - check in near certainly connected submaps
+            tooclose = False
+            for kf in self.spheremap.visual_keyframes:
+                # TODO - scaling
+                if kf.euclid_dist(new_kf) < self.visual_kf_addition_dist and kf.heading_dif(new_kf) < self.visual_kf_addition_heading:
+                    tooclose = True
+                    break
+
+            if len(self.spheremap.visual_keyframes) > 0:
+                dist_bonus = new_kf.euclid_dist(self.spheremap.visual_keyframes[-1])
+                heading_bonus = new_kf.heading_dif(self.spheremap.visual_keyframes[-1]) * 0.2
+
+                self.spheremap.traveled_context_distance += dist_bonus + heading_bonus
+
+            # print("KFS: adding new visual keyframe!")
+            self.spheremap.visual_keyframes.append(new_kf)
 
         # Read Points from PCL msg# #{
         pc_data = pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)
@@ -266,16 +278,16 @@ class SubmapBuilderModule:
             self.spheremap.creation_time = rospy.get_rostime()
 
             if not pts_to_transfer is None:
-                self.spheremap.points = pts_to_transfer 
-                self.spheremap.radii = radii_to_transfer 
+                self.spheremap.points = copy.deepcopy(pts_to_transfer)
+                self.spheremap.radii = copy.deepcopy(radii_to_transfer)
                 self.spheremap.connections = np.array([None for c in range(pts_to_transfer.shape[0])], dtype=object)
                 self.spheremap.updateConnections(np.arange(0, pts_to_transfer.shape[0]))
                 self.spheremap.labelSpheresByConnectivity()
 
 
 
-            if len(self.mchunk.submaps) > 2:
-                self.saveEpisodeFull(None)
+            # if len(self.mchunk.submaps) > 2:
+            #     self.saveEpisodeFull(None)
         # # #}
 
         # TRANSFORM SLAM PTS TO -----CAMERA FRAME---- AND COMPUTE THEIR PIXPOSITIONS
@@ -525,22 +537,63 @@ class SubmapBuilderModule:
             print("SPHEREMAP visualization time: " + str((comp_time) * 1000) +  " ms")
 # # #}
 
+    # UTILS
+
+    def saveEpisodeFull(self, req):# # #{
+        print("SAVING EPISODE MEMORY CHUNK")
+
+        fpath = rospkg.RosPack().get_path('spatial_ai') + "/memories/last_episode.pickle"
+        self.mchunk.submaps.append(self.spheremap)
+        self.mchunk.save(fpath)
+        self.mchunk.submaps.pop()
+
+        print("EPISODE SAVED TO " + str(fpath))
+        return EmptySrvResponse()# # #}
+
+    def get_visited_viewpoints_global(self):# # #{
+        res_pts = None
+        res_headings = None
+        for smap in [self.spheremap] + self.mchunk.submaps:
+            if len(smap.visual_keyframes) > 0:
+                pts_smap = np.array([kf.position for kf in smap.visual_keyframes])
+                headings_smap = np.array([kf.heading for kf in smap.visual_keyframes])
+                pts_global, headings_global = transformViewpoints(pts_smap, headings_smap, smap.T_global_to_own_origin)
+
+                if res_pts is None:
+                    res_pts = pts_global
+                    res_headings = headings_global
+                else:
+                    res_pts = np.concatenate((res_pts, pts_global))
+                    res_headings = np.concatenate((res_headings, headings_global))
+
+        return res_pts, res_headings# # #}
+
+    # VISUALIZE
+
     def visualize_episode_submaps(self):# # #{
         marker_array = MarkerArray()
 
         max_maps_to_vis = 20
 
-        if max_maps_to_vis < len(self.mchunk.submaps):
+        if max_maps_to_vis > len(self.mchunk.submaps):
             max_maps_to_vis = len(self.mchunk.submaps)
+        if len(self.mchunk.submaps) == 0:
+            return
+
+        print("VISUALIZING MAPS:" )
+        print(max_maps_to_vis)
 
         clr_index = 0
         max_clrs = 4
         for i in range(max_maps_to_vis):
             idx = len(self.mchunk.submaps)-(1+i)
+            print(idx)
             clr_index = idx % max_clrs
             # if self.mchunk.submaps[idx].memorized_transform_to_prev_map is None:
             #     break
-            self.get_spheremap_marker_array(marker_array, self.mchunk.submaps[-(i+1)], self.mchunk.submaps[-(i+1)].T_global_to_own_origin, alternative_look = True, do_connections = False, do_surfels = True, do_spheres = False, ms=self.marker_scale, clr_index = clr_index)
+            print("T")
+            print(self.mchunk.submaps[idx].T_global_to_own_origin)
+            self.get_spheremap_marker_array(marker_array, self.mchunk.submaps[idx], self.mchunk.submaps[idx].T_global_to_own_origin, alternative_look = True, do_connections = False, do_surfels = True, do_spheres = False, do_map2map_conns=False, ms=self.marker_scale, clr_index = clr_index)
 
         self.recent_submaps_vis_pub.publish(marker_array)
 
@@ -583,7 +636,7 @@ class SubmapBuilderModule:
 
         marker_id = 0
         if len(marker_array.markers) > 0:
-            marker_id = marker_array.markers[-1].id
+            marker_id = marker_array.markers[-1].id + 1
 
         if do_map2map_conns and len(smap.map2map_conns) > 0:
             n_conns = len(smap.map2map_conns)
@@ -721,15 +774,15 @@ class SubmapBuilderModule:
                         marker.color.g = 0.0
                         marker.color.b = 1.0
 
-                marker.id = marker_id
+                marker.id = copy.deepcopy(marker_id)
                 marker_id += 1
-
 
                 # Convert the 3D points to Point messages
                 n_surfels = spts.shape[0]
                 points_msg = [Point(x=spts[i, 0], y=spts[i, 1], z=spts[i, 2]) for i in range(n_surfels)]
                 marker.points = points_msg
                 marker_array.markers.append(marker)
+
         if do_normals:
             arrowlen = 0.6 * ms
             pts1 = transformPoints(smap.surfel_points, T_vis)

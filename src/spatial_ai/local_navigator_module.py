@@ -69,11 +69,13 @@ class LocalNavigatorModule:
     def __init__(self, mapper, ptraj_topic, output_path_topic):# # #{
 
         self.mapper = mapper
+        self.odom_frame = mapper.odom_frame
+        self.fcu_frame = mapper.fcu_frame
         self.tf_listener = mapper.tf_listener
 
         self.predicted_traj_mutex = threading.Lock()
 
-        # PLANNING PUB
+        # OUTPUT PATH PUB
         self.path_for_trajectory_generator_pub = rospy.Publisher(output_path_topic, mrs_msgs.msg.Path, queue_size=10)
 
         # VIS PUB
@@ -85,7 +87,7 @@ class LocalNavigatorModule:
         self.min_planning_odist = 0.2
         self.max_planning_odist = 2
 
-        ptraj_topic = '/uav1/control_manager/mpc_tracker/prediction_full_state'
+        # PREDICTED TRAJ
         self.sub_predicted_trajectory = rospy.Subscriber(ptraj_topic, mrs_msgs.msg.MpcPredictionFullState, self.predicted_trajectory_callback, queue_size=10000)
         self.predicted_trajectory_pts_global = None
 
@@ -132,13 +134,9 @@ class LocalNavigatorModule:
             msg_frame = msg.header.frame_id
 
             # GET CURRENT ODOM MSG
-            # latest_odom_msg = self.odom_buffer[-1]
-            # T_global_to_imu = self.odom_msg_to_transformation_matrix(latest_odom_msg)
-            # T_global_to_fcu = T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
-
-
-            T_msg_to_fcu = lookupTransformAsMatrix(msg_frame, self.mapper.fcu_frame, self.tf_listener)
-            T_fcu_to_global = lookupTransformAsMatrix(self.mapper.fcu_frame, 'global', self.tf_listener)
+            T_msg_to_fcu = lookupTransformAsMatrix(msg_frame, self.fcu_frame, self.tf_listener)
+            # T_fcu_to_global = lookupTransformAsMatrix(self.fcu_frame, 'global', self.tf_listener)
+            T_fcu_to_global = lookupTransformAsMatrix(self.fcu_frame, self.odom_frame, self.tf_listener)
 
             T_msg_to_global = T_msg_to_fcu @ T_fcu_to_global
 
@@ -258,7 +256,7 @@ class LocalNavigatorModule:
         # latest_odom_msg = self.odom_buffer[-1]
         # T_global_to_imu = self.odom_msg_to_transformation_matrix(latest_odom_msg)
         # T_global_to_fcu = T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
-        T_global_to_fcu = lookupTransformAsMatrix(self.mapper.odom_frame, self.mapper.fcu_frame, self.tf_listener)
+        T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
         T_smap_origin_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
 
         pos_fcu_in_global_frame = T_global_to_fcu[:3, 3]
@@ -449,9 +447,11 @@ class LocalNavigatorModule:
             return
 
         # GET FCU TRANSFORM NOWW! AFTER 0.5s OF PLANNING
-        latest_odom_msg = self.odom_buffer[-1]
-        T_global_to_imu = self.odom_msg_to_transformation_matrix(latest_odom_msg)
-        T_global_to_fcu = T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
+        # latest_odom_msg = self.odom_buffer[-1]
+        # T_global_to_imu = self.odom_msg_to_transformation_matrix(latest_odom_msg)
+        # T_global_to_fcu = T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
+        T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
+
         T_smap_origin_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
 
         pts_fcu, headings_fcu = transformViewpoints(best_path_pts, best_path_headings, np.linalg.inv(T_smap_origin_to_fcu))
@@ -652,9 +652,10 @@ class LocalNavigatorModule:
         # GET GLOBAL AND FCU FRAME POINTS
         heads_global = transformPoints(tree_pos[heads_indices, :], self.mapper.spheremap.T_global_to_own_origin)
 
-        latest_odom_msg = self.odom_buffer[-1] #TODO fix
-        T_global_to_imu = self.odom_msg_to_transformation_matrix(latest_odom_msg)
-        T_global_to_fcu = T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
+        # latest_odom_msg = self.odom_buffer[-1] #TODO fix
+        # T_global_to_imu = self.odom_msg_to_transformation_matrix(latest_odom_msg)
+        # T_global_to_fcu = T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
+        T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
 
         heads_values = None
         acceptance_thresh = -1000
