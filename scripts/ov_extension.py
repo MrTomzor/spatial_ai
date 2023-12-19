@@ -13,13 +13,10 @@ import heapq
 import dbow
 import rospkg
 
-# import common_spatial
 from spatial_ai.common_spatial import *
-# from scommon_spatial import *
-# print(inspect.getmembers(common_spatial))
-# from common_spatial import SphereMap
+from spatial_ai.fire_slam_module import *
+from spatial_ai.submap_builder_module import *
 
-# from sensor_msgs.msg import Image
 from sensor_msgs.msg import Image, CompressedImage, PointCloud2
 import sensor_msgs.point_cloud2 as pc2
 import mrs_msgs.msg
@@ -28,11 +25,7 @@ from scipy.spatial.transform import Rotation
 import scipy
 from scipy.spatial import Delaunay
 from scipy.spatial import ConvexHull
-# import pcl
 import inspect
-# import shapely
-# from shapely.geometry import Point2D
-# from shapely.geometry.polygon import Polygon
 from shapely import geometry
 
 import trimesh
@@ -97,12 +90,6 @@ kMaxNumFeature = 2000
 # #}
 
 # #{ structs and util functions
-def getPixelPositions(pts, K):
-    # pts = 3D points u wish to project
-    pixpos = K @ pts 
-    pixpos = pixpos / pixpos[2, :]
-    return pixpos[:2, :].T
-
 # LKPARAMS
 lk_params = dict(winSize  = (31, 31),
                  maxLevel = 3,
@@ -172,21 +159,12 @@ class NavNode:
 
         # VIS PUB
         self.slam_points = None
-        # self.slam_pcl_pub = rospy.Publisher('extended_slam_points', PointCloud, queue_size=10)
 
-        self.spheremap_outline_pub = rospy.Publisher('spheres', MarkerArray, queue_size=10)
-        self.spheremap_freespace_pub = rospy.Publisher('spheremap_freespace', MarkerArray, queue_size=10)
-
-        self.recent_submaps_vis_pub = rospy.Publisher('recent_submaps_vis', MarkerArray, queue_size=10)
         self.path_planning_vis_pub = rospy.Publisher('path_planning_vis', MarkerArray, queue_size=10)
         self.visual_similarity_vis_pub = rospy.Publisher('visual_similarity_vis', MarkerArray, queue_size=10)
         self.unsorted_vis_pub = rospy.Publisher('unsorted_markers', MarkerArray, queue_size=10)
 
-        # self.kp_pub = rospy.Publisher('tracked_features_img', Image, queue_size=1)
-        self.depth_pub = rospy.Publisher('estim_depth_img', Image, queue_size=1)
         self.marker_pub = rospy.Publisher('/vo_odom', Marker, queue_size=10)
-        # self.kp_pcl_pub = rospy.Publisher('tracked_features_space', PointCloud, queue_size=10)
-        # self.kp_pcl_pub_invdepth = rospy.Publisher('tracked_features_space_invdepth', PointCloud, queue_size=10)
 
         self.tf_listener = tf.TransformListener()
 
@@ -281,7 +259,17 @@ class NavNode:
         self.min_planning_odist = 0.2
         self.max_planning_odist = 2
 
-        
+        # INITIALIZE MODULES
+
+        self.fire_slam_module = FireSLAMModule(self.width, self.height, self.K, self.camera_frame, self.odom_frame, self.tf_listener)
+
+        self.submap_builder_input_mutex = threading.Lock()
+        self.submap_builder_input_pcl = None
+        self.submap_builder_input_point_ids = None
+
+        self.submap_builder_module = SubmapBuilderModule(self.width, self.height, self.K, self.camera_frame, self.odom_frame,self.fcu_frame, self.tf_listener, self.T_imu_to_cam, self.T_fcu_to_imu)
+        self.submap_builder_rate = 10
+        self.submap_builder_timer = rospy.Timer(rospy.Duration(1.0 / self.submap_builder_rate), self.submap_builder_update_callback)
 
         # --SUB
         self.sub_cam = rospy.Subscriber(img_topic, Image, self.image_callback, queue_size=10000)
@@ -292,7 +280,9 @@ class NavNode:
         self.odom_buffer = []
         self.odom_buffer_maxlen = 1000
         self.sub_odom = rospy.Subscriber(odom_topic, Odometry, self.odometry_callback, queue_size=10000)
-        self.sub_slam_points = rospy.Subscriber(ov_slampoints_topic, PointCloud2, self.points_slam_callback, queue_size=3)
+
+        # self.sub_slam_points = rospy.Subscriber(ov_slampoints_topic, PointCloud2, self.points_slam_callback, queue_size=3)
+
         # self.sub_odom = rospy.Subscriber('/ov_msckf/poseimu', PoseWithCovarianceStamped, self.odometry_callback, queue_size=10000)
 
         self.tf_broadcaster = tf.TransformBroadcaster()
@@ -473,13 +463,8 @@ class NavNode:
     # --SUBSCRIBE CALLBACKS
 
     def lookupTransformAsMatrix(self, frame1, frame2):# # #{
-        (trans, rotation) = self.tf_listener.lookupTransform(frame1, frame2, rospy.Time(0)) #Time0 = latest
-
-        rotation_matrix = tfs.quaternion_matrix(rotation)
-        res = np.eye(4)
-        res[:3, :3] = rotation_matrix[:3,:3]
-        res[:3, 3] = trans
-        return res# # #}
+        return lookupTransformAsMatrix(frame1, frame2, self.tf_listener)
+    # # #}
 
     def points_slam_callback(self, msg):# # #{
         if self.node_offline:
@@ -914,6 +899,19 @@ class NavNode:
     def image_callback(self, msg):# # #{
         if self.node_offline:
             return
+
+        # UPDATE VISUAL SLAM MODULE, PASS INPUT TO SUBMAP BUILDER IF NEW INPUT
+        self.fire_slam_module.image_callback(msg)
+
+        if self.fire_slam_module.has_new_pcl_data:
+            pcl_msg, point_ids = self.fire_slam_module.get_visible_pointcloud_metric_estimate(visualize=True)
+            # print("PCL MSG TYPE:")
+            # print(pcl_msg)
+            with ScopedLock(self.submap_builder_input_mutex):
+                self.submap_builder_input_pcl = pcl_msg
+                self.submap_builder_input_point_ids = point_ids
+
+
         img = self.bridge.imgmsg_to_cv2(msg, "bgr8")
 
         comp_start_time = rospy.get_rostime()
@@ -1200,6 +1198,23 @@ class NavNode:
             self.predicted_trajectory_pts_global = pts_global
             self.predicted_trajectory_headings_global = headings_global
 
+    # # #}
+
+    def submap_builder_update_callback(self, event=None):# # #{
+
+        # copy deepcopy the input data, its not that big! then can leave mutex!! (so rest of img callback is not held up)
+        pcl_msg = None
+        points_info = None
+
+        if self.submap_builder_input_pcl is None:
+            print("NO PCL FOR UPDATE YET!")
+            return
+
+        with ScopedLock(self.submap_builder_input_mutex):
+            pcl_msg = copy.deepcopy(self.submap_builder_input_pcl)
+            points_info = copy.deepcopy(self.submap_builder_input_point_ids)
+
+        self.submap_builder_module.camera_update_iter(pcl_msg, points_info) 
     # # #}
 
     # --PLANNING PIPELINE
@@ -2328,335 +2343,6 @@ class NavNode:
         self.visual_similarity_vis_pub.publish(marker_array)
         return
     # # #}
-
-    def visualize_episode_submaps(self):# # #{
-        marker_array = MarkerArray()
-
-        max_maps_to_vis = 20
-
-        if max_maps_to_vis < len(self.mchunk.submaps):
-            max_maps_to_vis = len(self.mchunk.submaps)
-
-        clr_index = 0
-        max_clrs = 4
-        for i in range(max_maps_to_vis):
-            idx = len(self.mchunk.submaps)-(1+i)
-            clr_index = idx % max_clrs
-            # if self.mchunk.submaps[idx].memorized_transform_to_prev_map is None:
-            #     break
-            self.get_spheremap_marker_array(marker_array, self.mchunk.submaps[-(i+1)], self.mchunk.submaps[-(i+1)].T_global_to_own_origin, alternative_look = True, do_connections = False, do_surfels = True, do_spheres = False, ms=self.marker_scale, clr_index = clr_index)
-
-        self.recent_submaps_vis_pub.publish(marker_array)
-
-        return
-# # #}
-
-    def visualize_spheremap(self):# # #{
-        if self.spheremap is None:
-            return
-
-        # FIRST CLEAR MARKERS
-        # clear_msg = MarkerArray()
-        # marker = Marker()
-        # marker.id = 0
-        # # marker.ns = self.marker_ns
-        # marker.action = Marker.DELETEALL
-        # clear_msg.markers.append(marker)
-
-        marker_array = MarkerArray()
-        self.get_spheremap_marker_array(marker_array, self.spheremap, self.spheremap.T_global_to_own_origin, ms=self.marker_scale, do_spheres=False, do_surfels=True)
-        self.spheremap_outline_pub.publish(marker_array)
-
-        marker_array = MarkerArray()
-        self.get_spheremap_marker_array(marker_array, self.spheremap, self.spheremap.T_global_to_own_origin, ms=self.marker_scale, do_spheres=True, do_surfels=False, do_keyframes=False)
-        self.spheremap_freespace_pub.publish(marker_array)
-# # #}
-    
-    def visualize_depth(self, pixpos, tri):# # #{
-        rgb = np.repeat(copy.deepcopy(self.new_frame)[:, :, np.newaxis], 3, axis=2)
-
-        for i in range(len(tri.simplices)):
-            a = pixpos[tri.simplices[i][0], :].astype(int)
-            b = pixpos[tri.simplices[i][1], :].astype(int)
-            c = pixpos[tri.simplices[i][2], :].astype(int)
-
-            rgb = cv2.line(rgb, (a[0], a[1]), (b[0], b[1]), (255, 0, 0), 3)
-            rgb = cv2.line(rgb, (a[0], a[1]), (c[0], c[1]), (255, 0, 0), 3)
-            rgb = cv2.line(rgb, (c[0], c[1]), (b[0], b[1]), (255, 0, 0), 3)
-
-        res = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-        return res
-# # #}
-
-    def get_spheremap_marker_array(self, marker_array, smap, T_inv, alternative_look=False, do_connections=False,  do_surfels=True, do_spheres=True, do_keyframes=False, do_normals=False, do_map2map_conns=True, ms=1, clr_index =0):# # #{
-        # T_vis = np.linalg.inv(T_inv)
-        T_vis = T_inv
-        pts = transformPoints(smap.points, T_vis)
-
-        marker_id = 0
-        if len(marker_array.markers) > 0:
-            marker_id = marker_array.markers[-1].id
-
-        if do_map2map_conns and len(smap.map2map_conns) > 0:
-            n_conns = len(smap.map2map_conns)
-
-            # CONN PTS
-            untr_pts = np.array([c.pt_in_first_map_frame for c in smap.map2map_conns])
-            untr_pts = untr_pts.reshape((n_conns, 3))
-            spts = transformPoints(untr_pts, T_vis)
-
-            marker = Marker()
-            # marker.header.frame_id = "global"  # Adjust the frame_id as needed
-            marker.header.frame_id = self.odom_frame  # Adjust the frame_id as needed
-            marker.type = Marker.POINTS
-            marker.action = Marker.ADD
-            marker.pose.orientation.w = 1.0
-            # marker.scale.x = 1.2  # Adjust the size of the points
-            # marker.scale.y = 1.2
-            marker.scale.x = ms *2.2  # Adjust the size of the points
-            marker.scale.y = ms *2.2
-            marker.color.a = 1
-            marker.color.r = 0.5
-            marker.color.b = 1
-            # if alternative_look:
-            #     marker.color.r = 0.5
-            #     marker.color.b = 1
-
-            marker.id = marker_id
-            marker_id += 1
-
-            # Convert the 3D points to Point messages
-            points_msg = [Point(x=spts[i, 0], y=spts[i, 1], z=spts[i, 2]) for i in range(n_conns)]
-            marker.points = points_msg
-            marker_array.markers.append(marker)
-
-            # LINES BETWEEN CONN POINTS
-            line_marker = Marker()
-            line_marker.header.frame_id = self.odom_frame  # Set your desired frame_id
-            line_marker.type = Marker.LINE_LIST
-            line_marker.action = Marker.ADD
-            line_marker.scale.x =ms* 1  # Line width
-            line_marker.color.a = 1  # Alpha
-            line_marker.color.r = 0.5  # Alpha
-            line_marker.color.b = 1  # Alpha
-
-            # if alternative_look:
-            #     line_marker.scale.x = 0.1
-
-            line_marker.id = marker_id
-            marker_id += 1
-
-            for i in range(n_conns):
-                for j in range(i+1, n_conns):
-                    point1 = Point()
-                    point2 = Point()
-
-                    p1 = spts[i, :]
-                    p2 = spts[j, :]
-                    
-                    point1.x = p1[0]
-                    point1.y = p1[1]
-                    point1.z = p1[2]
-                    point2.x = p2[0]
-                    point2.y = p2[1]
-                    point2.z = p2[2]
-                    line_marker.points.append(point1)
-                    line_marker.points.append(point2)
-            marker_array.markers.append(line_marker)
-
-        if do_connections:
-            line_marker = Marker()
-            line_marker.header.frame_id = self.odom_frame  # Set your desired frame_id
-            line_marker.type = Marker.LINE_LIST
-            line_marker.action = Marker.ADD
-            line_marker.scale.x = ms* 0.2  # Line width
-            line_marker.color.a = 1.0  # Alpha
-            if alternative_look:
-                line_marker.scale.x =ms * 0.1
-
-            line_marker.id = marker_id
-            marker_id += 1
-
-            for i in range(smap.connections.shape[0]):
-                if smap.connections[i] is None:
-                    continue
-                for j in range(len(smap.connections[i])):
-                    point1 = Point()
-                    point2 = Point()
-
-                    p1 = pts[i, :]
-                    p2 = pts[smap.connections[i].flatten()[j], :]
-                    
-                    point1.x = p1[0]
-                    point1.y = p1[1]
-                    point1.z = p1[2]
-                    point2.x = p2[0]
-                    point2.y = p2[1]
-                    point2.z = p2[2]
-                    line_marker.points.append(point1)
-                    line_marker.points.append(point2)
-            marker_array.markers.append(line_marker)
-
-        if do_surfels:
-            if not smap.surfel_points is None:
-                spts = transformPoints(smap.surfel_points, T_vis)
-
-                marker = Marker()
-                marker.header.frame_id = self.odom_frame  # Adjust the frame_id as needed
-                marker.type = Marker.POINTS
-                marker.action = Marker.ADD
-                marker.pose.orientation.w = 1.0
-                # marker.scale.x = 1.2  # Adjust the size of the points
-                # marker.scale.y = 1.2
-                marker.scale.x = ms *0.9  # Adjust the size of the points
-                marker.scale.y = ms *0.9
-                marker.color.a = 1.0
-                marker.color.r = 1.0
-                marker.color.g = 0.0
-                marker.color.b = 0.0
-                if alternative_look:
-                    marker.color.a = 0.5
-                    if clr_index == 0:
-                        marker.color.r = 1.0
-                        marker.color.g = 1.0
-                        marker.color.b = 0.0
-                    elif clr_index == 1:
-                        marker.color.r = 0.0
-                        marker.color.g = 1.0
-                        marker.color.b = 1.0
-                    elif clr_index == 2:
-                        marker.color.r = 0.4
-                        marker.color.g = 0.7
-                        marker.color.b = 1.0
-                    else:
-                        marker.color.r = 1.0
-                        marker.color.g = 0.0
-                        marker.color.b = 1.0
-
-                marker.id = marker_id
-                marker_id += 1
-
-
-                # Convert the 3D points to Point messages
-                n_surfels = spts.shape[0]
-                points_msg = [Point(x=spts[i, 0], y=spts[i, 1], z=spts[i, 2]) for i in range(n_surfels)]
-                marker.points = points_msg
-                marker_array.markers.append(marker)
-        if do_normals:
-            arrowlen = 0.6 * ms
-            pts1 = transformPoints(smap.surfel_points, T_vis)
-            pts2 = transformPoints(smap.surfel_points + smap.surfel_normals * arrowlen, T_vis)
-            if not smap.surfel_points is None:
-                for i in range(smap.surfel_points.shape[0]):
-                    marker = Marker()
-                    marker.header.frame_id = self.odom_frame  # Change this frame_id if necessary
-                    marker.header.stamp = rospy.Time.now()
-                    marker.type = Marker.ARROW
-                    marker.action = Marker.ADD
-                    marker.id = marker_id
-                    marker_id += 1
-
-                    # Set the scale
-                    marker.scale.x = ms *0.25
-                    marker.scale.y = ms *0.5
-                    marker.scale.z = ms *0.5
-
-                    marker.color.a = 1
-                    marker.color.r = 1.0
-                    marker.color.g = 0.5
-                    marker.color.b = 0.0
-                    if alternative_look:
-                        marker.color.r = 0.7
-                        marker.color.g = 0.0
-                        marker.color.b = 1.0
-
-                    pt1 = pts1[i]
-                    pt2 = pts2[i]
-                    points_msg = [Point(x=pt1[0], y=pt1[1], z=pt1[2]), Point(x=pt2[0], y=pt2[1], z=pt2[2])]
-                    marker.points = points_msg
-
-                    # Add the marker to the MarkerArray
-                    marker_array.markers.append(marker)
-
-        if do_keyframes:
-            n_kframes = len(smap.visual_keyframes)
-            if n_kframes > 0:
-                kframes_pts = np.array([kf.position for kf in smap.visual_keyframes])
-                kframes_pts = transformPoints(kframes_pts, T_vis)
-                for i in range(n_kframes):
-                    marker = Marker()
-                    marker.header.frame_id = self.odom_frame  # Change this frame_id if necessary
-                    marker.header.stamp = rospy.Time.now()
-                    marker.type = Marker.ARROW
-                    marker.action = Marker.ADD
-                    marker.id = marker_id
-                    marker_id += 1
-
-                    # # Set the position (sphere center)
-                    # marker.pose.position.x = kframes_pts[i][0]
-                    # marker.pose.position.y = kframes_pts[i][1]
-                    # marker.pose.position.z = kframes_pts[i][2]
-
-                    # Set the scale
-                    marker.scale.x = ms *0.4
-                    marker.scale.y = ms *2.0
-                    marker.scale.z = ms *1.0
-
-                    marker.color.a = 1
-                    marker.color.r = 0.0
-                    marker.color.g = 0.0
-                    marker.color.b = 0.0
-                    if alternative_look:
-                        marker.color.r = 1.0
-                        marker.color.g = 0.0
-                        marker.color.b = 1.0
-
-                    arrowlen = 2
-                    map_heading = transformationMatrixToHeading(T_vis)
-                    xbonus = arrowlen * np.cos(smap.visual_keyframes[i].heading + map_heading)
-                    ybonus = arrowlen * np.sin(smap.visual_keyframes[i].heading + map_heading)
-                    points_msg = [Point(x=kframes_pts[i][0], y=kframes_pts[i][1], z=kframes_pts[i][2]), Point(x=kframes_pts[i][0]+xbonus, y=kframes_pts[i][1]+ybonus, z=kframes_pts[i][2])]
-                    marker.points = points_msg
-
-                    # Add the marker to the MarkerArray
-                    marker_array.markers.append(marker)
-
-        if do_spheres:
-            for i in range(smap.points.shape[0]):
-                marker = Marker()
-                marker.header.frame_id = self.odom_frame  # Change this frame_id if necessary
-                marker.header.stamp = rospy.Time.now()
-                marker.type = Marker.SPHERE
-                marker.action = Marker.ADD
-                marker.id = marker_id
-                marker_id += 1
-
-                # Set the position (sphere center)
-                marker.pose.position.x = pts[i][0]
-                marker.pose.position.y = pts[i][1]
-                marker.pose.position.z = pts[i][2]
-
-                # Set the scale (sphere radius)
-                marker.scale.x = 2 * smap.radii[i]
-                marker.scale.y = 2 * smap.radii[i]
-                marker.scale.z = 2 * smap.radii[i]
-
-                marker.color.a = 0.1
-                marker.color.r = 0.0
-                marker.color.g = 1.0
-                marker.color.b = 0.0
-                if alternative_look:
-                    marker.color.a = 0.05
-                    marker.color.r = 0.0
-                    marker.color.g = 0.0
-                    marker.color.b = 1.0
-
-                # Add the marker to the MarkerArray
-                marker_array.markers.append(marker)
-
-        return True
-    # # #}
-
     # --UTILS
     def decomp_essential_mat(self, E, q1, q2):# # #{
         """

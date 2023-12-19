@@ -102,7 +102,7 @@ class KeyFrame:# # #{
 class FireSLAMModule:
     # CORE
 
-    def __init__(self, w, h, K, camera_frame_id, odom_orig_frame_id,image_sub_topic, standalone_mode = False ):# # #{
+    def __init__(self, w, h, K, camera_frame_id, odom_orig_frame_id, tf_listener, image_sub_topic=None, standalone_mode = False ):# # #{
         self.width = w
         self.height = h
         self.K = K
@@ -110,6 +110,7 @@ class FireSLAMModule:
         self.odom_orig_frame_id = odom_orig_frame_id
         self.image_sub_topic = image_sub_topic
         self.standalone_mode = standalone_mode
+        self.has_new_pcl_data = False
 
         self.kf_dist_thr = 0.2
         self.toonear_vis_dist = 1
@@ -180,7 +181,10 @@ class FireSLAMModule:
         # self.camera_frame_id = "uav1/rgb"
         # self.odom_orig_frame_id = "uav1/fixed_origin"
 
-        self.tf_listener = tf.TransformListener()
+        if self.standalone_mode:
+            self.tf_listener = tf.TransformListener()
+        else:
+            self.tf_listener = tf_listener
 
         # NEW
         self.new_frame = None
@@ -366,6 +370,7 @@ class FireSLAMModule:
     def image_callback(self, msg):# # #{
         if self.node_offline:
             return
+        self.has_new_pcl_data  = False
 
         # GET CURRENT ODOM POSE
         (trans, rotation) = self.tf_listener.lookupTransform(self.odom_orig_frame_id , self.camera_frame_id, rospy.Time(0))
@@ -391,8 +396,6 @@ class FireSLAMModule:
 
         self.px_ref = self.px_cur
 
-        print("FRAME " + str(self.n_frames))
-
         comp_start_time = time.time()
 
         # RETURN IF FIRST FRAME
@@ -406,14 +409,14 @@ class FireSLAMModule:
 
         # IF YOU CAN - TRACK
         self.active_2d_points_ids = [pt_id for pt_id, pt in self.tracked_2d_points.items() if pt.active]
-        print("N_ACTIV 2D POINTS: " + str(len(self.active_2d_points_ids)))
+        # print("N_ACTIV 2D POINTS: " + str(len(self.active_2d_points_ids)))
         if len(self.active_2d_points_ids) > 0:
             # print("BEFORE TRACKING: " + str(self.px_ref.shape[0]))
 
             # DO TRACKING
             px_ref = np.array([self.tracked_2d_points[p].current_pos for p in self.active_2d_points_ids], dtype=np.float32)
-            print("PX REF SHAPE")
-            print(px_ref.shape)
+            # print("PX REF SHAPE")
+            # print(px_ref.shape)
             # print(px_ref)
             kp2, st, err = cv2.calcOpticalFlowPyrLK(self.last_frame, self.new_frame, px_ref, None, **self.lk_params)  #shape: [k,2] [k,1] [k,1]
 
@@ -462,10 +465,10 @@ class FireSLAMModule:
         # CHECK IF SHOULD ADD KEYFRAME FOR TRIANGULATION OF POINTS
         # TODO - and prev keyframe parallax condition
         timedist_to_img = (rospy.get_rostime() - self.new_img_stamp).to_sec()
-        print("TIMEDIST IMG: " + str(timedist_to_img))
+        # print("TIMEDIST IMG: " + str(timedist_to_img))
         if len(self.keyframes) > 0:
             time_since_last_keyframe = (self.new_img_stamp - self.keyframes[-1].img_timestamp).to_sec()
-        print("TIME SINCE LAST KF:" + str(time_since_last_keyframe ))
+        # print("TIME SINCE LAST KF:" + str(time_since_last_keyframe ))
 
 
 
@@ -488,7 +491,7 @@ class FireSLAMModule:
 
             ransacable_ids = [pt_id for pt_id, pt in self.tracked_2d_points.items() if pt.active and pt.age > 1]
             n_ransac = len(ransacable_ids)
-            print("N RANSACABLE: " + str(n_ransac))
+            # print("N RANSACABLE: " + str(n_ransac))
             if n_ransac > 4 and self.keyframe_idx > 0:
                 kfi = self.keyframe_idx-1
                 dst_pts = np.array([[self.tracked_2d_points[i].current_pos[0], self.tracked_2d_points[i].current_pos[1]] for i in ransacable_ids])
@@ -496,25 +499,25 @@ class FireSLAMModule:
                 M, mask = cv2.findEssentialMat(src_pts, dst_pts, self.K, threshold=1)
                 mask = mask.flatten() == 1
 
-                print("INLIERS: " + str(np.sum(mask)))
-                print(M)
+                # print("INLIERS: " + str(np.sum(mask)))
+                # print(M)
                 # print(mask)
                 # print(mask)
-                print("DECOMPOSING")
+                # print("DECOMPOSING")
                 # print(mask.shape)
                 decomp_res = self.decomp_essential_mat(M, src_pts[mask, :], dst_pts[mask, :])
                 T_ransac = np.linalg.inv(self._form_transf(decomp_res[0], decomp_res[1]))
-                print("DECOMPOSING DONE")
-                print(T_ransac)
+                # print("DECOMPOSING DONE")
+                # print(T_ransac)
                 T_delta_odom = (np.linalg.inv(self.keyframes[kfi].T_odom) @ T_odom)
-                print("T ODOM: ")
-                print(T_delta_odom)
+                # print("T ODOM: ")
+                # print(T_delta_odom)
                 dist_traveled_odom = np.linalg.norm(T_delta_odom[:3,3])
                 ransac_translation = T_ransac[:3, 3]
                 scaling_factor = (dist_traveled_odom / np.linalg.norm(ransac_translation))
                 T_ransac[:3, 3] = T_ransac[:3, 3] * scaling_factor
-                print("T RANSAC RESCALED:")
-                print(T_ransac)
+                # print("T RANSAC RESCALED:")
+                # print(T_ransac)
 
                 self.triangulated_points = self.triangulated_points * scaling_factor
 
@@ -590,14 +593,17 @@ class FireSLAMModule:
             if self.standalone_mode:
                 self.get_visible_pointcloud_metric_estimate(visualize=True)
 
+            self.has_new_pcl_data = True
+
+            comp_time = time.time() - comp_start_time
+            print("computation time: " + str((comp_time) * 1000) +  " ms")
+
         # VISUALIZE FEATURES
 
         # self.triang_vis_pub.publish(self.bridge.cv2_to_imgmsg(self.visualize_triang(), "bgr8"))
         self.track_vis_pub.publish(self.bridge.cv2_to_imgmsg(self.visualize_tracking(), "bgr8"))
         self.keyframes_marker_pub.publish(self.visualize_keyframes())
 
-        comp_time = time.time() - comp_start_time
-        print("computation time: " + str((comp_time) * 1000) +  " ms")
 # # #}
 
     def get_visible_pointcloud_metric_estimate(self, visualize = True):# # #{
@@ -720,9 +726,6 @@ class FireSLAMModule:
         # rgb = np.repeat((self.new_frame)[:, :, np.newaxis], 3, axis=2)
 
         px_cur = np.array([self.tracked_2d_points[p].current_pos for p in self.active_2d_points_ids])
-        print("PX CUR SHAPE:")
-        print(px_cur.shape)
-        # print(px_cur)
 
         n_pts = len(self.triang_vis_px1)
         if n_pts  > 0:
@@ -778,9 +781,6 @@ class FireSLAMModule:
         have_reproj = np.array([(self.tracked_2d_points[p].has_reproj ) for p in self.active_2d_points_ids])
         reprojs = np.array([(self.tracked_2d_points[p].reproj ) for p in self.active_2d_points_ids])
         n_active = len(self.active_2d_points_ids)
-        print("PX CUR SHAPE:")
-        print(px_cur.shape)
-        # print(px_cur)
 
         growsize = 7
         minsize = 7
@@ -822,9 +822,6 @@ class FireSLAMModule:
         px_cur = np.array([self.tracked_2d_points[p].current_pos for p in self.active_2d_points_ids])
         have_depth = np.array([(not self.tracked_2d_points[p].depth is None) for p in self.active_2d_points_ids])
         depths = np.array([self.tracked_2d_points[p].depth for p in self.active_2d_points_ids])
-        print("PX CUR SHAPE:")
-        print(px_cur.shape)
-        # print(px_cur)
 
         if not px_cur is None and px_cur.size > 0:
 
@@ -932,9 +929,6 @@ class FireSLAMModule:
     def triangulateDepthLineNearestPoint(self, T_cam, pos1, pos2, visualize=False):# # #{
         # TRANSFORM TO RAY DIRECTIONS IN 3D
 
-        # print("PIXPOS")
-        # print(pos1)
-        # print(pos2)
         if visualize:
             self.triang_vis_px1.append(pos1)
             self.triang_vis_px2.append(pos2)
@@ -954,17 +948,11 @@ class FireSLAMModule:
         dir1 = invK @ dir1
         dir2 = invK @ dir2
 
-        # print("DIRS:")
-        # print(dir1)
-        # print(dir2)
-
 
         dir1 = (dir1 / np.linalg.norm(dir1)).flatten() 
         dir2 = (dir2 / np.linalg.norm(dir2)).flatten()
 
         linepos2 = T_cam[:3,3]
-        # print("LINEPOS2:")
-        # print(linepos2)
 
         # ROTATE DIR2 BY THE T_CAM
         # dir2 = np.linalg.inv(T_cam)[:3,:3] @ dir2
@@ -1001,22 +989,10 @@ class FireSLAMModule:
         # TEST:
         pt_on_line_2 = linepos2 + dir2 * dist_pt_on_line2
         pt_on_line_1 = pt_on_line_2  - crossprod_normalized * dist_lines
-        # print("PROJECTION OF CLOSEST POINT ON LINE2 TO LINE1:")
-        # print(pt_on_line_2.dot(dir1))
-
-        # print("DIST LINES:")
-        # print(np.linalg.norm(pt_on_line_1 - pt_on_line_2))
-
-        # print("ALIGNMENT OF TESTPT2 ON DIR1")
-        # print(pt_on_line_1.dot(dir1))
-        # print("DIST ON LINE1: ")
-        # print(np.linalg.norm(pt_on_line_1))
 
         # TRY REPROJECTING PT1 TO CAM1
         reproj1 = self.K @ pt_on_line_1
         reproj1 = reproj1[:2] / reproj1[2]
-        # print("REPROJECTION TO CAM1:")
-        # print(reproj1)
 
         res_pt = np.ones((4))
         res_pt[:3] = (pt_on_line_2 + pt_on_line_1) / 2
@@ -1027,11 +1003,7 @@ class FireSLAMModule:
         reproj2 = reproj2[:2] / reproj2[2]
 
         # reproj2 = reproj2[:2] 
-        # print("REPROJECTION TO CAM2:")
-        # print(reproj2)
         reproj_error = np.linalg.norm(reproj2 - pos2)
-        # print("REPROJ ERROR:" )
-        # print(reproj_error)
 
         # depth = np.linalg.norm(res_pt)
         depth = dist_pt_on_line2
@@ -1055,8 +1027,6 @@ class FireSLAMModule:
         -------
         right_pair (list): Contains the rotation matrix and translation vector
         """
-        # print(q1.shape)
-        # print(q2.shape)
         def sum_z_cal_relative_scale(R, t, store=False):
             # Get the transformation matrix
             T = self._form_transf(R, t)
@@ -1072,9 +1042,6 @@ class FireSLAMModule:
             uhom_Q1 = hom_Q1[:3, :] / hom_Q1[3, :]
             uhom_Q2 = hom_Q2[:3, :] / hom_Q2[3, :]
 
-            # print("uhom Q1:")
-            # print(uhom_Q1.T)
-
             if store:
                 return uhom_Q2
 
@@ -1085,13 +1052,13 @@ class FireSLAMModule:
             # Form point pairs and calculate the relative scale
             relative_scale = np.mean(np.linalg.norm(uhom_Q1.T[:-1] - uhom_Q1.T[1:], axis=-1)/
                                      np.linalg.norm(uhom_Q2.T[:-1] - uhom_Q2.T[1:], axis=-1))
-            print("R, t:")
-            print(R)
-            print(t)
-            print("REL SCALE:")
-            print(relative_scale)
-            print(sum_of_pos_z_Q1)
-            print(sum_of_pos_z_Q2)
+            # print("R, t:")
+            # print(R)
+            # print(t)
+            # print("REL SCALE:")
+            # print(relative_scale)
+            # print(sum_of_pos_z_Q1)
+            # print(sum_of_pos_z_Q2)
             return sum_of_pos_z_Q1 + sum_of_pos_z_Q2, relative_scale
 
         # Decompose the essential matrix

@@ -5,9 +5,28 @@ from sklearn.cluster import KMeans
 from scipy.spatial import KDTree
 import scipy
 import pickle
+import rospy
+import tf.transformations as tfs
 
 
 # common utils# #{
+
+def getPixelPositions(pts, K):
+    # pts = 3D points u wish to project
+    pixpos = K @ pts 
+    pixpos = pixpos / pixpos[2, :]
+    return pixpos[:2, :].T
+
+
+def lookupTransformAsMatrix(frame1, frame2, tf_listener):# # #{
+    (trans, rotation) = tf_listener.lookupTransform(frame1, frame2, rospy.Time(0)) #Time0 = latest
+
+    rotation_matrix = tfs.quaternion_matrix(rotation)
+    res = np.eye(4)
+    res[:3, :3] = rotation_matrix[:3,:3]
+    res[:3, 3] = trans
+    return res# # #}
+
 class EmptyClass(object):
     pass
 
