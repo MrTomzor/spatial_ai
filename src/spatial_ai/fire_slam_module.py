@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+# imports# # #{
 import g2o
 
 import rospy
@@ -57,6 +58,7 @@ import sys
 from termcolor import colored, cprint
 
 from spatial_ai.common_spatial import *
+# # #}
 
 
 class Tracked2DPoint:# # #{
@@ -78,6 +80,7 @@ class Tracked2DPoint:# # #{
 
         self.has_reproj = False
         self.reproj = None
+
 
     def addObservation(self, pt, keyframe_id):
         # self.last_observed_keyframe_id = np.max(keyframe_id, self.last_observed_keyframe_id)
@@ -116,6 +119,7 @@ class FireSLAMModule:
         self.toonear_vis_dist = 1
         self.invdist_meas_cov = 0.1
 
+        self.coherent_visual_odom_len = 0
 
         # LKPARAMS
         self.lk_params = dict(winSize  = (31, 31),
@@ -144,6 +148,7 @@ class FireSLAMModule:
         self.slam_points = None
         self.slam_pcl_pub = rospy.Publisher('extended_slam_points', PointCloud2, queue_size=10)
 
+        self.slam_traj_vis_pub = rospy.Publisher('fire_slam_trajectory_vis', MarkerArray, queue_size=1)
         self.triang_vis_pub = rospy.Publisher('triang_features_img', Image, queue_size=1)
         self.track_vis_pub = rospy.Publisher('tracked_features_img', Image, queue_size=1)
         self.depth_pub = rospy.Publisher('estim_depth_img', Image, queue_size=1)
@@ -430,25 +435,6 @@ class FireSLAMModule:
                 if st[i] == 1:
                     self.tracked_2d_points[pt_id].addObservation(kp2[i], self.keyframe_idx)
                     self.tracked_2d_points[pt_id].current_pos = kp2[i]
-
-                    # # DO UPDATE OF DEPTH BASED ON MOTION - USE TRANSLATION FROM PREVIOUS MEASUREMENT POS AND DEPTH!!
-                    # if (not self.tracked_2d_points[pt_id].invdist is None) and (not self.tracked_2d_points[pt_id].invdist == 0):
-                    #     kf_id = self.tracked_2d_points[pt_id].last_measurement_kf_id  
-                    #     px_orig = self.tracked_2d_points[pt_id].keyframe_observations[kf_id] 
-
-                    #     dist_orig = 1.0 / self.tracked_2d_points[pt_id].invdist_last_meas
-
-                    #     pos_frame1 = np.linalg.inv(self.K) @ np.array([px_orig[0], px_orig[1], 1]).reshape((3,1))
-                    #     pos_frame1 = pos_frame1  * (dist_orig * pos_frame1 / np.linalg.norm(pos_frame1)).flatten() 
-                    #     T_delta_odom = np.linalg.inv(self.keyframes[kf_id].T_odom) @ T_odom
-
-                    #     pos_translated = pos_frame1 - T_delta_odom[:3, 3]
-                    #     dist_now = np.linalg.norm(pos_translated)
-
-                    #     self.tracked_2d_points[pt_id].invdist = 1.0 / dist_now
-                    #     # self.tracked_2d_points[pt_id].invdist_cov = 
-
-                    #     # TODO - update covariance
                 else:
                     self.tracked_2d_points[pt_id].active = False
 
@@ -477,6 +463,8 @@ class FireSLAMModule:
         if time_since_last_keyframe is None or (time_since_last_keyframe > keyframe_time_threshold and dist_since_last_keyframe > keyframe_distance_threshold):
             print("ATTEMPTING TO ADD NEW KEYFRAME! " + str(len(self.keyframes)))
 
+            new_kf = KeyFrame(self.new_img_stamp, T_odom)
+
             # FOR ALL PTS THAT ARE BEING TRACKED:
             #     IF CAN TRIANGULATE (parallax + motion since last depth meas time) - TRY TRIANGULATION IF OK, ADD MEAS! 
             self.active_2d_points_ids = [pt_id for pt_id, pt in self.tracked_2d_points.items() if pt.active]
@@ -498,37 +486,120 @@ class FireSLAMModule:
                 src_pts = np.array([[self.tracked_2d_points[i].keyframe_observations[kfi][0], self.tracked_2d_points[i].keyframe_observations[kfi][1]] for i in ransacable_ids])
                 M, mask = cv2.findEssentialMat(src_pts, dst_pts, self.K, threshold=1)
                 mask = mask.flatten() == 1
+                inlier_pt_ids = np.array(ransacable_ids)[mask]
 
-                # print("INLIERS: " + str(np.sum(mask)))
-                # print(M)
-                # print(mask)
-                # print(mask)
-                # print("DECOMPOSING")
-                # print(mask.shape)
                 decomp_res = self.decomp_essential_mat(M, src_pts[mask, :], dst_pts[mask, :])
                 T_ransac = np.linalg.inv(self._form_transf(decomp_res[0], decomp_res[1]))
-                # print("DECOMPOSING DONE")
-                # print(T_ransac)
-                T_delta_odom = (np.linalg.inv(self.keyframes[kfi].T_odom) @ T_odom)
-                # print("T ODOM: ")
-                # print(T_delta_odom)
-                dist_traveled_odom = np.linalg.norm(T_delta_odom[:3,3])
-                ransac_translation = T_ransac[:3, 3]
-                scaling_factor = (dist_traveled_odom / np.linalg.norm(ransac_translation))
-                T_ransac[:3, 3] = T_ransac[:3, 3] * scaling_factor
-                # print("T RANSAC RESCALED:")
-                # print(T_ransac)
 
-                self.triangulated_points = self.triangulated_points * scaling_factor
+                T_odom_prev = self.keyframes[self.keyframe_idx - 1].T_odom
+                T_delta_odom = (np.linalg.inv(T_odom_prev) @  T_odom)
+                scaling_factor_simple = np.linalg.norm(T_delta_odom[:3,3]) / np.linalg.norm(T_ransac[:3,3])
+
+
+                tracked_3d_pts_mask = np.array([not self.tracked_2d_points[i].invdist is None for i in inlier_pt_ids])
+                if not np.any(tracked_3d_pts_mask):
+                    self.coherent_visual_odom_len = 0
+                    print("LOST TRACKING 3D!!")
+
+
+                # SCALING FACTOR IS BETWEEN UNSCALED VISUAL ODOM AND SCALED METRIC ODOM ESTIMATE
+                if self.coherent_visual_odom_len > 0:
+                    # which_of_newly_triangulated_have_previous_measurements
+
+                    cur_kf_pts_mask = np.array([(i in self.keyframes[self.keyframe_idx - 1].inlier_pt_ids) for i in inlier_pt_ids])
+                    tracked_3d_pts_cur_kf = self.triangulated_points1[cur_kf_pts_mask, :]
+
+                    prev_kf_pts_mask = np.array([(i in inlier_pt_ids) for i in self.keyframes[self.keyframe_idx - 1].inlier_pt_ids])
+                    tracked_3d_pts_prev_kf = self.keyframes[self.keyframe_idx - 1].triangulated_points2[prev_kf_pts_mask, :]
+
+                    print("SHAPEZ")
+                    print(tracked_3d_pts_prev_kf.shape)
+                    print(tracked_3d_pts_cur_kf.shape)
+
+                    sum_dists_prev_kf = np.sum(np.linalg.norm(tracked_3d_pts_prev_kf, axis=1))
+                    sum_dists_cur_kf = np.sum(np.linalg.norm(tracked_3d_pts_cur_kf, axis=1))
+
+                    # sum_dists_prev_kf = np.sum(np.reciprocal(np.linalg.norm(tracked_3d_pts_prev_kf, axis=1)))
+                    # sum_dists_cur_kf = np.sum(np.reciprocal(np.linalg.norm(tracked_3d_pts_cur_kf, axis=1)))
+
+                    # print("SUMDIST_PREV:")
+                    # print("SUMDIST_CUR:")
+
+                    scaling_factor_cur_kf = sum_dists_prev_kf / sum_dists_cur_kf  
+                    # scaling_factor_cur_kf = sum_dists_cur_kf/ sum_dists_prev_kf   
+                    print("FACTOR:")
+                    print(scaling_factor_cur_kf)
+                    T_ransac[:3, 3] = T_ransac[:3, 3] * scaling_factor_cur_kf
+                    self.triangulated_points1 = self.triangulated_points1 * scaling_factor_cur_kf
+                    self.triangulated_points2 = transformPoints(self.triangulated_points1, T_ransac)
+
+                new_kf.T_visual_odom = T_ransac
+                new_kf.triangulated_points2 = self.triangulated_points2
+                new_kf.inlier_pt_ids = inlier_pt_ids
+                self.coherent_visual_odom_len += 1
+
+                # if self.coherent_visual_odom_len > 10:
+                #     self.coherent_visual_odom_len = 10
+
+
+                # SCALING FACTOR OF CURRENT VISUAL ODOM TO SCALED ODOM
+                reversed_metric_traj_rel_to_current_odom = []
+                reversed_unscaled_traj_rel_to_current_odom = []
+
+                T_delta_vis = T_ransac
+
+                poses_metric = [np.eye(4)]
+                poses_unscaled = [np.eye(4)]
+                len_metric = np.linalg.norm(T_delta_odom[:3,3])
+                len_unscaled = np.linalg.norm(T_delta_vis[:3,3])
+                T_odom_next_pt = T_odom_prev
+
+                poses_metric.append(poses_metric[-1] @ np.linalg.inv(T_delta_odom))
+                poses_unscaled.append(poses_unscaled[-1] @ np.linalg.inv(T_delta_vis ))
+
+
+                for i in range(self.coherent_visual_odom_len-1):
+                    # TODO fix indexing going back, maybe go forward? - DRAW!!!
+                    kfi = self.keyframe_idx - i - 1
+
+
+                    T_odom_cur_pt = self.keyframes[kfi].T_odom
+                    T_delta_odom = np.linalg.inv(T_odom_cur_pt) @ T_odom_next_pt
+                    T_delta_vis = self.keyframes[kfi].T_visual_odom
+                    T_odom_next_pt = T_odom_cur_pt
+
+                    # poses_metric.append(np.linalg.inv(T_delta_odom) @ poses_metric[-1])
+                    # poses_unscaled.append(np.linalg.inv(T_delta_ransac) @ poses_unscaled[-1])
+
+                    poses_metric.append(poses_metric[-1] @ np.linalg.inv(T_delta_odom))
+                    poses_unscaled.append(poses_unscaled[-1] @ np.linalg.inv(T_delta_vis ))
+
+                    len_metric += np.linalg.norm(T_delta_odom[:3,3])
+                    len_unscaled += np.linalg.norm(T_delta_vis [:3,3])
+
+
+                print("LEN METRIC: " + str(len_metric) + ", UNSCALED: " + str(len_unscaled))
+
+
+
+                scaling_factor = (len_metric / len_unscaled)
+                # scaling_factor = (len_unscaled/ len_metric )
+                print("COHERENCE LEN: " + str(self.coherent_visual_odom_len) + ", FACTOR: " + str(scaling_factor) + ", SIMPLE FACTOR: " + str(scaling_factor_simple))
+                self.triangulated_points = copy.deepcopy(self.triangulated_points2) * scaling_factor
+
+                # TODO visualize the scaled visually tracked odom alongside the metric odom, HERE!
+                marker_array = MarkerArray()
+                self.get_pose_array_markers(poses_metric, self.odom_orig_frame_id, marker_array)
+                self.get_pose_array_markers(poses_unscaled, self.odom_orig_frame_id, marker_array, scaling_factor, r=0, g=0, b=1)
+                self.slam_traj_vis_pub.publish(marker_array)
 
 
                 reproj_pts = transformPoints(copy.deepcopy(src_pts), M)
-
                 mask_idxs = np.where(mask)[0]
                 inlier_idx = 0 
                 for i in range(n_ransac):
                     if mask[i]:
-                        dist = np.linalg.norm(self.triangulated_points[:, inlier_idx])
+                        dist = np.linalg.norm(self.triangulated_points[inlier_idx, :])
 
                         self.tracked_2d_points[ransacable_ids[i]].last_measurement_kf_id = self.keyframe_idx
                         self.tracked_2d_points[ransacable_ids[i]].depth = dist
@@ -576,8 +647,6 @@ class FireSLAMModule:
             # HAVE ENOUGH POINTS, ADD KEYFRAME
             print("ADDED NEW KEYFRAME! KF: " + str(len(self.keyframes)))
 
-            new_kf = KeyFrame(self.new_img_stamp, T_odom)
-
 
             # ADD SLAM POINTS INTO THIS KEYFRAME (submap)
             new_kf.slam_points = self.slam_points
@@ -593,7 +662,8 @@ class FireSLAMModule:
             if self.standalone_mode:
                 self.get_visible_pointcloud_metric_estimate(visualize=True)
 
-            self.has_new_pcl_data = True
+            if self.coherent_visual_odom_len > 1:
+                self.has_new_pcl_data = True
 
             comp_time = time.time() - comp_start_time
             print("computation time: " + str((comp_time) * 1000) +  " ms")
@@ -886,6 +956,86 @@ class FireSLAMModule:
         return flow_vis
     # # #}
 
+    def get_pose_array_markers(self, poses, frame_id, marker_array, scaling_factor = 1,r=1, g=0, b=0):# # #{
+        marker_id = 0
+        if len(marker_array.markers) > 0:
+            marker_id = len(marker_array.markers)
+        ms = 1
+
+        T_vis = lookupTransformAsMatrix(frame_id, self.camera_frame_id, self.tf_listener)
+
+        for i in range(len(poses)):
+            marker = Marker()
+            marker.header.frame_id = frame_id  # Change this frame_id if necessary
+            marker.header.stamp = rospy.Time.now()
+            marker.type = Marker.ARROW
+            marker.action = Marker.ADD
+            marker.id = marker_id
+            marker_id += 1
+
+            # Set the scale
+            marker.scale.x = ms *0.1
+            marker.scale.y = ms *0.2
+            marker.scale.z = ms *0.2
+
+            marker.color.a = 1
+            marker.color.r = r
+            marker.color.g = g
+            marker.color.b = b
+
+            arrowlen = 0.5 * ms
+
+            endpose = copy.deepcopy(poses[i])
+            endpose[:3,3] = endpose[:3,3] * scaling_factor
+            endpose = T_vis @ endpose
+
+            pt1 = endpose[:3, 3] 
+            pt2 = pt1 + endpose[:3, 2] * arrowlen
+
+            points_msg = [Point(x=pt1[0], y=pt1[1], z=pt1[2]), Point(x=pt2[0], y=pt2[1], z=pt2[2])]
+            marker.points = points_msg
+
+            marker_array.markers.append(marker)
+    # # #}
+
+    def visualize_keyframes(self):# # #{
+        marker_array = MarkerArray()
+        marker_id = 0
+        ms = 1
+
+        for i in range(len(self.keyframes)):
+            marker = Marker()
+            marker.header.frame_id = self.odom_orig_frame_id  # Change this frame_id if necessary
+            marker.header.stamp = rospy.Time.now()
+            marker.type = Marker.ARROW
+            marker.action = Marker.ADD
+            marker.id = marker_id
+            marker_id += 1
+
+            # Set the scale
+            marker.scale.x = ms *0.1
+            marker.scale.y = ms *0.2
+            marker.scale.z = ms *0.2
+
+            marker.color.a = 1
+            marker.color.r = 1.0
+            marker.color.g = 0.0
+            marker.color.b = 0.0
+
+            arrowlen = 1 * ms
+            # xbonus = arrowlen * np.cos(smap.visual_keyframes[i].heading + map_heading)
+            # ybonus = arrowlen * np.sin(smap.visual_keyframes[i].heading + map_heading)
+            pt1 = self.keyframes[i].T_odom[:3, 3]
+            pt2 = pt1 + self.keyframes[i].T_odom[:3, 2]
+
+            points_msg = [Point(x=pt1[0], y=pt1[1], z=pt1[2]), Point(x=pt2[0], y=pt2[1], z=pt2[2])]
+            marker.points = points_msg
+
+            marker_array.markers.append(marker)
+
+        return marker_array
+    # # #}
+
     def visualize_keyframes(self):# # #{
         marker_array = MarkerArray()
         marker_id = 0
@@ -1043,7 +1193,7 @@ class FireSLAMModule:
             uhom_Q2 = hom_Q2[:3, :] / hom_Q2[3, :]
 
             if store:
-                return uhom_Q2
+                return uhom_Q1.T, uhom_Q2.T
 
             # Find the number of points there has positive z coordinate in both cameras
             sum_of_pos_z_Q1 = sum(uhom_Q1[2, :] > 0)
@@ -1083,7 +1233,7 @@ class FireSLAMModule:
         R1, t = right_pair
 
         # store the unhomogenized keypoints for the correct pair
-        self.triangulated_points = sum_z_cal_relative_scale(R1, t, True)
+        self.triangulated_points1, self.triangulated_points2 = sum_z_cal_relative_scale(R1, t, True)
 
         t = t * relative_scale
 
