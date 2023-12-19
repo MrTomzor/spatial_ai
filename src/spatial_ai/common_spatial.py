@@ -216,10 +216,9 @@ class SphereMap:
             dists_from_spheres_edge = found_dists - found_radii
             # print(dists_from_spheres_edge )
 
-            if np.any(dists_from_spheres_edge < killing_inside_dist):
-                keep_surfels_mask[i] = False
-                # print("KILLING")
-                continue
+            # if np.any(dists_from_spheres_edge < killing_inside_dist):
+            #     keep_surfels_mask[i] = False
+            #     continue
 
             # COMPUTE NORMALS FROM NEAR SPHERES
             normals = (self.points[found_sphere_indicies, :] - self.surfel_points[i].reshape(1,3)) / found_dists.reshape(n_considered, 1)

@@ -115,7 +115,7 @@ class FireSLAMModule:
         self.standalone_mode = standalone_mode
         self.has_new_pcl_data = False
 
-        self.kf_dist_thr = 0.2
+        self.kf_dist_thr = 0.5
         self.toonear_vis_dist = 1
         self.invdist_meas_cov = 0.1
 
@@ -438,7 +438,6 @@ class FireSLAMModule:
                 else:
                     self.tracked_2d_points[pt_id].active = False
 
-
         # TODO - REMOVE 2D POINTS THAT HAVE NOT BEEN OBSERVED FOR N FRAMES
 
         keyframe_time_threshold = 0.1
@@ -484,7 +483,9 @@ class FireSLAMModule:
                 kfi = self.keyframe_idx-1
                 dst_pts = np.array([[self.tracked_2d_points[i].current_pos[0], self.tracked_2d_points[i].current_pos[1]] for i in ransacable_ids])
                 src_pts = np.array([[self.tracked_2d_points[i].keyframe_observations[kfi][0], self.tracked_2d_points[i].keyframe_observations[kfi][1]] for i in ransacable_ids])
-                M, mask = cv2.findEssentialMat(src_pts, dst_pts, self.K, threshold=1)
+                # M, mask = cv2.findEssentialMat(src_pts, dst_pts, self.K, threshold=3)
+                # [M, mask] = cv2.findEssentialMat(src_pts, dst_pts,'CameraMatrix', self.K, 'Confidence', 0.9, 'Threshold', 2)
+                M, mask = cv2.findEssentialMat(src_pts, dst_pts, self.K, threshold=3, prob=0.9)
                 mask = mask.flatten() == 1
                 inlier_pt_ids = np.array(ransacable_ids)[mask]
 
@@ -525,7 +526,8 @@ class FireSLAMModule:
                     # print("SUMDIST_PREV:")
                     # print("SUMDIST_CUR:")
 
-                    scaling_factor_cur_kf = sum_dists_prev_kf / sum_dists_cur_kf  
+                    # scaling_factor_cur_kf = sum_dists_prev_kf / sum_dists_cur_kf  
+                    scaling_factor_cur_kf = 1
                     # scaling_factor_cur_kf = sum_dists_cur_kf/ sum_dists_prev_kf   
                     print("FACTOR:")
                     print(scaling_factor_cur_kf)
@@ -538,9 +540,8 @@ class FireSLAMModule:
                 new_kf.inlier_pt_ids = inlier_pt_ids
                 self.coherent_visual_odom_len += 1
 
-                # if self.coherent_visual_odom_len > 10:
-                #     self.coherent_visual_odom_len = 10
-
+                if self.coherent_visual_odom_len > 20:
+                    self.coherent_visual_odom_len = 20
 
                 # SCALING FACTOR OF CURRENT VISUAL ODOM TO SCALED ODOM
                 reversed_metric_traj_rel_to_current_odom = []
@@ -583,7 +584,7 @@ class FireSLAMModule:
 
 
                 scaling_factor = (len_metric / len_unscaled)
-                # scaling_factor = (len_unscaled/ len_metric )
+
                 print("COHERENCE LEN: " + str(self.coherent_visual_odom_len) + ", FACTOR: " + str(scaling_factor) + ", SIMPLE FACTOR: " + str(scaling_factor_simple))
                 self.triangulated_points = copy.deepcopy(self.triangulated_points2) * scaling_factor
 
@@ -712,9 +713,9 @@ class FireSLAMModule:
             if not self.tracked_2d_points[pt_id].invdist is None:
                 sent_pt_ids.append(pt_id)
 
-                last_observed_keyframe_id = self.tracked_2d_points[pt_id].last_observed_keyframe_id 
-                T_odom_pt = self.keyframes[last_observed_keyframe_id].T_odom
-                obsv_pos = self.tracked_2d_points[pt_id].keyframe_observations[last_observed_keyframe_id]
+                kfi = self.tracked_2d_points[pt_id].last_measurement_kf_id  
+                T_odom_pt = self.keyframes[kfi ].T_odom
+                obsv_pos = self.tracked_2d_points[pt_id].keyframe_observations[kfi]
 
                 # T_odom_pt = T_odom
                 # obsv_pos = cur_pos
