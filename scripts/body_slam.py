@@ -59,39 +59,7 @@ from termcolor import colored, cprint
 from spatial_ai.common_spatial import *
 
 
-STAGE_FIRST_FRAME = 0
-STAGE_SECOND_FRAME = 1
-STAGE_DEFAULT_FRAME = 2
-kMinNumFeature = 200
-kMaxNumFeature = 2000
-
-# LKPARAMS
-lk_params = dict(winSize  = (31, 31),
-                 maxLevel = 3,
-                 criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01))
-
-def featureTracking(image_ref, image_cur, px_ref, tracking_stats):
-    '''
-    Performs tracking and returns correspodning well tracked features (kp1 and kp2 have same size and correspond to each other)
-    '''
-    kp2, st, err = cv2.calcOpticalFlowPyrLK(image_ref, image_cur, px_ref, None, **lk_params)  #shape: [k,2] [k,1] [k,1]
-
-    st = st.reshape(st.shape[0])
-    kp1 = px_ref[st == 1]
-    kp2 = kp2[st == 1]
-
-    return kp1, kp2, tracking_stats[st == 1]
-
-class TrackingStat:
-    def __init__(self):
-        self.age = 0
-        self.invdepth_measurements = 0
-        self.invdepth_mean = 0
-        self.invdepth_sigma2 = 1
-        self.prev_points = []
-        self.invdepth_buffer = []
-
-class Tracked2DPoint:
+class Tracked2DPoint:# # #{
     def __init__(self, pos, keyframe_id):
         self.keyframe_observations = {keyframe_id: pos}
         self.current_pos = pos
@@ -121,15 +89,42 @@ class Tracked2DPoint:
 
     def getAge(self):
         return len(self.keyframe_observations)
+# # #}
 
-class KeyFrame:
+class KeyFrame:# # #{
     def __init__(self, img_timestamp, T_odom ):
         self.triangulated_points = []
         self.img_timestamp = img_timestamp
         self.T_odom = T_odom 
+# # #}
 
-class OdomNode:
-    def __init__(self):
+class FireSLAMModule:# # #{
+    def __init__(self, w, h, K, camera_frame_id, odom_orig_frame_id, standalone_mode = False ):# # #{
+        self.width = w
+        self.height = h
+        self.K = K
+        self.camera_frame_id = camera_frame_id
+        self.odom_orig_frame_id = odom_orig_frame_id
+        self.image_sub_topic = image_sub_topic
+        self.standalone_mode = standalone_mode
+
+        # self.width = 960
+        # self.height = 720
+        # self.K = np.array([933.5640667549508, 0.0, 500.5657553739987, 0.0, 931.5001605952165, 379.0130687255228, 0.0, 0.0, 1.0]).reshape((3,3))
+        # self.camera_frame_id = "uav1/rgb"
+        # self.odom_orig_frame_id = "uav1/passthrough_origin"
+        # self.image_sub_topic = '/uav1/tellopy_wrapper/rgb/image_raw'
+
+
+        self.kf_dist_thr = 0.2
+        self.toonear_vis_dist = 1
+        self.invdist_meas_cov = 0.1
+
+        # LKPARAMS
+        self.lk_params = dict(winSize  = (31, 31),
+                         maxLevel = 3,
+                         criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01))
+
         self.bridge = CvBridge()
         self.prev_image = None
         self.prev_time = None
@@ -162,12 +157,6 @@ class OdomNode:
         self.keyframes_marker_pub = rospy.Publisher('/keyframe_vis', MarkerArray, queue_size=10)
 
 
-        self.odom_buffer = []
-        self.odom_buffer_maxlen = 1000
-        self.sub_odom = rospy.Subscriber('/ov_msckf/odomimu', Odometry, self.odometry_callback, queue_size=10000)
-        # self.sub_slam_points = rospy.Subscriber('/ov_msckf/points_slam', PointCloud2, self.points_slam_callback, queue_size=3)
-        # self.sub_odom = rospy.Subscriber('/ov_msckf/poseimu', PoseWithCovarianceStamped, self.odometry_callback, queue_size=10000)
-
         self.tf_broadcaster = tf.TransformBroadcaster()
 
         self.orb = cv2.ORB_create(nfeatures=3000)
@@ -183,21 +172,10 @@ class OdomNode:
         # self.kf_dist_thr = 4
         # self.toonear_vis_dist = 20
 
-        self.width = 960
-        self.height = 720
-        self.K = np.array([933.5640667549508, 0.0, 500.5657553739987, 0.0, 931.5001605952165, 379.0130687255228, 0.0, 0.0, 1.0]).reshape((3,3))
-        self.camera_frame_id = "uav1/rgb"
-        # self.odom_orig_frame_id = "uav1/local_origin"
-        self.odom_orig_frame_id = "uav1/passthrough_origin"
-        self.rgb_topic = '/uav1/tellopy_wrapper/rgb/image_raw'
-        self.kf_dist_thr = 0.2
-        self.toonear_vis_dist = 1
-
-        self.invdist_meas_cov = 0.1
-
 
         # SUBSCRIBE CAM
-        self.sub_cam = rospy.Subscriber(self.rgb_topic, Image, self.image_callback, queue_size=10000)
+        if self.standalone_mode:
+            self.sub_cam = rospy.Subscriber(self.image_sub_topic, Image, self.image_callback, queue_size=10000)
 
         # self.K = np.array([, 644.5958939934509, 400.0503960299562, 300.5824096896595]).reshape((3,3))
         self.imu_to_cam_T = np.array( [[0, -1, 0, 0], [0, 0, -1, 0], [1, 0, 0, 0], [0.0, 0.0, 0.0, 1.0]])
@@ -244,36 +222,9 @@ class OdomNode:
 
         self.n_frames = 0
 
-    def getPixelPositions(self, pts):
-        # pts = 3D points u wish to project
-        pixpos = self.K @ pts 
-        pixpos = pixpos / pixpos[2, :]
-        return pixpos[:2, :].T
+        # # #}
 
-    def odometry_callback(self, msg):
-        self.odom_buffer.append(msg)
-        if len(self.odom_buffer) > self.odom_buffer_maxlen:
-            self.odom_buffer.pop(0)
-
-    def visualize_depth(self, pixpos, tri):
-        rgb = np.repeat(copy.deepcopy(self.new_frame)[:, :, np.newaxis], 3, axis=2)
-
-        for i in range(len(tri.simplices)):
-            a = pixpos[tri.simplices[i][0], :].astype(int)
-            b = pixpos[tri.simplices[i][1], :].astype(int)
-            c = pixpos[tri.simplices[i][2], :].astype(int)
-
-            rgb = cv2.line(rgb, (a[0], a[1]), (b[0], b[1]), (255, 0, 0), 3)
-            rgb = cv2.line(rgb, (a[0], a[1]), (c[0], c[1]), (255, 0, 0), 3)
-            rgb = cv2.line(rgb, (c[0], c[1]), (b[0], b[1]), (255, 0, 0), 3)
-
-        res = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-        return res
-
-    def insertNew2DPoint(self, pixpos):
-        return
-
-    def control_features_population(self):
+    def control_features_population(self):# # #{
         wbins = self.width // self.tracking_bin_width
         hbins = self.height // self.tracking_bin_width
         found_total = 0
@@ -313,13 +264,6 @@ class OdomNode:
                 self.tracked_2d_points[new_ids[i]] = pt_object
         else:
             active_pix  = np.array([self.tracked_2d_points[pt_id].current_pos for pt_id in active_ids], dtype=np.float32)
-
-        # if self.px_cur is None or len(self.px_cur) == 0:
-        #     self.px_cur = self.detector.detect(self.new_frame)
-        #     if self.px_cur is None or len(self.px_cur) == 0:
-        #         return
-        #     self.px_cur = np.array([x.pt for x in self.px_cur], dtype=np.float32)
-        #     self.tracking_stats = np.array([TrackingStat() for x in self.px_cur], dtype=object)
 
         active_ids = np.array(active_ids)
 
@@ -432,131 +376,9 @@ class OdomNode:
         #     print("ZERO FEATURES! FINDING FEATURES")
         #     self.px_cur = self.detector.detect(self.new_frame)
         #     self.px_cur = np.array([x.pt for x in self.px_cur], dtype=np.float32)
-
+    # # #}
         
-    def odom_msg_to_transformation_matrix(self, odom_msg):
-        odom_p = np.array([odom_msg.pose.pose.position.x, odom_msg.pose.pose.position.y, odom_msg.pose.pose.position.z])
-        odom_q = np.array([odom_msg.pose.pose.orientation.x, odom_msg.pose.pose.orientation.y,
-            odom_msg.pose.pose.orientation.z, odom_msg.pose.pose.orientation.w])
-        T_odom = np.eye(4)
-        # print("R:")
-        # print(Rotation.from_quat(odom_q).as_matrix())
-        T_odom[:3,:3] = Rotation.from_quat(odom_q).as_matrix()
-        T_odom[:3, 3] = odom_p
-        return T_odom
-
-    def visualBatchOptimization(self, kf_idxs, point_idxs):
-        print("OPTIMIZING!")
-
-        schur_trick = True
-        outlier_ratio = 0.05
-        pixel_noise = 1
-        robust_kernel = True
-        
-        optimizer = g2o.SparseOptimizer()
-        if schur_trick:
-            solver = g2o.BlockSolverSE3(g2o.LinearSolverEigenSE3())
-        else:
-            solver = g2o.BlockSolverX(g2o.LinearSolverEigenX())  # slower
-        solver = g2o.OptimizationAlgorithmLevenberg(solver)
-        optimizer.set_algorithm(solver)
-
-
-        # TODO
-        focal_length = 1000.0
-        principal_point = (320, 240)
-        cam = g2o.CameraParameters(focal_length, principal_point, 0)
-        cam.set_id(0)
-
-        optimizer.add_parameter(cam)
-
-        true_poses = []
-        num_pose = 15
-        for i in range(num_pose):
-            # pose here means transform points from world coordinates to camera coordinates
-            # pose = g2o.SE3Quat(np.identity(3), [i * 0.04 - 1, 0, 0])
-            pose = g2o.SE3Quat(np.identity(3), [i * 0.04, 0, 0])
-            # true_poses.append(pose)
-
-            v_se3 = g2o.VertexSE3Expmap()
-            v_se3.set_id(i)
-            v_se3.set_estimate(pose)
-            if i < 2:
-                v_se3.set_fixed(True)
-            optimizer.add_vertex(v_se3)
-
-        point_id = num_pose
-        inliers = dict()
-        sse = defaultdict(float)
-
-        for i, point in enumerate(true_points):
-            visible = []
-            for j, pose in enumerate(true_poses):
-                z = cam.cam_map(pose * point)
-                if 0 <= z[0] < 640 and 0 <= z[1] < 480:
-                    visible.append((j, z))
-            if len(visible) < 2:
-                continue
-
-            v_p = g2o.VertexPointXYZ()
-            v_p.set_id(point_id)
-            v_p.set_marginalized(schur_trick)
-
-            anchor = visible[0][0]
-            point2 = true_poses[anchor] * (point + np.random.randn(3))
-            if point2[2] == 0:
-                continue
-            v_p.set_estimate(invert_depth(point2))
-            optimizer.add_vertex(v_p)
-
-            inlier = True
-            for j, z in visible:
-                if np.random.random() < outlier_ratio:
-                    inlier = False
-                    z = np.random.random(2) * [640, 480]
-                z += np.random.randn(2) * pixel_noise
-
-                edge = g2o.EdgeProjectPSI2UV()
-                edge.resize(3)
-                edge.set_vertex(0, v_p)
-                edge.set_vertex(1, optimizer.vertex(j))
-                edge.set_vertex(2, optimizer.vertex(anchor))
-                edge.set_measurement(z)
-                edge.set_information(np.identity(2))
-                if robust_kernel:
-                    edge.set_robust_kernel(g2o.RobustKernelHuber())
-
-                edge.set_parameter_id(0, 0)
-                optimizer.add_edge(edge)
-
-            if inlier:
-                inliers[point_id] = (i, anchor)
-                error = (
-                    true_poses[anchor].inverse() * invert_depth(v_p.estimate())
-                    - true_points[i]
-                )
-                sse[0] += np.sum(error**2)
-            point_id += 1
-
-        print("Performing full BA:")
-        optimizer.initialize_optimization()
-        optimizer.set_verbose(True)
-        optimizer.optimize(10)
-
-        for i in inliers:
-            v_p = optimizer.vertex(i)
-            v_anchor = optimizer.vertex(inliers[i][1])
-            error = (
-                v_anchor.estimate().inverse() * invert_depth(v_p.estimate())
-                - true_points[inliers[i][0]]
-            )
-            sse[1] += np.sum(error**2)
-
-        print("\nRMSE (inliers only):")
-        print("before optimization:", np.sqrt(sse[0] / len(inliers)))
-        print("after  optimization:", np.sqrt(sse[1] / len(inliers)))
-
-    def triangulateDepthLineNearestPoint(self, T_cam, pos1, pos2, visualize=False):
+    def triangulateDepthLineNearestPoint(self, T_cam, pos1, pos2, visualize=False):# # #{
         # TRANSFORM TO RAY DIRECTIONS IN 3D
 
         # print("PIXPOS")
@@ -666,9 +488,9 @@ class OdomNode:
             self.triang_vis_d.append(depth)
             self.triang_vis_reproj.append(reproj2)
 
-        return depth
+        return depth# # #}
 
-    def image_callback(self, msg):
+    def image_callback(self, msg):# # #{
         if self.node_offline:
             return
 
@@ -714,14 +536,13 @@ class OdomNode:
         print("N_ACTIV 2D POINTS: " + str(len(self.active_2d_points_ids)))
         if len(self.active_2d_points_ids) > 0:
             # print("BEFORE TRACKING: " + str(self.px_ref.shape[0]))
-            # self.px_ref, self.px_cur, self.tracking_stats = featureTracking(self.last_frame, self.new_frame, self.px_ref, self.tracking_stats)
 
             # DO TRACKING
             px_ref = np.array([self.tracked_2d_points[p].current_pos for p in self.active_2d_points_ids], dtype=np.float32)
             print("PX REF SHAPE")
             print(px_ref.shape)
             # print(px_ref)
-            kp2, st, err = cv2.calcOpticalFlowPyrLK(self.last_frame, self.new_frame, px_ref, None, **lk_params)  #shape: [k,2] [k,1] [k,1]
+            kp2, st, err = cv2.calcOpticalFlowPyrLK(self.last_frame, self.new_frame, px_ref, None, **self.lk_params)  #shape: [k,2] [k,1] [k,1]
 
             st = st.reshape(st.shape[0])
             # kp1 = px_ref[st == 1]
@@ -893,21 +714,20 @@ class OdomNode:
             # for i in range(self.px_cur.shape[0]):
             #     self.tracking_stats[i].prev_keyframe_pixel_pos = self.px_cur[i, :]
 
-            self.visualize_slampoints_in_space_abs()
+            if self.standalone_mode:
+                self.get_output_pointcloud(visualize=True)
 
         # VISUALIZE FEATURES
 
         # self.triang_vis_pub.publish(self.bridge.cv2_to_imgmsg(self.visualize_triang(), "bgr8"))
         self.track_vis_pub.publish(self.bridge.cv2_to_imgmsg(self.visualize_tracking(), "bgr8"))
-
-
         self.keyframes_marker_pub.publish(self.visualize_keyframes())
 
         comp_time = time.time() - comp_start_time
         print("computation time: " + str((comp_time) * 1000) +  " ms")
+# # #}
 
-
-    def visualize_triang(self):
+    def visualize_triang(self):# # #{
         # rgb = np.zeros((self.new_frame.shape[0], self.new_frame.shape[1], 3), dtype=np.uint8)
         # print(self.new_frame.shape)
         rgb = np.repeat(copy.deepcopy(self.new_frame)[:, :, np.newaxis], 3, axis=2)
@@ -962,8 +782,9 @@ class OdomNode:
 
         res = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         return res
-
-    def visualize_ransac_reproj(self):
+# # #}
+    
+    def visualize_ransac_reproj(self):# # #{
         rgb = np.repeat(copy.deepcopy(self.new_frame)[:, :, np.newaxis], 3, axis=2)
         # ransacd = [pt_id for pt_id, pt in self.tracked_2d_points.items() if pt.has_reproj]
 
@@ -1004,8 +825,9 @@ class OdomNode:
 
         res = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         return res
+# # #}
 
-    def visualize_tracking(self):
+    def visualize_tracking(self):# # #{
         # rgb = np.zeros((self.new_frame.shape[0], self.new_frame.shape[1], 3), dtype=np.uint8)
         # print(self.new_frame.shape)
         rgb = np.repeat(copy.deepcopy(self.new_frame)[:, :, np.newaxis], 3, axis=2)
@@ -1046,8 +868,9 @@ class OdomNode:
 
         res = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         return res
-    
-    def publish_pose_msg(self):
+    # # #}
+
+    def publish_pose_msg(self):# # #{
         tf_msg = TransformStamped()
         tf_msg.header.stamp = rospy.Time.now()
         tf_msg.header.frame_id = "mission_origin"
@@ -1070,15 +893,17 @@ class OdomNode:
 
         # Broadcast the TF transform
         self.tf_broadcaster.sendTransformMessage(tf_msg)
+    # # #}
 
-    def visualize_keypoints(self, img, kp):
+    def visualize_keypoints(self, img, kp):# # #{
         rgb = np.zeros((img.shape[0], img.shape[1], 3), dtype=np.uint8)
         for k in kp:
             rgb[int(k.pt[1]), int(k.pt[0]), 0] = 255
         flow_vis = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         return flow_vis
+    # # #}
 
-    def visualize_keyframes(self):
+    def visualize_keyframes(self):# # #{
         marker_array = MarkerArray()
         marker_id = 0
         ms = 1
@@ -1114,8 +939,9 @@ class OdomNode:
             marker_array.markers.append(marker)
 
         return marker_array
+    # # #}
 
-    def visualize_slampoints_in_space_abs(self):
+    def get_output_pointcloud(self, visualize = True):# # #{
         point_cloud = PointCloud2()
         # point_cloud.header.frame_id = 'uav1/fcu'  # Set the frame ID according to your robot's configuration
         # point_cloud.header.frame_id = self.camera_frame_id  # Set the frame ID according to your robot's configuration
@@ -1144,11 +970,12 @@ class OdomNode:
         cloud_pts = []
 
         self.active_2d_points_ids = [pt_id for pt_id, pt in self.tracked_2d_points.items() if pt.active]
+        sent_pt_ids = []
+
         for pt_id in self.active_2d_points_ids:
             cur_pos = self.tracked_2d_points[pt_id].current_pos
-            # if not self.tracked_2d_points[pt_id].invdepth_mean is None:
             if not self.tracked_2d_points[pt_id].invdist is None:
-                # d = 1.0 / self.tracked_2d_points[pt_id].invdepth_mean
+                sent_pt_ids.append(pt_id)
 
                 last_observed_keyframe_id = self.tracked_2d_points[pt_id].last_observed_keyframe_id 
                 T_odom_pt = self.keyframes[last_observed_keyframe_id].T_odom
@@ -1188,25 +1015,6 @@ class OdomNode:
                 line_pts.append([t_maxpt[0], t_maxpt[1], t_maxpt[2]])
 
 
-        # pts = np.array(pts)
-        # if self.odom_orig_frame_id == 'global':
-        #     (trans, rotation) = self.tf_listener.lookupTransform(self.odom_orig_frame_id, self.camera_frame_id, rospy.Time(0))
-        #     rotation_matrix = tfs.quaternion_matrix(rotation)
-        #     T_odom = np.eye(4)
-        #     T_odom[:3, :3] = rotation_matrix[:3,:3]
-        #     T_odom[:3, 3] = trans
-        #     pts = transformPoints(pts, np.linalg.inv(T_odom))
-        #     point_cloud.header.frame_id = 'cam0'
-
-        # for i in range(pts.shape[0]):
-        #     # POINTS
-        #     point1 = Point32()
-        #     point1.x = pts[i, 0] 
-        #     point1.y = pts[i, 1] 
-        #     point1.z = pts[i, 2] 
-        #     # point_cloud.points.append(point1)
-        #     point_cloud.points.append(point1)
-
         header = Header()
         header.stamp = rospy.Time.now()
         header.frame_id = self.odom_orig_frame_id  # Set the frame ID according to your robot's configuration
@@ -1218,7 +1026,7 @@ class OdomNode:
           # PointField('rgba', 12, PointField.UINT32, 1),
           ]
         cloud = pc2.create_cloud(header, fields, cloud_pts)
-        self.slam_pcl_pub.publish(cloud)
+
 
         for i in range(len(cloud_pts)):
             # LINE
@@ -1236,88 +1044,15 @@ class OdomNode:
             point2.z = p2[2]
             line_marker.points.append(point1)
             line_marker.points.append(point2)
-        self.kp_pcl_pub_invdepth.publish(line_marker)
 
-        # self.slam_pcl_pub.publish(point_cloud)
+        if visualize:
+            self.slam_pcl_pub.publish(cloud)
+            self.kp_pcl_pub_invdepth.publish(line_marker)
 
-    def visualize_spheremap(self, T_current_cam_to_orig):
-        if self.spheremap is None:
-            return
+        return cloud, sent_pt_ids
+    # # #}
 
-        marker_array = MarkerArray()
-
-        # point_cloud = PointCloud()
-        # point_cloud.header.stamp = rospy.Time.now()
-        # point_cloud.header.frame_id = 'global'  # Set the frame ID according to your robot's configuration
-        T_vis = np.linalg.inv(T_current_cam_to_orig)
-        pts = transformPoints(self.spheremap.points, T_vis)
-
-        for i in range(self.spheremap.points.shape[0]):
-            marker = Marker()
-            marker.header.frame_id = "cam0"  # Change this frame_id if necessary
-            marker.header.stamp = rospy.Time.now()
-            marker.type = Marker.SPHERE
-            marker.action = Marker.ADD
-            marker.id = i
-
-            # Set the position (sphere center)
-            marker.pose.position.x = pts[i][0]
-            marker.pose.position.y = pts[i][1]
-            marker.pose.position.z = pts[i][2]
-
-            # Set the scale (sphere radius)
-            marker.scale.x = 2 * self.spheremap.radii[i]
-            marker.scale.y = 2 * self.spheremap.radii[i]
-            marker.scale.z = 2 * self.spheremap.radii[i]
-
-            marker.color.a = 0.1
-            marker.color.r = 0.0
-            marker.color.g = 1.0
-            marker.color.b = 0.0
-
-            # Add the marker to the MarkerArray
-            marker_array.markers.append(marker)
-
-        line_marker = Marker()
-        line_marker.header.frame_id = "cam0"  # Set your desired frame_id
-        line_marker.type = Marker.LINE_LIST
-        line_marker.action = Marker.ADD
-        line_marker.scale.x = 0.2  # Line width
-        line_marker.color.a = 1.0  # Alpha
-
-        for i in range(self.spheremap.connections.shape[0]):
-            if self.spheremap.connections[i] is None:
-                continue
-            for j in range(len(self.spheremap.connections[i])):
-                point1 = Point()
-                point2 = Point()
-                # trpt = transformPoints(np.array([[self.spheremap.points[i, :]], self.spheremap.points[self.spheremap.connections[i][j], :]]), T_vis)
-                # p1 = self.spheremap.points[i, :]
-                # p2 = self.spheremap.points[self.spheremap.connections[i][j], :][0]
-                # p1 = trpt[0, :]
-                # p2 = trpt[1, :]
-
-                p1 = pts[i, :]
-                p2 = pts[self.spheremap.connections[i].flatten()[j], :]
-                # print(p1)
-                # print(p2)
-                # print("KURVA")
-                # print(self.spheremap.connections[i].flatten())
-                # print(self.spheremap.connections[i][j])
-                
-                point1.x = p1[0]
-                point1.y = p1[1]
-                point1.z = p1[2]
-                point2.x = p2[0]
-                point2.y = p2[1]
-                point2.z = p2[2]
-                line_marker.points.append(point1)
-                line_marker.points.append(point2)
-        marker_array.markers.append(line_marker)
-
-        self.spheremap_spheres_pub.publish(marker_array)
-
-    def decomp_essential_mat(self, E, q1, q2):
+    def decomp_essential_mat(self, E, q1, q2):# # #{
         """
         Decompose the Essential matrix
 
@@ -1397,9 +1132,10 @@ class OdomNode:
         t = t * relative_scale
 
         return [R1, t]
-
+    # # #}
+    
     @staticmethod
-    def _form_transf(R, t):
+    def _form_transf(R, t):# # #{
         """
         Makes a transformation matrix from the given rotation matrix and translation vector
 
@@ -1416,10 +1152,11 @@ class OdomNode:
         T[:3, :3] = R
         T[:3, 3] = t
         return T
-
+    # # #}
+# # #}
 
 if __name__ == '__main__':
     rospy.init_node('visual_odom_node')
-    optical_flow_node = OdomNode()
+    optical_flow_node = FireSLAMModule()
     rospy.spin()
     cv2.destroyAllWindows()
