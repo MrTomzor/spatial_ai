@@ -117,7 +117,7 @@ class FireSLAMModule:
 
         self.kf_dist_thr = 0.5
         self.toonear_vis_dist = 1
-        self.invdist_meas_cov = 0.1
+        self.invdist_meas_cov = 0.3
 
         self.coherent_visual_odom_len = 0
 
@@ -485,7 +485,7 @@ class FireSLAMModule:
                 src_pts = np.array([[self.tracked_2d_points[i].keyframe_observations[kfi][0], self.tracked_2d_points[i].keyframe_observations[kfi][1]] for i in ransacable_ids])
                 # M, mask = cv2.findEssentialMat(src_pts, dst_pts, self.K, threshold=3)
                 # [M, mask] = cv2.findEssentialMat(src_pts, dst_pts,'CameraMatrix', self.K, 'Confidence', 0.9, 'Threshold', 2)
-                M, mask = cv2.findEssentialMat(src_pts, dst_pts, self.K, threshold=3, prob=0.9)
+                M, mask = cv2.findEssentialMat(src_pts, dst_pts, self.K, threshold=1, prob=0.8)
                 mask = mask.flatten() == 1
                 inlier_pt_ids = np.array(ransacable_ids)[mask]
 
@@ -586,7 +586,7 @@ class FireSLAMModule:
                 # scaling_factor = scaling_factor_simple
 
                 print("COHERENCE LEN: " + str(self.coherent_visual_odom_len) + ", FACTOR: " + str(scaling_factor) + ", SIMPLE FACTOR: " + str(scaling_factor_simple))
-                self.triangulated_points = copy.deepcopy(self.triangulated_points2) * scaling_factor
+                # self.triangulated_points = copy.deepcopy(self.triangulated_points2) * scaling_factor
 
                 # TODO visualize the scaled visually tracked odom alongside the metric odom, HERE!
                 marker_array = MarkerArray()
@@ -600,25 +600,29 @@ class FireSLAMModule:
                 inlier_idx = 0 
                 for i in range(n_ransac):
                     if mask[i]:
-                        dist = np.linalg.norm(self.triangulated_points[inlier_idx, :])
+                        dist_f1 = np.linalg.norm(self.triangulated_points1[inlier_idx, :] * scaling_factor)
+                        dist_f2 = np.linalg.norm(self.triangulated_points2[inlier_idx, :] * scaling_factor)
 
                         self.tracked_2d_points[ransacable_ids[i]].last_measurement_kf_id = self.keyframe_idx
-                        self.tracked_2d_points[ransacable_ids[i]].depth = dist
-
-                        meas = 1.0 / dist
-                        last_meas = self.tracked_2d_points[ransacable_ids[i]].invdist_last_meas
-
+                        self.tracked_2d_points[ransacable_ids[i]].depth = dist_f2
+                        invdist_meas = 1.0 / dist_f2
+                        invdist_estimate = self.tracked_2d_points[ransacable_ids[i]].invdist_last_meas
                         # self.tracked_2d_points[ransacable_ids[i]].invdist_last_meas  = meas
 
                         # DO BAYESIAN FUSION OF MEASUREMENTS!!!
-                        # if last_meas is None:
+                        # if invdist_estimate is None:
                         if True:
-                            self.tracked_2d_points[ransacable_ids[i]].invdist_last_meas  = meas
+                            self.tracked_2d_points[ransacable_ids[i]].invdist_last_meas  = invdist_meas 
                             self.tracked_2d_points[ransacable_ids[i]].invdist_cov = self.invdist_meas_cov
                         # else:
                         #     last_cov = self.tracked_2d_points[ransacable_ids[i]].invdist_cov
 
-                        #     fused_meas = (last_meas * self.invdist_meas_cov + meas * last_cov) / (last_cov + self.invdist_meas_cov)
+                        #     # PROPAGATE
+                        #     dist_estimate_f1 = 1 / invdist_estimate 
+                        #     dist_estimate_f2 = dist_estimate_f1 + (dist_f2 - dist_f1)
+                        #     invdist_estimate_propagated = 1 / dist_estimate_f2
+
+                        #     fused_meas = (invdist_estimate_propagated * self.invdist_meas_cov + invdist_meas * last_cov) / (last_cov + self.invdist_meas_cov)
                         #     fused_cov = (last_cov * self.invdist_meas_cov) / (last_cov + self.invdist_meas_cov)
 
                         #     self.tracked_2d_points[ransacable_ids[i]].invdist_last_meas = fused_meas
