@@ -667,7 +667,7 @@ class FireSLAMModule:
             if self.standalone_mode:
                 self.get_visible_pointcloud_metric_estimate(visualize=True)
 
-            if self.coherent_visual_odom_len > 1:
+            if self.coherent_visual_odom_len > 0:
                 self.has_new_pcl_data = True
 
             comp_time = time.time() - comp_start_time
@@ -715,11 +715,12 @@ class FireSLAMModule:
         for pt_id in self.active_2d_points_ids:
             cur_pos = self.tracked_2d_points[pt_id].current_pos
             if not self.tracked_2d_points[pt_id].invdist is None:
-                sent_pt_ids.append(pt_id)
 
                 kfi = self.tracked_2d_points[pt_id].last_measurement_kf_id  
-                # if kfi != self.keyframe_idx - 1:
-                #     continue
+                if kfi != self.keyframe_idx - 1:
+                    continue
+
+                sent_pt_ids.append(pt_id)
                 T_odom_pt = self.keyframes[kfi ].T_odom
                 obsv_pos = self.tracked_2d_points[pt_id].keyframe_observations[kfi]
 
@@ -898,7 +899,7 @@ class FireSLAMModule:
 
         px_cur = np.array([self.tracked_2d_points[p].current_pos for p in self.active_2d_points_ids])
         # have_depth = np.array([(not self.tracked_2d_points[p].depth is None) for p in self.active_2d_points_ids])
-        have_depth = np.array([(not self.tracked_2d_points[p].last_ is None) for p in self.active_2d_points_ids])
+        have_depth = np.array([(self.tracked_2d_points[p].last_measurement_kf_id == self.keyframe_idx - 1) for p in self.active_2d_points_ids])
         depths = np.array([self.tracked_2d_points[p].depth for p in self.active_2d_points_ids])
 
         if not px_cur is None and px_cur.size > 0:
@@ -920,9 +921,9 @@ class FireSLAMModule:
                 color = (0,0,0)
                 if have_depth[i]:
                     color = (255,0,255)
-                    if depths[i] < self.toonear_vis_dist:
-                        color = (255,0,0)
-                        size += 3
+                    # if depths[i] < self.toonear_vis_dist:
+                    #     color = (255,0,0)
+                    #     size += 3
 
                 rgb = cv2.circle(rgb, (inside_pix_idxs[i,0], inside_pix_idxs[i,1]), int(size), 
                                color, -1) 
