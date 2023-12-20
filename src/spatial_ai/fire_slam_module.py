@@ -503,6 +503,16 @@ class FireSLAMModule:
                     print("LOST TRACKING 3D!!")
 
 
+                mean_inv_depth = np.mean(np.reciprocal(np.linalg.norm(self.triangulated_points1, axis=1)))
+
+                T_ransac[:3, 3] = T_ransac[:3, 3] * mean_inv_depth 
+                self.triangulated_points1 = self.triangulated_points1 * mean_inv_depth 
+                self.triangulated_points2 = transformPoints(self.triangulated_points1, T_ransac)
+
+                mean_inv_depth = np.mean(np.reciprocal(np.linalg.norm(self.triangulated_points1, axis=1)))
+                print("MEAN INV DEPTH2:")
+                print(mean_inv_depth)
+
                 # SCALING FACTOR IS BETWEEN UNSCALED VISUAL ODOM AND SCALED METRIC ODOM ESTIMATE
                 if self.coherent_visual_odom_len > 0:
                     # which_of_newly_triangulated_have_previous_measurements
@@ -517,21 +527,31 @@ class FireSLAMModule:
                     print(tracked_3d_pts_prev_kf.shape)
                     print(tracked_3d_pts_cur_kf.shape)
 
-                    sum_dists_prev_kf = np.sum(np.linalg.norm(tracked_3d_pts_prev_kf, axis=1))
-                    sum_dists_cur_kf = np.sum(np.linalg.norm(tracked_3d_pts_cur_kf, axis=1))
+                    # sum_dists_prev_kf = np.sum(np.linalg.norm(tracked_3d_pts_prev_kf, axis=1))
+                    # sum_dists_cur_kf = np.sum(np.linalg.norm(tracked_3d_pts_cur_kf, axis=1))
+
+                    # sum_dists_prev_kf = np.mean(np.sum(np.linalg.norm(tracked_3d_pts_prev_kf, axis=1)))
+                    # sum_dists_cur_kf = np.mean(np.sum(np.linalg.norm(tracked_3d_pts_cur_kf, axis=1)))
+
+                    # sum_dists_prev_kf = np.min((np.linalg.norm(tracked_3d_pts_prev_kf, axis=1)))
+                    # sum_dists_cur_kf = np.min((np.linalg.norm(tracked_3d_pts_cur_kf, axis=1)))
 
                     # sum_dists_prev_kf = np.sum(np.reciprocal(np.linalg.norm(tracked_3d_pts_prev_kf, axis=1)))
                     # sum_dists_cur_kf = np.sum(np.reciprocal(np.linalg.norm(tracked_3d_pts_cur_kf, axis=1)))
 
-                    # print("SUMDIST_PREV:")
-                    # print("SUMDIST_CUR:")
+                    sum_dists_prev_kf = np.mean(np.reciprocal(np.linalg.norm(tracked_3d_pts_prev_kf, axis=1)))
+                    sum_dists_cur_kf = np.mean(np.reciprocal(np.linalg.norm(tracked_3d_pts_cur_kf, axis=1)))
 
-                    # scaling_factor_cur_kf = sum_dists_prev_kf / sum_dists_cur_kf  
-                    scaling_factor_cur_kf = 1
+                    print("SUMDIST_PREV:")
+                    print(sum_dists_prev_kf)
+                    print("SUMDIST_CUR:")
+                    print(sum_dists_cur_kf)
+
+                    scaling_factor_cur_kf = sum_dists_prev_kf / sum_dists_cur_kf  
                     # scaling_factor_cur_kf = sum_dists_cur_kf/ sum_dists_prev_kf   
                     print("FACTOR:")
                     print(scaling_factor_cur_kf)
-                    T_ransac[:3, 3] = T_ransac[:3, 3] * scaling_factor_cur_kf
+                    # T_ransac[:3, 3] = T_ransac[:3, 3] * scaling_factor_cur_kf
                     # self.triangulated_points1 = self.triangulated_points1 * scaling_factor_cur_kf
                     # self.triangulated_points2 = transformPoints(self.triangulated_points1, T_ransac)
 
@@ -1201,6 +1221,11 @@ class FireSLAMModule:
             uhom_Q1 = hom_Q1[:3, :] / hom_Q1[3, :]
             uhom_Q2 = hom_Q2[:3, :] / hom_Q2[3, :]
 
+            # if store:
+            #     relative_scale = np.mean(np.linalg.norm(uhom_Q1.T[:-1] - uhom_Q1.T[1:], axis=-1)/
+            #                             np.linalg.norm(uhom_Q2.T[:-1] - uhom_Q2.T[1:], axis=-1))
+            #     print("REL SCALE:")
+            #     print(relative_scale)
             if store:
                 return uhom_Q1.T, uhom_Q2.T
 
@@ -1214,8 +1239,6 @@ class FireSLAMModule:
             # print("R, t:")
             # print(R)
             # print(t)
-            # print("REL SCALE:")
-            # print(relative_scale)
             # print(sum_of_pos_z_Q1)
             # print(sum_of_pos_z_Q2)
             return sum_of_pos_z_Q1 + sum_of_pos_z_Q2, relative_scale
