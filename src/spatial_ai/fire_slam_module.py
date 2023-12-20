@@ -116,8 +116,9 @@ class FireSLAMModule:
         self.has_new_pcl_data = False
 
         self.kf_dist_thr = 0.5
+        self.marker_scale = 1
         self.toonear_vis_dist = 1
-        self.invdist_meas_cov = 0.3
+        self.invdist_meas_cov = 0.002
 
         self.coherent_visual_odom_len = 0
 
@@ -505,12 +506,12 @@ class FireSLAMModule:
 
                 mean_inv_depth = np.mean(np.reciprocal(np.linalg.norm(self.triangulated_points1, axis=1)))
 
-                T_ransac[:3, 3] = T_ransac[:3, 3] * mean_inv_depth 
-                self.triangulated_points1 = self.triangulated_points1 * mean_inv_depth 
-                self.triangulated_points2 = transformPoints(self.triangulated_points1, T_ransac)
+                # T_ransac[:3, 3] = T_ransac[:3, 3] * mean_inv_depth 
+                # self.triangulated_points1 = self.triangulated_points1 * mean_inv_depth 
+                # self.triangulated_points2 = transformPoints(self.triangulated_points1, T_ransac)
+                # mean_inv_depth = np.mean(np.reciprocal(np.linalg.norm(self.triangulated_points1, axis=1)))
 
-                mean_inv_depth = np.mean(np.reciprocal(np.linalg.norm(self.triangulated_points1, axis=1)))
-                print("MEAN INV DEPTH2:")
+                print("MEAN INV DEPTH:")
                 print(mean_inv_depth)
 
                 # SCALING FACTOR IS BETWEEN UNSCALED VISUAL ODOM AND SCALED METRIC ODOM ESTIMATE
@@ -530,30 +531,30 @@ class FireSLAMModule:
                     # sum_dists_prev_kf = np.sum(np.linalg.norm(tracked_3d_pts_prev_kf, axis=1))
                     # sum_dists_cur_kf = np.sum(np.linalg.norm(tracked_3d_pts_cur_kf, axis=1))
 
-                    # sum_dists_prev_kf = np.mean(np.sum(np.linalg.norm(tracked_3d_pts_prev_kf, axis=1)))
-                    # sum_dists_cur_kf = np.mean(np.sum(np.linalg.norm(tracked_3d_pts_cur_kf, axis=1)))
+                    # sum_dists_prev_kf = np.mean(np.linalg.norm(tracked_3d_pts_prev_kf, axis=1))
+                    # sum_dists_cur_kf = np.mean(np.linalg.norm(tracked_3d_pts_cur_kf, axis=1))
 
                     # sum_dists_prev_kf = np.min((np.linalg.norm(tracked_3d_pts_prev_kf, axis=1)))
                     # sum_dists_cur_kf = np.min((np.linalg.norm(tracked_3d_pts_cur_kf, axis=1)))
 
-                    # sum_dists_prev_kf = np.sum(np.reciprocal(np.linalg.norm(tracked_3d_pts_prev_kf, axis=1)))
-                    # sum_dists_cur_kf = np.sum(np.reciprocal(np.linalg.norm(tracked_3d_pts_cur_kf, axis=1)))
+                    sum_dists_prev_kf = np.sum(np.reciprocal(np.linalg.norm(tracked_3d_pts_prev_kf, axis=1)))
+                    sum_dists_cur_kf = np.sum(np.reciprocal(np.linalg.norm(tracked_3d_pts_cur_kf, axis=1)))
 
-                    sum_dists_prev_kf = np.mean(np.reciprocal(np.linalg.norm(tracked_3d_pts_prev_kf, axis=1)))
-                    sum_dists_cur_kf = np.mean(np.reciprocal(np.linalg.norm(tracked_3d_pts_cur_kf, axis=1)))
+                    # sum_dists_prev_kf = np.mean(np.reciprocal(np.linalg.norm(tracked_3d_pts_prev_kf, axis=1)))
+                    # sum_dists_cur_kf = np.mean(np.reciprocal(np.linalg.norm(tracked_3d_pts_cur_kf, axis=1)))
 
-                    print("SUMDIST_PREV:")
-                    print(sum_dists_prev_kf)
-                    print("SUMDIST_CUR:")
-                    print(sum_dists_cur_kf)
+#                     print("SUMDIST_PREV:")
+#                     print(sum_dists_prev_kf)
+#                     print("SUMDIST_CUR:")
+#                     print(sum_dists_cur_kf)
 
-                    scaling_factor_cur_kf = sum_dists_prev_kf / sum_dists_cur_kf  
-                    # scaling_factor_cur_kf = sum_dists_cur_kf/ sum_dists_prev_kf   
-                    print("FACTOR:")
-                    print(scaling_factor_cur_kf)
-                    # T_ransac[:3, 3] = T_ransac[:3, 3] * scaling_factor_cur_kf
-                    # self.triangulated_points1 = self.triangulated_points1 * scaling_factor_cur_kf
-                    # self.triangulated_points2 = transformPoints(self.triangulated_points1, T_ransac)
+#                     # scaling_factor_cur_kf = sum_dists_prev_kf / sum_dists_cur_kf  
+#                     scaling_factor_cur_kf = sum_dists_cur_kf/ sum_dists_prev_kf   
+#                     print("FACTOR:")
+#                     print(scaling_factor_cur_kf)
+#                     T_ransac[:3, 3] = T_ransac[:3, 3] * scaling_factor_cur_kf
+#                     self.triangulated_points1 = self.triangulated_points1 * scaling_factor_cur_kf
+#                     self.triangulated_points2 = transformPoints(self.triangulated_points1, T_ransac)
 
                 new_kf.T_visual_odom = T_ransac
                 new_kf.triangulated_points2 = self.triangulated_points2
@@ -630,23 +631,23 @@ class FireSLAMModule:
                         # self.tracked_2d_points[ransacable_ids[i]].invdist_last_meas  = meas
 
                         # DO BAYESIAN FUSION OF MEASUREMENTS!!!
-                        # if invdist_estimate is None:
-                        if True:
+                        if invdist_estimate is None:
+                        # if True:
                             self.tracked_2d_points[ransacable_ids[i]].invdist_last_meas  = invdist_meas 
-                            self.tracked_2d_points[ransacable_ids[i]].invdist_cov = self.invdist_meas_cov
-                        # else:
-                        #     last_cov = self.tracked_2d_points[ransacable_ids[i]].invdist_cov
+                            self.tracked_2d_points[ransacable_ids[i]].invdist_cov = self.invdist_meas_cov * 3
+                        else:
+                            last_cov = self.tracked_2d_points[ransacable_ids[i]].invdist_cov
 
-                        #     # PROPAGATE
-                        #     dist_estimate_f1 = 1 / invdist_estimate 
-                        #     dist_estimate_f2 = dist_estimate_f1 + (dist_f2 - dist_f1)
-                        #     invdist_estimate_propagated = 1 / dist_estimate_f2
+                            # PROPAGATE
+                            dist_estimate_f1 = 1 / invdist_estimate 
+                            dist_estimate_f2 = dist_estimate_f1 + (dist_f2 - dist_f1)
+                            invdist_estimate_propagated = 1 / dist_estimate_f2
 
-                        #     fused_meas = (invdist_estimate_propagated * self.invdist_meas_cov + invdist_meas * last_cov) / (last_cov + self.invdist_meas_cov)
-                        #     fused_cov = (last_cov * self.invdist_meas_cov) / (last_cov + self.invdist_meas_cov)
+                            fused_meas = (invdist_estimate_propagated * self.invdist_meas_cov + invdist_meas * last_cov) / (last_cov + self.invdist_meas_cov)
+                            fused_cov = (last_cov * self.invdist_meas_cov) / (last_cov + self.invdist_meas_cov)
 
-                        #     self.tracked_2d_points[ransacable_ids[i]].invdist_last_meas = fused_meas
-                        #     self.tracked_2d_points[ransacable_ids[i]].invdist_cov = fused_cov
+                            self.tracked_2d_points[ransacable_ids[i]].invdist_last_meas = fused_meas
+                            self.tracked_2d_points[ransacable_ids[i]].invdist_cov = fused_cov
 
                         self.tracked_2d_points[ransacable_ids[i]].invdist = self.tracked_2d_points[ransacable_ids[i]].invdist_last_meas
 
@@ -722,7 +723,7 @@ class FireSLAMModule:
         line_marker.header.frame_id = self.odom_orig_frame_id  # Set your desired frame_id
         line_marker.type = Marker.LINE_LIST
         line_marker.action = Marker.ADD
-        line_marker.scale.x = 0.02  # Line width
+        line_marker.scale.x = 0.08 * self.marker_scale  # Line width
         line_marker.color.a = 1.0  # Alpha
         line_marker.color.r = 1.0  
         line_marker.color.g = 1.0  
@@ -764,18 +765,30 @@ class FireSLAMModule:
                 # pts.append([t_pt_mean[0], t_pt_mean[1], t_pt_mean[2]])
                 cloud_pts.append([t_pt_mean[0], t_pt_mean[1], t_pt_mean[2]])
                 
-                cov = self.tracked_2d_points[pt_id].invdist_cov
-                idist_min = invdist - cov
-                idist_max = invdist + cov
+                # COVARIANCE VISUALIZING
+                if visualize:
+                    cov = self.tracked_2d_points[pt_id].invdist_cov
+                    conf_interval = 1
+                    idist_min = invdist - conf_interval * np.sqrt(cov)
+                    idist_max = invdist + conf_interval * np.sqrt(cov)
+                    if idist_min <= 0:
+                        idist_min = invdist * 0.5
 
-                maxpt = (1.0/idist_max) * dir1
-                minpt = (1.0/idist_min) * dir1
+                    dist_est_max = (1.0/idist_min)
+                    dist_est_min = (1.0/idist_max)
+                    if dist_est_min < d*0.5:
+                        dist_est_min = d*0.5
+                    if dist_est_max > d*1.5:
+                        dist_est_max = d*1.5
 
-                t_minpt = transformPoints(minpt.reshape((1,3)), T_odom_pt).flatten()
-                line_pts.append([t_minpt[0], t_minpt[1], t_minpt[2]])
+                    maxpt = dist_est_min * dir1
+                    minpt = dist_est_max * dir1
 
-                t_maxpt = transformPoints(maxpt.reshape((1,3)), T_odom_pt).flatten()
-                line_pts.append([t_maxpt[0], t_maxpt[1], t_maxpt[2]])
+                    t_minpt = transformPoints(minpt.reshape((1,3)), T_odom_pt).flatten()
+                    line_pts.append([t_minpt[0], t_minpt[1], t_minpt[2]])
+
+                    t_maxpt = transformPoints(maxpt.reshape((1,3)), T_odom_pt).flatten()
+                    line_pts.append([t_maxpt[0], t_maxpt[1], t_maxpt[2]])
 
 
         header = Header()
@@ -989,7 +1002,7 @@ class FireSLAMModule:
         marker_id = 0
         if len(marker_array.markers) > 0:
             marker_id = len(marker_array.markers)
-        ms = 1
+        ms = self.marker_scale * 8
 
         T_vis = lookupTransformAsMatrix(frame_id, self.camera_frame_id, self.tf_listener)
 

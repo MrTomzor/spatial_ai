@@ -167,15 +167,24 @@ class NavNode:
 
         # --Load calib
         # UNITY
-        # self.K = np.array([642.8495341420769, 0, 400, 0, 644.5958939934509, 300, 0, 0, 1]).reshape((3,3))
-        # self.imu_to_cam_T = np.array( [[0, -1, 0, 0], [0, 0, -1, 0], [1, 0, 0, 0], [0.0, 0.0, 0.0, 1.0]])
-        # self.width = 800
-        # self.height = 600
+        self.K = np.array([642.8495341420769, 0, 400, 0, 644.5958939934509, 300, 0, 0, 1]).reshape((3,3))
+        self.T_imu_to_cam = np.eye(4)
+        self.T_fcu_to_imu = np.eye(4)
+        self.width = 800
+        self.height = 600
         # ov_slampoints_topic = '/ov_msckf/points_slam'
-        # img_topic = '/robot1/camera1/raw'
-        # # img_topic = '/robot1/camera1/image'
-        # odom_topic = '/ov_msckf/odomimu'
-        # self.marker_scale = 1
+        ov_slampoints_topic = 'extended_slam_points'
+        img_topic = '/robot1/camera1/raw'
+        # img_topic = '/robot1/camera1/image'
+        odom_topic = '/ov_msckf/odomimu'
+        self.imu_frame = 'imu'
+        # self.fcu_frame = 'uav1/fcu'
+        self.fcu_frame = 'imu'
+        self.camera_frame = 'cam0'
+        self.odom_frame = 'global'
+        self.marker_scale = 1
+        self.slam_kf_dist_thr = 4
+        self.smap_fragmentation_dist = 3000
 
         # BLUEFOX UAV
         # self.K = np.array([227.4, 0, 376, 0, 227.4, 240, 0, 0, 1]).reshape((3,3))
@@ -224,22 +233,25 @@ class NavNode:
 
 
         # TELLo (imu = fcu)
-        self.K = np.array([933.5640667549508, 0.0, 500.5657553739987, 0.0, 931.5001605952165, 379.0130687255228, 0.0, 0.0, 1.0]).reshape((3,3))
+        # self.K = np.array([933.5640667549508, 0.0, 500.5657553739987, 0.0, 931.5001605952165, 379.0130687255228, 0.0, 0.0, 1.0]).reshape((3,3))
 
-        self.T_imu_to_cam = np.eye(4)
-        self.T_fcu_to_imu = np.eye(4)
-        self.width = 960
-        self.height = 720
-        ov_slampoints_topic = 'extended_slam_points'
-        img_topic = '/uav1/tellopy_wrapper/rgb/image_raw'
-        odom_topic = '/uav1/estimation_manager/odom_main'
+        # self.T_imu_to_cam = np.eye(4)
+        # self.T_fcu_to_imu = np.eye(4)
+        # self.width = 960
+        # self.height = 720
+        # ov_slampoints_topic = 'extended_slam_points'
+        # img_topic = '/uav1/tellopy_wrapper/rgb/image_raw'
+        # odom_topic = '/uav1/estimation_manager/odom_main'
 
-        self.imu_frame = 'imu'
-        self.fcu_frame = 'uav1/fcu'
-        self.odom_frame = 'uav1/passthrough_origin'
-        self.camera_frame = "uav1/rgb"
+        # self.imu_frame = 'imu'
+        # self.fcu_frame = 'uav1/fcu'
+        # self.odom_frame = 'uav1/passthrough_origin'
+        # self.camera_frame = "uav1/rgb"
 
-        self.marker_scale = 0.15
+        # self.marker_scale = 0.15
+        # self.slam_kf_dist_thr = 0.5
+        # self.smap_fragmentation_dist = 10
+
 
         self.tf_listener.waitForTransform(self.fcu_frame, self.camera_frame, rospy.Time(), rospy.Duration(4.0))
         (trans, rotation) = self.tf_listener.lookupTransform(self.fcu_frame, self.camera_frame, rospy.Time(0))
@@ -260,6 +272,8 @@ class NavNode:
 
         # FIRESLAM
         self.fire_slam_module = FireSLAMModule(self.width, self.height, self.K, self.camera_frame, self.odom_frame, self.tf_listener)
+        self.fire_slam_module.kf_dist_thr = self.slam_kf_dist_thr
+        self.fire_slam_module.marker_scale = self.marker_scale
 
         # SUBMAP BUILDER
         self.submap_builder_input_mutex = threading.Lock()
@@ -267,6 +281,9 @@ class NavNode:
         self.submap_builder_input_point_ids = None
 
         self.submap_builder_module = SubmapBuilderModule(self.width, self.height, self.K, self.camera_frame, self.odom_frame,self.fcu_frame, self.tf_listener, self.T_imu_to_cam, self.T_fcu_to_imu)
+        self.submap_builder_module.marker_scale = self.marker_scale
+        self.submap_builder_module.fragmenting_travel_dist = self.smap_fragmentation_dist
+
         self.submap_builder_rate = 10
         self.submap_builder_timer = rospy.Timer(rospy.Duration(1.0 / self.submap_builder_rate), self.submap_builder_update_iter)
 
