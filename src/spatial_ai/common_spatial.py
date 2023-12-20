@@ -125,6 +125,7 @@ class SphereMap:
 
         self.surfels_kdtree = None
         self.surfel_points = None
+        self.surfel_slam_ids = None
         self.surfel_radii = None
         self.surfel_normals = None
         self.connectivity_labels = None
@@ -139,15 +140,42 @@ class SphereMap:
                 return conn.pt_in_first_map_frame
         return None
 
-    def updateSurfels(self, visible_points, pixpos, simplices):# # #{
+    def updateSurfels(self, visible_points, pixpos, simplices, slam_ids=None):# # #{
         # Compute normals measurements for the visible points, all should be pointing towards the camera
         # What frame are the points in?
         # print("UPDATING SURFELS")
+
         n_test_new_pts = visible_points.shape[0]
 
         # TODO do based on map scale!!!
         filtering_radius = self.surfels_filtering_radius
 
+
+        # FIRST CHECK WHICH INPUT PTS ALREADY EXIST IN THE MAP AND JUST UPDATE THEIR POSITIONS
+        if not self.surfel_slam_ids is None:
+            are_new_pts_mask = np.full(n_test_new_pts, True)
+            for i in range(n_test_new_pts):
+                input_slam_id = slam_ids[i]
+                findres = np.where(self.surfel_slam_ids == input_slam_id)[0]
+                if findres.size == 0:
+                    continue
+                elif findres.size > 1:
+                    print("ERROR! MORE SURFELS WITH SLAM ID " + str(input_slam_id))
+                pt_idx_in_map_surfels = findres[0]
+
+                # MOVE THE POINT
+                self.surfel_points[pt_idx_in_map_surfels, :] = visible_points[i, :]
+                are_new_pts_mask[i] = False
+            n_are_new = np.sum(are_new_pts_mask)
+            # print("MOVED PTS: " + str(n_test_new_pts - n_are_new))
+
+            # REMOVE PTS FROM INPUT THAT WERE SEEN ALREADY
+            visible_points = visible_points[are_new_pts_mask, :]
+            slam_ids = slam_ids[are_new_pts_mask]
+            n_test_new_pts = n_are_new
+
+
+        # FILTER OUT THE NEW ONES TOO CLOSE TO PREVIOUS ONES
         pts_survived_first_mask = np.full((n_test_new_pts), True)
         if not self.surfel_points is None:
             n_existign_points = self.surfel_points.shape[0]
@@ -159,7 +187,9 @@ class SphereMap:
 
             # print("N SURVIVED FIRST MASK:" + str(np.sum(pts_survived_first_mask)))
 
-        pts_survived_filter_with_mappoints = visible_points[pts_survived_first_mask]
+        # pts_survived_filter_with_mappoints = visible_points[pts_survived_first_mask]
+        pts_survived_filter_with_mappoints = visible_points[pts_survived_first_mask, :]
+        slam_ids = slam_ids[pts_survived_first_mask]
 
         n_survived_first_filter = pts_survived_filter_with_mappoints.shape[0]
         # print("N SURVIVED FILTERING WITH OLD POINTS: " + str(n_survived_first_filter))
@@ -177,8 +207,10 @@ class SphereMap:
         if n_added > 0:
             if self.surfel_points is None:
                 self.surfel_points = pts_survived_filter_with_mappoints[pts_added_mask]
+                self.surfel_slam_ids = slam_ids[pts_added_mask]
             else:
                 self.surfel_points = np.concatenate((self.surfel_points, pts_survived_filter_with_mappoints[pts_added_mask]))
+                self.surfel_slam_ids = np.concatenate((self.surfel_slam_ids, slam_ids[pts_added_mask]))
 
         # COMPUTE POINT NORMALS AND KILL THEM IF OCCUPIED BY SPHERES
         affection_distance = self.max_radius * 1.2

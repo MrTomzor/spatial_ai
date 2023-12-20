@@ -582,8 +582,8 @@ class FireSLAMModule:
                 print("LEN METRIC: " + str(len_metric) + ", UNSCALED: " + str(len_unscaled))
 
 
-                # scaling_factor = (len_metric / len_unscaled)
-                scaling_factor = scaling_factor_simple
+                scaling_factor = (len_metric / len_unscaled)
+                # scaling_factor = scaling_factor_simple
 
                 print("COHERENCE LEN: " + str(self.coherent_visual_odom_len) + ", FACTOR: " + str(scaling_factor) + ", SIMPLE FACTOR: " + str(scaling_factor_simple))
                 self.triangulated_points = copy.deepcopy(self.triangulated_points2) * scaling_factor
@@ -785,7 +785,7 @@ class FireSLAMModule:
             self.slam_pcl_pub.publish(cloud)
             self.kp_pcl_pub_invdepth.publish(line_marker)
 
-        return cloud, sent_pt_ids
+        return cloud, np.array(sent_pt_ids)
     # # #}
 
     # VISUALIZATION

@@ -128,7 +128,7 @@ class SubmapBuilderModule:
 
     # CORE
 
-    def camera_update_iter(self, msg, points_info = None):# # #{
+    def camera_update_iter(self, msg, slam_ids = None):# # #{
         if self.verbose_submap_construction:
             print("PCL MSG")
 
@@ -296,13 +296,20 @@ class SubmapBuilderModule:
 
         transformed = transformPoints(point_cloud_array, np.linalg.inv(T_global_to_cam)).T
 
-        positive_z_idxs = transformed[2, :] > 0
-        final_points = transformed[:, positive_z_idxs]
+        positive_z_mask = transformed[2, :] > 0
+        positive_z_points = transformed[:, positive_z_mask]
+        positive_z_slam_ids = None
+        if not slam_ids is None:
+            positive_z_slam_ids = slam_ids[positive_z_mask]
 
-        pixpos = getPixelPositions(final_points, self.K)
+        pixpos = getPixelPositions(positive_z_points, self.K)
 
         # COMPUTE DELAUNAY TRIANG OF VISIBLE SLAM POINTS
-        if final_points.shape[0] < 3:
+        print("POS Z SLAM PTS")
+        print(positive_z_points.shape)
+        print("PIXPOS SHAPE")
+        print(pixpos.shape)
+        if positive_z_points.shape[0] < 3:
             if self.verbose_submap_construction:
                 print("NOT ENAUGH PTS FOR DELAUNAY!")
             return
@@ -313,14 +320,14 @@ class SubmapBuilderModule:
         # print("INPUT: " )
         # print(point_cloud_array)
         # print("TRANSFORMED TO CAM FRAME: " )
-        # print(final_points.T)
+        # print(positive_z_points.T)
 
         # vis = self.visualize_depth(pixpos, tri)
         # self.depth_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
 
         # CONSTRUCT OBSTACLE MESH
         comp_mesh = time.time()
-        obstacle_mesh = trimesh.Trimesh(vertices=final_points.T, faces = tri.simplices)
+        obstacle_mesh = trimesh.Trimesh(vertices=positive_z_points.T, faces = tri.simplices)
 
         # CONSTRUCT POLYGON OF PIXPOSs OF VISIBLE SLAM PTS
         hull = ConvexHull(pixpos)
@@ -330,7 +337,7 @@ class SubmapBuilderModule:
         img_polygon = geometry.Polygon(hull.points)
 
         # CONSTRUCT HULL MESH FROM 3D POINTS OF CONVEX 2D HULL OF PROJECTED POINTS
-        hullmesh_pts = final_points[:, np.unique(hull.simplices)]
+        hullmesh_pts = positive_z_points[:, np.unique(hull.simplices)]
         orig_pts = np.zeros((3, 1))
         hullmesh_pts = np.concatenate((hullmesh_pts, orig_pts), axis=1)
         zero_pt_index = hullmesh_pts.shape[1] - 1
@@ -371,7 +378,7 @@ class SubmapBuilderModule:
 
             # Filter out spheres with z below zero or above the max z of obstacle points
             # TODO - use dist rather than z for checking
-            max_vis_z = np.max(final_points[2, :])
+            max_vis_z = np.max(positive_z_points[2, :])
             z_ok_idxs = np.logical_and(transformed_old_points[:, 2] > 0, transformed_old_points[:, 2] <= max_vis_z)
 
             z_ok_points = transformed_old_points[z_ok_idxs , :] # remove spheres with negative z
@@ -523,8 +530,8 @@ class SubmapBuilderModule:
         # HANDLE ADDING/REMOVING VISIBLE 3D POINTS
         comp_start_time = time.time()
 
-        visible_pts_in_spheremap_frame = transformPoints(final_points.T, T_orig_to_current_cam)
-        self.spheremap.updateSurfels(visible_pts_in_spheremap_frame , pixpos, tri.simplices)
+        visible_pts_in_spheremap_frame = transformPoints(positive_z_points.T, T_orig_to_current_cam)
+        self.spheremap.updateSurfels(visible_pts_in_spheremap_frame , pixpos, tri.simplices, positive_z_slam_ids)
 
         comp_time = time.time() - comp_start_time
         if self.verbose_submap_construction:
