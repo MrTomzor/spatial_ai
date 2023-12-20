@@ -485,7 +485,7 @@ class FireSLAMModule:
                 src_pts = np.array([[self.tracked_2d_points[i].keyframe_observations[kfi][0], self.tracked_2d_points[i].keyframe_observations[kfi][1]] for i in ransacable_ids])
                 # M, mask = cv2.findEssentialMat(src_pts, dst_pts, self.K, threshold=3)
                 # [M, mask] = cv2.findEssentialMat(src_pts, dst_pts,'CameraMatrix', self.K, 'Confidence', 0.9, 'Threshold', 2)
-                M, mask = cv2.findEssentialMat(src_pts, dst_pts, self.K, threshold=1, prob=0.8)
+                M, mask = cv2.findEssentialMat(src_pts, dst_pts, self.K, threshold=1, prob=0.2)
                 mask = mask.flatten() == 1
                 inlier_pt_ids = np.array(ransacable_ids)[mask]
 
@@ -532,8 +532,8 @@ class FireSLAMModule:
                     print("FACTOR:")
                     print(scaling_factor_cur_kf)
                     T_ransac[:3, 3] = T_ransac[:3, 3] * scaling_factor_cur_kf
-                    self.triangulated_points1 = self.triangulated_points1 * scaling_factor_cur_kf
-                    self.triangulated_points2 = transformPoints(self.triangulated_points1, T_ransac)
+                    # self.triangulated_points1 = self.triangulated_points1 * scaling_factor_cur_kf
+                    # self.triangulated_points2 = transformPoints(self.triangulated_points1, T_ransac)
 
                 new_kf.T_visual_odom = T_ransac
                 new_kf.triangulated_points2 = self.triangulated_points2
@@ -718,6 +718,8 @@ class FireSLAMModule:
                 sent_pt_ids.append(pt_id)
 
                 kfi = self.tracked_2d_points[pt_id].last_measurement_kf_id  
+                # if kfi != self.keyframe_idx - 1:
+                #     continue
                 T_odom_pt = self.keyframes[kfi ].T_odom
                 obsv_pos = self.tracked_2d_points[pt_id].keyframe_observations[kfi]
 
@@ -895,7 +897,8 @@ class FireSLAMModule:
         # rgb = np.repeat((self.new_frame)[:, :, np.newaxis], 3, axis=2)
 
         px_cur = np.array([self.tracked_2d_points[p].current_pos for p in self.active_2d_points_ids])
-        have_depth = np.array([(not self.tracked_2d_points[p].depth is None) for p in self.active_2d_points_ids])
+        # have_depth = np.array([(not self.tracked_2d_points[p].depth is None) for p in self.active_2d_points_ids])
+        have_depth = np.array([(not self.tracked_2d_points[p].last_ is None) for p in self.active_2d_points_ids])
         depths = np.array([self.tracked_2d_points[p].depth for p in self.active_2d_points_ids])
 
         if not px_cur is None and px_cur.size > 0:
