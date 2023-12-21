@@ -172,10 +172,10 @@ class NavNode:
         self.T_fcu_to_imu = np.eye(4)
         self.width = 800
         self.height = 600
-        # ov_slampoints_topic = '/ov_msckf/points_slam'
-        ov_slampoints_topic = 'extended_slam_points'
-        img_topic = '/robot1/camera1/raw'
-        # img_topic = '/robot1/camera1/image'
+        ov_slampoints_topic = '/ov_msckf/points_slam'
+        # ov_slampoints_topic = 'extended_slam_points'
+        # img_topic = '/robot1/camera1/raw'
+        img_topic = '/robot1/camera1/image'
         odom_topic = '/ov_msckf/odomimu'
         self.imu_frame = 'imu'
         # self.fcu_frame = 'uav1/fcu'
@@ -184,7 +184,10 @@ class NavNode:
         self.odom_frame = 'global'
         self.marker_scale = 1
         self.slam_kf_dist_thr = 4
-        self.smap_fragmentation_dist = 3000
+        self.smap_fragmentation_dist = 30
+        self.slam_filtering_enabled = False
+        self.using_external_slam_pts = True
+        self.max_sphere_sampling_z  = 30
 
         # BLUEFOX UAV
         # self.K = np.array([227.4, 0, 376, 0, 227.4, 240, 0, 0, 1]).reshape((3,3))
@@ -274,6 +277,7 @@ class NavNode:
         self.fire_slam_module = FireSLAMModule(self.width, self.height, self.K, self.camera_frame, self.odom_frame, self.tf_listener)
         self.fire_slam_module.kf_dist_thr = self.slam_kf_dist_thr
         self.fire_slam_module.marker_scale = self.marker_scale
+        self.fire_slam_module.slam_filtering_enabled = self.slam_filtering_enabled 
 
         # SUBMAP BUILDER
         self.submap_builder_input_mutex = threading.Lock()
@@ -283,6 +287,7 @@ class NavNode:
         self.submap_builder_module = SubmapBuilderModule(self.width, self.height, self.K, self.camera_frame, self.odom_frame,self.fcu_frame, self.tf_listener, self.T_imu_to_cam, self.T_fcu_to_imu)
         self.submap_builder_module.marker_scale = self.marker_scale
         self.submap_builder_module.fragmenting_travel_dist = self.smap_fragmentation_dist
+        self.submap_builder_module.max_sphere_sampling_z = self.max_sphere_sampling_z
 
         self.submap_builder_rate = 10
         self.submap_builder_timer = rospy.Timer(rospy.Duration(1.0 / self.submap_builder_rate), self.submap_builder_update_iter)
@@ -293,7 +298,9 @@ class NavNode:
         self.local_navigator_module = LocalNavigatorModule(self.submap_builder_module, ptraj_topic, output_path_topic)
 
         # --SUB
-        self.sub_cam = rospy.Subscriber(img_topic, Image, self.image_callback, queue_size=10000)
+        self.sub_cam = rospy.Subscriber(img_topic, Image, self.image_callback, queue_size=10)
+        if self.using_external_slam_pts:
+            self.sub_slam_pts = rospy.Subscriber(ov_slampoints_topic, PointCloud2, self.slam_points_callback, queue_size=10)
 
         self.odom_buffer = []
         self.odom_buffer_maxlen = 1000
@@ -424,6 +431,9 @@ class NavNode:
             return
 
         # UPDATE VISUAL SLAM MODULE, PASS INPUT TO SUBMAP BUILDER IF NEW INPUT
+        if self.using_external_slam_pts:
+            return
+
         self.fire_slam_module.image_callback(msg)
 
         if self.fire_slam_module.has_new_pcl_data:
@@ -433,35 +443,6 @@ class NavNode:
             with ScopedLock(self.submap_builder_input_mutex):
                 self.submap_builder_input_pcl = pcl_msg
                 self.submap_builder_input_point_ids = point_ids
-
-
-        img = self.bridge.imgmsg_to_cv2(msg, "bgr8")
-
-        comp_start_time = rospy.get_rostime()
-
-        # SHIFT LAST AND NEW
-        self.last_img_stamp = self.new_img_stamp 
-        self.new_img_stamp  = msg.header.stamp
-
-        self.last_frame = self.new_frame
-        self.new_frame = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-        self.px_ref = self.px_cur
-
-        # print("FRAME " + str(self.n_frames))
-
-        comp_start_time = time.time()
-
-        # RETURN IF FIRST FRAME
-        if self.n_frames == 0:
-            # FIND FIRST FEATURES
-            self.n_frames = 1
-            # self.last_img_stamp = stamp
-            return
-        self.n_frames += 1
-
-
-
         # # #}
 
     def submap_builder_update_iter(self, event=None):# # #{
@@ -481,6 +462,13 @@ class NavNode:
         with ScopedLock(self.spheremap_mutex):
             self.submap_builder_module.camera_update_iter(pcl_msg, points_info) 
     # # #}
+
+    def slam_points_callback(self, msg):# # #{
+        if self.using_external_slam_pts:
+            with ScopedLock(self.submap_builder_input_mutex):
+                self.submap_builder_input_pcl = msg
+                self.submap_builder_input_point_ids = None
+# # #}
 
     # --VISUALIZATIONS
     def visualize_keyframe_scores(self, scores, new_kf):# # #{

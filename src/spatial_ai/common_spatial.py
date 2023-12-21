@@ -171,7 +171,8 @@ class SphereMap:
 
             # REMOVE PTS FROM INPUT THAT WERE SEEN ALREADY
             visible_points = visible_points[are_new_pts_mask, :]
-            slam_ids = slam_ids[are_new_pts_mask]
+            if not slam_ids is None:
+                slam_ids = slam_ids[are_new_pts_mask]
             n_test_new_pts = n_are_new
 
 
@@ -189,7 +190,8 @@ class SphereMap:
 
         # pts_survived_filter_with_mappoints = visible_points[pts_survived_first_mask]
         pts_survived_filter_with_mappoints = visible_points[pts_survived_first_mask, :]
-        slam_ids = slam_ids[pts_survived_first_mask]
+        if not slam_ids is None:
+            slam_ids = slam_ids[pts_survived_first_mask]
 
         n_survived_first_filter = pts_survived_filter_with_mappoints.shape[0]
         # print("N SURVIVED FILTERING WITH OLD POINTS: " + str(n_survived_first_filter))
@@ -207,10 +209,12 @@ class SphereMap:
         if n_added > 0:
             if self.surfel_points is None:
                 self.surfel_points = pts_survived_filter_with_mappoints[pts_added_mask]
-                self.surfel_slam_ids = slam_ids[pts_added_mask]
+                if not slam_ids is None:
+                    self.surfel_slam_ids = slam_ids[pts_added_mask]
             else:
                 self.surfel_points = np.concatenate((self.surfel_points, pts_survived_filter_with_mappoints[pts_added_mask]))
-                self.surfel_slam_ids = np.concatenate((self.surfel_slam_ids, slam_ids[pts_added_mask]))
+                if not slam_ids is None:
+                    self.surfel_slam_ids = np.concatenate((self.surfel_slam_ids, slam_ids[pts_added_mask]))
 
         # COMPUTE POINT NORMALS AND KILL THEM IF OCCUPIED BY SPHERES
         affection_distance = self.max_radius * 1.2
@@ -248,9 +252,11 @@ class SphereMap:
             dists_from_spheres_edge = found_dists - found_radii
             # print(dists_from_spheres_edge )
 
-            # if np.any(dists_from_spheres_edge < killing_inside_dist):
-            #     keep_surfels_mask[i] = False
-            #     continue
+            # TODO figure better way to trigger this
+            if slam_ids is None:
+                if np.any(dists_from_spheres_edge < killing_inside_dist):
+                    keep_surfels_mask[i] = False
+                    continue
 
             # COMPUTE NORMALS FROM NEAR SPHERES
             normals = (self.points[found_sphere_indicies, :] - self.surfel_points[i].reshape(1,3)) / found_dists.reshape(n_considered, 1)

@@ -116,6 +116,7 @@ class FireSLAMModule:
         self.has_new_pcl_data = False
 
         self.kf_dist_thr = 0.5
+        self.slam_filtering_enabled = False
         self.marker_scale = 1
         self.toonear_vis_dist = 1
         self.invdist_meas_cov = 0.002
@@ -167,7 +168,7 @@ class FireSLAMModule:
 
         # SUBSCRIBE CAM
         if self.standalone_mode:
-            self.sub_cam = rospy.Subscriber(self.image_sub_topic, Image, self.image_callback, queue_size=10000)
+            self.sub_cam = rospy.Subscriber(self.image_sub_topic, Image, self.image_callback, queue_size=10)
 
         # self.K = np.array([, 644.5958939934509, 400.0503960299562, 300.5824096896595]).reshape((3,3))
         self.imu_to_cam_T = np.array( [[0, -1, 0, 0], [0, 0, -1, 0], [1, 0, 0, 0], [0.0, 0.0, 0.0, 1.0]])
@@ -486,7 +487,7 @@ class FireSLAMModule:
                 src_pts = np.array([[self.tracked_2d_points[i].keyframe_observations[kfi][0], self.tracked_2d_points[i].keyframe_observations[kfi][1]] for i in ransacable_ids])
                 # M, mask = cv2.findEssentialMat(src_pts, dst_pts, self.K, threshold=3)
                 # [M, mask] = cv2.findEssentialMat(src_pts, dst_pts,'CameraMatrix', self.K, 'Confidence', 0.9, 'Threshold', 2)
-                M, mask = cv2.findEssentialMat(src_pts, dst_pts, self.K, threshold=1, prob=0.2)
+                M, mask = cv2.findEssentialMat(src_pts, dst_pts, self.K, threshold=1, prob=0.9)
                 mask = mask.flatten() == 1
                 inlier_pt_ids = np.array(ransacable_ids)[mask]
 
@@ -631,7 +632,7 @@ class FireSLAMModule:
                         # self.tracked_2d_points[ransacable_ids[i]].invdist_last_meas  = meas
 
                         # DO BAYESIAN FUSION OF MEASUREMENTS!!!
-                        if invdist_estimate is None:
+                        if invdist_estimate is None or not self.slam_filtering_enabled:
                         # if True:
                             self.tracked_2d_points[ransacable_ids[i]].invdist_last_meas  = invdist_meas 
                             self.tracked_2d_points[ransacable_ids[i]].invdist_cov = self.invdist_meas_cov * 3

@@ -121,6 +121,7 @@ class SubmapBuilderModule:
         # META PARAMS
         self.n_sphere_samples_per_update = 100
         self.fragmenting_travel_dist = 10
+        self.max_sphere_sampling_z = 10
         self.visual_kf_addition_heading = 3.14159 /2
         self.visual_kf_addition_dist = 2
         
@@ -305,11 +306,11 @@ class SubmapBuilderModule:
         pixpos = getPixelPositions(positive_z_points, self.K)
 
         # COMPUTE DELAUNAY TRIANG OF VISIBLE SLAM POINTS
-        print("POS Z SLAM PTS")
-        print(positive_z_points.shape)
-        print("PIXPOS SHAPE")
-        print(pixpos.shape)
-        if positive_z_points.shape[0] < 3:
+        # print("POS Z SLAM PTS")
+        # print(positive_z_points.shape)
+        # print("PIXPOS SHAPE")
+        # print(pixpos.shape)
+        if positive_z_points.shape[1] < 4:
             if self.verbose_submap_construction:
                 print("NOT ENAUGH PTS FOR DELAUNAY!")
             return
@@ -434,7 +435,7 @@ class SubmapBuilderModule:
                 # self.spheremap.removeNodes(np.where(idx_picker)[0])
 
         # TODO fix - by raycasting!!!
-        max_sphere_sampling_z = 10
+        max_sphere_sampling_z = self.max_sphere_sampling_z
 
         n_sampled = self.n_sphere_samples_per_update
         sampling_pts = np.random.rand(n_sampled, 2)  # Random points in [0, 1] range for x and y
