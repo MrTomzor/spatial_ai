@@ -663,6 +663,7 @@ class LocalNavigatorModule:
         print("N HEADS: " + str(heads_indices.size))
 
         # GET GLOBAL AND FCU FRAME POINTS
+        # heads_global, heads_headings_global = transformViewpoints(tree_pos[heads_indices, :], tree_headings[heads_indices], self.mapper.spheremap.T_global_to_own_origin)
         heads_global = transformPoints(tree_pos[heads_indices, :], self.mapper.spheremap.T_global_to_own_origin)
 
         # latest_odom_msg = self.odom_buffer[-1] #TODO fix
@@ -677,23 +678,55 @@ class LocalNavigatorModule:
 
         if mode == 'find_goals':
             acceptance_thresh = 0
-            toofar = np.logical_not(check_points_in_box(heads_global, self.roomba_bounds_global))
-            if np.all(toofar):
-                print("ALL PTS OUTSIDE OF ROOMBA BBX! SETTING NOVELTY BASED ON DISTANCE IN DIRECTION TO CENTER")
-                current_fcu_in_global = T_global_to_fcu[:3, 3].reshape((1,3))
-                dirvecs = heads_global - current_fcu_in_global
-                dir_to_center = - current_fcu_in_global / np.linalg.norm(current_fcu_in_global)
-                dists_towards_center = (dirvecs @ dir_to_center.T).flatten()
+            mode2 = 'frontiers'
+            if mode2 == 'frontiers':
+                infovals = np.full((1, heads_indices.size), 0).flatten()
+                # T_smap_orig_to_fcu = np.eye(4)
+                # T_smap_orig_to_fcu[:3, :3] = headingToTransformationMatrix(start_vp.heading)
+                # T_smap_orig_to_fcu[:3, 3] = start_vp.position
 
-                heads_values = self.roomba_value_weight * dists_towards_center
+                # T_smap_orig_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
+                # T_smap_orig_to_cam = T_smap_orig_to_fcu @ lookupTransformAsMatrix(self.fcu_frame, self.mapper.camera_frame, self.tf_listener)
+                # frontier_points_in_camframe = transformPoints(self.mapper.spheremap.frontier_points, np.linalg.inv(T_smap_orig_to_cam))
+                # frontier_normals_in_camframe = transformPoints(self.mapper.spheremap.frontier_normals, np.linalg.inv(T_smap_orig_to_cam))
+
+                if not self.mapper.spheremap.frontier_points is None:
+                    w = self.mapper.width
+                    h = self.mapper.height
+                    K = self.mapper.K
+                    T_fcu_to_cam = lookupTransformAsMatrix(self.fcu_frame, self.mapper.camera_frame, self.tf_listener)
+
+                    for i in range(heads_indices.size):
+                        idx = heads_indices[i]
+                        T_smap_orig_to_head_fcu = posAndHeadingToMatrix(tree_pos[idx, :], tree_headings[idx])
+                        T_smap_orig_to_head_cam = T_smap_orig_to_head_fcu @ T_fcu_to_cam 
+
+                        frontier_points_in_camframe = transformPoints(self.mapper.spheremap.frontier_points, np.linalg.inv(T_smap_orig_to_head_cam))
+                        frontier_normals_in_camframe = transformPoints(self.mapper.spheremap.frontier_normals, np.linalg.inv(T_smap_orig_to_head_cam))
+
+                        visible_pts_mask = getVisiblePoints(frontier_points_in_camframe, frontier_normals_in_camframe, np.pi/4, 50, w, h, K)
+                        n_visible = np.sum(visible_pts_mask)
+                        print("N VISIBLE FRONTIERS: " + str(n_visible))
+                        if n_visible > 0:
+                            heads_values[i] = n_visible * 10
             else:
-                current_fcu_in_global = T_global_to_fcu[:3, 3].reshape((1,3))
-                dirvecs = heads_global - current_fcu_in_global
-                roombadir = self.roomba_dirvec_global 
-                dists_in_dir = (dirvecs @ roombadir.T).flatten()
+                toofar = np.logical_not(check_points_in_box(heads_global, self.roomba_bounds_global))
+                if np.all(toofar):
+                    print("ALL PTS OUTSIDE OF ROOMBA BBX! SETTING NOVELTY BASED ON DISTANCE IN DIRECTION TO CENTER")
+                    current_fcu_in_global = T_global_to_fcu[:3, 3].reshape((1,3))
+                    dirvecs = heads_global - current_fcu_in_global
+                    dir_to_center = - current_fcu_in_global / np.linalg.norm(current_fcu_in_global)
+                    dists_towards_center = (dirvecs @ dir_to_center.T).flatten()
 
-                heads_values = self.roomba_value_weight * dists_in_dir
-                heads_values[toofar] = acceptance_thresh-1
+                    heads_values = self.roomba_value_weight * dists_towards_center
+                else:
+                    current_fcu_in_global = T_global_to_fcu[:3, 3].reshape((1,3))
+                    dirvecs = heads_global - current_fcu_in_global
+                    roombadir = self.roomba_dirvec_global 
+                    dists_in_dir = (dirvecs @ roombadir.T).flatten()
+
+                    heads_values = self.roomba_value_weight * dists_in_dir
+                    heads_values[toofar] = acceptance_thresh-1
 
             heads_scores = heads_values - total_costs[heads_indices] 
         elif mode == 'to_goal':
