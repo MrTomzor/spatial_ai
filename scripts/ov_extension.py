@@ -68,19 +68,6 @@ import sys
 from termcolor import colored, cprint
 
 # #}
-class ScopedLock:
-    def __init__(self, mutex):
-        # self.lock = threading.Lock()
-        self.lock = mutex
-
-    def __enter__(self):
-        # print("LOCKING MUTEX")
-        self.lock.acquire()
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        # print("UNLOCKING MUTEX")
-        self.lock.release()
 
 # #{ global variables
 STAGE_FIRST_FRAME = 0

@@ -11,6 +11,21 @@ import tf.transformations as tfs
 
 # common utils# #{
 
+class ScopedLock:
+    def __init__(self, mutex):
+        # self.lock = threading.Lock()
+        self.lock = mutex
+
+    def __enter__(self):
+        # print("LOCKING MUTEX")
+        self.lock.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        # print("UNLOCKING MUTEX")
+        self.lock.release()
+
+
 def getPixelPositions(pts, K):
     # pts = 3D points u wish to project
     pixpos = K @ pts 

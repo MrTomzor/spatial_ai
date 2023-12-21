@@ -63,6 +63,8 @@ from mpl_toolkits.mplot3d import Axes3D  # pylint: disable=W0611
 import sys
 from termcolor import colored, cprint
 
+from scipy.spatial.transform import Rotation as R
+
 # #}
 
 class LocalNavigatorModule:
@@ -740,7 +742,7 @@ class LocalNavigatorModule:
         msg.header = std_msgs.msg.Header()
         # msg.header.frame_id = 'global'
         # msg.header.frame_id = 'uav1/vio_origin' #FCU!!!!
-        msg.header.frame_id = 'uav1/fcu'
+        msg.header.frame_id = self.fcu_frame
         # msg.header.frame_id = 'uav1/local_origin'
         msg.header.stamp = rospy.Time.now()
         msg.use_heading = not headings is None

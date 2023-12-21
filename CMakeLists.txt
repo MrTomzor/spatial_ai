@@ -168,6 +168,7 @@ catkin_install_python(PROGRAMS
   scripts/imu_odom_node.py
   scripts/odom_node.py
   scripts/tracking_node.py
+  scripts/mrs_path_follower.py
   src/test.py
   # src/common_spatial.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
