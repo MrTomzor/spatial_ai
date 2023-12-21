@@ -152,6 +152,8 @@ class NavNode:
 
         self.tf_listener = tf.TransformListener()
 
+
+        self.verbose_submap_construction = True
         # --Load calib
         # UNITY
         self.K = np.array([642.8495341420769, 0, 400, 0, 644.5958939934509, 300, 0, 0, 1]).reshape((3,3))
@@ -179,7 +181,7 @@ class NavNode:
         self.carryover_dist = 4
         self.uav_radius = 0.7
         self.safety_replanning_trigger_odist = 1
-        self.min_planning_odist = 3
+        self.min_planning_odist = 1
         self.max_planning_odist = 5
         self.path_step_size = 3
 
@@ -277,6 +279,8 @@ class NavNode:
         self.submap_builder_module.marker_scale = self.marker_scale
         self.submap_builder_module.fragmenting_travel_dist = self.smap_fragmentation_dist
         self.submap_builder_module.max_sphere_sampling_z = self.max_sphere_sampling_z
+        self.submap_builder_module.verbose_submap_construction = self.verbose_submap_construction
+        self.submap_builder_module.min_planning_odist = self.min_planning_odist
 
         self.submap_builder_rate = 10
         self.submap_builder_timer = rospy.Timer(rospy.Duration(1.0 / self.submap_builder_rate), self.submap_builder_update_iter)
@@ -381,7 +385,6 @@ class NavNode:
 
         self.roomba_bounds_global = [-20, 20, -30, 30, -10, 20]
 
-        self.verbose_submap_construction = True
 
         self.predicted_trajectory_pts_global = None
 

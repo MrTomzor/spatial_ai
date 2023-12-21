@@ -73,6 +73,7 @@ class SubmapBuilderModule:
         self.T_fcu_to_imu = T_fcu_to_imu 
 
         self.verbose_submap_construction = False
+        self.do_frontiers = True
 
         self.bridge = CvBridge()
         self.prev_image = None
@@ -338,26 +339,43 @@ class SubmapBuilderModule:
         img_polygon = geometry.Polygon(hull.points)
 
         # CONSTRUCT HULL MESH FROM 3D POINTS OF CONVEX 2D HULL OF PROJECTED POINTS
-        hullmesh_pts = positive_z_points[:, np.unique(hull.simplices)]
+        # hullmesh_pts = positive_z_points[:, np.unique(hull.simplices)]
+        hullmesh_pts = positive_z_points
         orig_pts = np.zeros((3, 1))
         hullmesh_pts = np.concatenate((hullmesh_pts, orig_pts), axis=1)
         zero_pt_index = hullmesh_pts.shape[1] - 1
 
         # FUCK IT JUST DO CONV HULL OF THESE 3D PTS(just start and hull pts)
         fov_hull = ConvexHull(hullmesh_pts.T)
+        # print("HULLMESH PTS:")
+        # print(hullmesh_pts.T)
+        # print("CONVHULL PTS:")
+        # print(fov_hull.points)
 
-        uniq_idxs_in_hull = np.unique(fov_hull.simplices)
-        simplices_reindexing = {uniq_idxs_in_hull[i]:i for i in range(uniq_idxs_in_hull.size)}
-        simplices_reindexed = [[simplices_reindexing[orig[0]], simplices_reindexing[orig[1]], simplices_reindexing[orig[2]]] for orig in fov_hull.simplices]
+        # uniq_idxs_in_hull = np.unique(fov_hull.simplices)
+        # simplices_reindexing = {uniq_idxs_in_hull[i]:i for i in range(uniq_idxs_in_hull.size)}
+        # simplices_reindexed = [[simplices_reindexing[orig[0]], simplices_reindexing[orig[1]], simplices_reindexing[orig[2]]] for orig in fov_hull.simplices]
 
         # CONSTRUCT FOV MESH AND QUERY
-        fov_mesh = trimesh.Trimesh(vertices=fov_hull.points, faces = simplices_reindexed)
+        # fov_mesh = trimesh.Trimesh(vertices=fov_hull.points, faces = simplices_reindexed)
+        fov_mesh = trimesh.Trimesh(vertices=fov_hull.points, faces = fov_hull.simplices)
         fov_mesh_query = trimesh.proximity.ProximityQuery(fov_mesh)
 
         # CONSTRUCT OBSTACLE POINT MESH AND QUERY
         obstacle_mesh_query = trimesh.proximity.ProximityQuery(obstacle_mesh)
 
         comp_time = time.time() - comp_mesh
+
+        fr_samples = None
+        if self.do_frontiers:
+            # print("FRONTIERS SAMPLING")
+            fr_samples, fr_face_indices = trimesh.sample.sample_surface_even(fov_mesh, 200)
+            fr_samples2, fr_face_indices2 = trimesh.sample.sample_surface_even(obstacle_mesh, 50)
+            fr_samples = np.concatenate((fr_samples, fr_samples2))
+            # print(fr_samples.shape)
+            # fr_sample_odists = obstacle_mesh_query.signed_distance(fr_samples)
+            # fr_samples = fr_samples[fr_sample_odists > -0.1, :]
+            # print(fr_samples.shape)
 
         if self.verbose_submap_construction:
             print("MESHING time: " + str((comp_time) * 1000) +  " ms")
@@ -534,6 +552,9 @@ class SubmapBuilderModule:
         visible_pts_in_spheremap_frame = transformPoints(positive_z_points.T, T_orig_to_current_cam)
         self.spheremap.updateSurfels(visible_pts_in_spheremap_frame , pixpos, tri.simplices, positive_z_slam_ids)
 
+        if self.do_frontiers:
+            self.spheremap.updateFrontiers(transformPoints(fr_samples, T_orig_to_current_cam))
+
         comp_time = time.time() - comp_start_time
         if self.verbose_submap_construction:
             print("SURFELS integration time: " + str((comp_time) * 1000) +  " ms")
@@ -637,7 +658,7 @@ class SubmapBuilderModule:
         return res
 # # #}
 
-    def get_spheremap_marker_array(self, marker_array, smap, T_inv, alternative_look=False, do_connections=False,  do_surfels=True, do_spheres=True, do_keyframes=False, do_normals=False, do_map2map_conns=True, ms=1, clr_index =0):# # #{
+    def get_spheremap_marker_array(self, marker_array, smap, T_inv, alternative_look=False, do_connections=False,  do_surfels=True, do_spheres=True, do_keyframes=False, do_normals=False, do_map2map_conns=True, do_frontiers=True, ms=1, clr_index =0):# # #{
         # T_vis = np.linalg.inv(T_inv)
         T_vis = T_inv
         pts = transformPoints(smap.points, T_vis)
@@ -788,6 +809,32 @@ class SubmapBuilderModule:
                 # Convert the 3D points to Point messages
                 n_surfels = spts.shape[0]
                 points_msg = [Point(x=spts[i, 0], y=spts[i, 1], z=spts[i, 2]) for i in range(n_surfels)]
+                marker.points = points_msg
+                marker_array.markers.append(marker)
+        if do_frontiers:
+            if not smap.frontier_points is None:
+                spts = transformPoints(smap.frontier_points, T_vis)
+
+                marker = Marker()
+                marker.header.frame_id = self.odom_frame  # Adjust the frame_id as needed
+                marker.type = Marker.POINTS
+                marker.action = Marker.ADD
+                marker.pose.orientation.w = 1.0
+                # marker.scale.x = 1.2  # Adjust the size of the points
+                # marker.scale.y = 1.2
+                marker.scale.x = ms *1.2  # Adjust the size of the points
+                marker.scale.y = ms *1.2
+                marker.color.a = 0.7
+                marker.color.r = 1.0
+                marker.color.g = 0.0
+                marker.color.b = 1.0
+
+                marker.id = copy.deepcopy(marker_id)
+                marker_id += 1
+
+                # Convert the 3D points to Point messages
+                n_frontiers = spts.shape[0]
+                points_msg = [Point(x=spts[i, 0], y=spts[i, 1], z=spts[i, 2]) for i in range(n_frontiers)]
                 marker.points = points_msg
                 marker_array.markers.append(marker)
 

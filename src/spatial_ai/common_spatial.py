@@ -145,6 +145,8 @@ class SphereMap:
         self.surfel_normals = None
         self.connectivity_labels = None
 
+        self.frontier_points = None
+
         self.min_radius = min_radius
         self.max_radius = init_radius# # #}
 
@@ -154,6 +156,107 @@ class SphereMap:
             if conn.second_map_id == idx:
                 return conn.pt_in_first_map_frame
         return None
+
+    def updateFrontiers(self, fr_samples):# # #{
+        # SIMPLEST: 
+        n_test_new_pts = fr_samples.shape[0]
+
+        filtering_radius = 2
+
+        # FILTER OUT THE NEW ONES TOO CLOSE TO PREVIOUS ONES
+        pts_survived_first_mask = np.full((n_test_new_pts), True)
+        if not self.frontier_points is None:
+            n_existign_points = self.frontier_points.shape[0]
+            existing_points_distmatrix = scipy.spatial.distance_matrix(fr_samples, self.frontier_points)
+            pts_survived_first_mask = np.sum(existing_points_distmatrix > filtering_radius, axis=1) == n_existign_points
+
+        pts_survived_filter_with_mappoints = fr_samples[pts_survived_first_mask, :]
+        n_survived_first_filter = pts_survived_filter_with_mappoints.shape[0]
+
+        # pts_added_mask = np.full((n_survived_first_filter), False)
+        pts_added_mask = np.full((n_survived_first_filter), True)
+        n_added = np.sum(pts_added_mask)
+        print("N FRONTIERS SAMPLED: " +str(n_test_new_pts))
+        print("N FRONTIERS FAR ENOUGH FROM OLD: " +str(n_survived_first_filter))
+        self_distmatrix = scipy.spatial.distance_matrix(pts_survived_filter_with_mappoints, pts_survived_filter_with_mappoints)
+
+        # ADD NEW PTS IF NOT BAD AGAINST OTHERS OR AGAINST DISTMATRIX
+
+        # n_added = 0
+        # for i in range(n_survived_first_filter):
+        #     if n_added == 0 or np.all(np.sum(self_distmatrix[pts_added_mask, :] > filtering_radius, axis=1) == n_survived_first_filter - 1):
+        #         n_added += 1
+        #         pts_added_mask[i] = True
+
+        if n_added > 0:
+            if self.frontier_points is None:
+                self.frontier_points = pts_survived_filter_with_mappoints[pts_added_mask]
+            else:
+                self.frontier_points = np.concatenate((self.frontier_points, pts_survived_filter_with_mappoints[pts_added_mask]))
+        print("N ADDED: " +str(n_added))
+
+        # NOW CHECK ALL FRONTIERS IF DEEP ENOUGH IN FREESPACE -> DELETE THEM
+        deleting_inside_dist = 0
+        toofar_from_spheres_dist = 2
+        affection_distance = self.max_radius + toofar_from_spheres_dist 
+
+        max_n_affecting_spheres = 5
+
+        skdtree_query = self.spheres_kdtree.query(self.frontier_points, k=max_n_affecting_spheres, distance_upper_bound=affection_distance)
+        n_spheres = self.points.shape[0]
+
+        keep_frontiers_mask = np.full((self.frontier_points.shape[0]), True)
+        self.frontier_normals = np.zeros((self.frontier_points.shape[0], 3))
+
+        # CHECK IF NOT DELETED BY SPHERE AND COMPUTE NORMAL IF NOT
+        for i in range(self.frontier_points.shape[0]):
+            # found_neighbors = np.array([x for x in skdtree_query[1][i] if x != n_spheres])
+
+            found_neighbors = skdtree_query[1][i]
+            existing_mask = found_neighbors != n_spheres
+            # print("FOUND NEIGHBORS: " + str(found_neighbors.shape[0]))
+            # print(skdtree_query[1][i])
+            # print(skdtree_query[0][i])
+
+            n_considered = np.sum(existing_mask)
+            if n_considered == 0:
+                keep_frontiers_mask[i] = False
+                continue
+
+            found_dists = skdtree_query[0][i][existing_mask]
+            found_sphere_indicies = skdtree_query[1][i][existing_mask]
+            found_radii = self.radii[found_sphere_indicies]
+
+            # CHECK IF DELETED BY THE SPHERES
+            dists_from_spheres_edge = found_dists - found_radii
+            if np.any(np.logical_or(dists_from_spheres_edge < deleting_inside_dist, dists_from_spheres_edge > toofar_from_spheres_dist)):
+            # if np.any(dists_from_spheres_edge < deleting_inside_dist):
+                keep_frontiers_mask[i] = False
+                continue
+
+            # CHECK IF NOT TOO CLOSE TO SURFELS
+            surf_dist = np.min(np.linalg.norm(self.surfel_points - self.frontier_points[i,:], axis=1))
+            if surf_dist < filtering_radius:
+                keep_frontiers_mask[i] = False
+                continue
+
+            # CHECK IF CLEAR NORMAL (disallow small pts in nothingness
+            normals = (self.points[found_sphere_indicies, :] - self.frontier_points[i].reshape(1,3)) / found_dists.reshape(n_considered, 1)
+            fr_normal = (np.sum(normals, axis = 0) / n_considered).reshape((3,1))
+            if np.any((normals).dot(fr_normal)) < 0:
+                keep_frontiers_mask[i] = False
+                continue
+
+
+        # SAVE NEW PTS AND THEIR NORMALS
+        n_keep = np.sum(keep_frontiers_mask)
+        self.frontier_points = self.frontier_points[keep_frontiers_mask, :]
+        print("N KEEP: " +str(n_keep))
+        print("N CUR FRONTIERS: " + str(self.frontier_points.shape[0]))
+        # self.frontier_normals = self.frontier_normals[keep_frontiers_mask, :] / np.linalg.norm(self.frontier_normals[keep_frontiers_mask, :], axis=1).reshape(n_keep, 1)
+
+
+    # # #}
 
     def updateSurfels(self, visible_points, pixpos, simplices, slam_ids=None):# # #{
         # Compute normals measurements for the visible points, all should be pointing towards the camera
@@ -231,9 +334,9 @@ class SphereMap:
                 if not slam_ids is None:
                     self.surfel_slam_ids = np.concatenate((self.surfel_slam_ids, slam_ids[pts_added_mask]))
 
-        # COMPUTE POINT NORMALS AND KILL THEM IF OCCUPIED BY SPHERES
+        # COMPUTE POINT NORMALS AND DELETE THEM IF OCCUPIED BY SPHERES
         affection_distance = self.max_radius * 1.2
-        killing_inside_dist = -0.1
+        deleting_inside_dist = -0.1
 
         max_n_affecting_spheres = 5
         skdtree_query = self.spheres_kdtree.query(self.surfel_points, k=max_n_affecting_spheres, distance_upper_bound=affection_distance)
@@ -244,7 +347,7 @@ class SphereMap:
         keep_surfels_mask = np.full((self.surfel_points.shape[0]), True)
         self.surfel_normals = np.zeros((self.surfel_points.shape[0], 3))
 
-        # CHECK IF NOT KILLED BY SPHERE AND COMPUTE NORMAL IF NOT
+        # CHECK IF NOT DELETED BY SPHERE AND COMPUTE NORMAL IF NOT
         for i in range(self.surfel_points.shape[0]):
             # found_neighbors = np.array([x for x in skdtree_query[1][i] if x != n_spheres])
 
@@ -263,13 +366,13 @@ class SphereMap:
             found_radii = self.radii[found_sphere_indicies]
             # found_neighbors = np.array(found_neighbors)
 
-            # CHECK IF KILLED BY THE SPHERES
+            # CHECK IF DELETED BY THE SPHERES
             dists_from_spheres_edge = found_dists - found_radii
             # print(dists_from_spheres_edge )
 
             # TODO figure better way to trigger this
             if slam_ids is None:
-                if np.any(dists_from_spheres_edge < killing_inside_dist):
+                if np.any(dists_from_spheres_edge < deleting_inside_dist):
                     keep_surfels_mask[i] = False
                     continue
 
@@ -353,6 +456,7 @@ class SphereMap:
                 # print("SEG SIZE: "  +str(n_labeled))
                 seg_id += 1
         self.connectivity_segments_counts = np.array(self.connectivity_segments_counts)
+        self.max_radius = np.max(self.radii)
 
         # print("DISCONNECTED REGIONS: " + str(seg_id))
 
@@ -436,12 +540,17 @@ class SphereMap:
         for idx in worked_sphere_idxs:
             # fg = connectedNodesFormFullGraph()
             conns = self.connections[idx]
+            if self.radii[idx] < self.min_radius:
+                shouldkeep[idx] = False
+                n_remove+=1
+                continue
+
             if conns is None or conns.size == 0:
                 continue
 
             # dont take into account the ones decided for deletion
             conns = ([c for c in conns if shouldkeep[c]])
-            if len(conns) == 0 or conns is None:
+            if len(conns) == 0 or conns[0] is None:
                 continue
             conns = np.array(conns, dtype=int)
 
