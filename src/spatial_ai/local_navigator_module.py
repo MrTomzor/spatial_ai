@@ -83,7 +83,10 @@ class LocalNavigatorModule:
         # VIS PUB
         self.path_planning_vis_pub = rospy.Publisher('path_planning_vis', MarkerArray, queue_size=10)
         self.unsorted_vis_pub = rospy.Publisher('unsorted_markers', MarkerArray, queue_size=10)
+
         self.marker_scale = 0.15
+        self.path_step_size = 0.5
+        self.max_heading_change_per_m = np.pi / 4
 
         self.safety_replanning_trigger_odist = 0.2
         self.min_planning_odist = 0.2
@@ -434,7 +437,7 @@ class LocalNavigatorModule:
 
         # elif not evading_obstacle:
         else:
-            best_path_pts, best_path_headings = self.find_paths_rrt(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist)
+            best_path_pts, best_path_headings = self.find_paths_rrt(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist, max_step_size = self.path_step_size)
 
             if best_path_pts is None:
                 print("NO OK VIABLE REACHABLE GOALS FOUND BY RRT!")
@@ -574,10 +577,18 @@ class LocalNavigatorModule:
             #     print(dirvecs[i,:])
             #     print("HEADING: " + str(potential_headings[i]))
 
-            heading_difs = np.abs(np.unwrap(potential_headings - tree_headings[connectable_mask]))
+            heading_difs = (np.unwrap(potential_headings - tree_headings[connectable_mask]))
+
+            # CLAMP HEADING DIFS!
+            heading_overshoot_ratios = (np.abs(heading_difs) / dists[connectable_mask]) / self.max_heading_change_per_m 
+            overshoot_mask = heading_overshoot_ratios > 1.0
+            # print("OVERSHOOT MASK: " + str(np.sum(overshoot_mask)) + "/" + str(np.size(overshoot_mask)))
+            heading_difs[overshoot_mask] = heading_difs[overshoot_mask] / heading_overshoot_ratios[overshoot_mask]
+            potential_headings = np.unwrap(tree_headings[connectable_mask] + heading_difs) 
+
             # safety_costs = np.array([self.compute_safety_cost(odists, dists[idx]) for idx in connectable_indices]).flatten() * self.safety_weight
             safety_costs = self.compute_safety_cost(new_node_odist, min_odist, max_odist) * dists[connectable_mask] * self.safety_weight
-            travelcosts = dists[connectable_mask] + heading_difs * 0.0 + safety_costs
+            travelcosts = dists[connectable_mask] + safety_costs
 
             potential_new_total_costs = total_costs[connectable_mask] + travelcosts
             new_node_parent_idx2 = np.argmin(potential_new_total_costs)
@@ -846,7 +857,7 @@ class LocalNavigatorModule:
             line_marker.header.frame_id = self.odom_frame  # Set your desired frame_id
             line_marker.type = Marker.LINE_LIST
             line_marker.action = Marker.ADD
-            line_marker.scale.x = 0.04  # Line width
+            line_marker.scale.x = 0.04 * self.marker_scale  # Line width
             line_marker.color.a = 1.0  # Alpha
             line_marker.color.r = 0.5  
             line_marker.color.b = 1.0  

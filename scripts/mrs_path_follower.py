@@ -155,6 +155,7 @@ class FollowerNode():
                 if self.path_index == self.path_len:
                     print("PATH END REACHED")
                     self.has_path = False
+                    self.send_twist_command(np.zeros((3,1)), np.zeros((3,1)))
                     return
 
             # COMPUTE VEL AND ANGVEL TO REACH THE DESIRED POSE
@@ -165,8 +166,8 @@ class FollowerNode():
             # print("ROT DIF ROTVEC: ")
             # print(rot_error_vec )
 
-            p_linear = 0.3
-            p_angular = 0.3
+            p_linear = 0.9
+            p_angular = 0.4
 
             vel_cmd = (pos_error) * p_linear
             angvel_cmd = (rot_error_vec ) * p_angular

@@ -169,12 +169,20 @@ class NavNode:
         self.fcu_frame = 'imu'
         self.camera_frame = 'cam0'
         self.odom_frame = 'global'
+
         self.marker_scale = 1
         self.slam_kf_dist_thr = 4
         self.smap_fragmentation_dist = 30
         self.slam_filtering_enabled = False
         self.using_external_slam_pts = True
-        self.max_sphere_sampling_z  = 30
+        self.max_sphere_sampling_z  = 50
+        self.carryover_dist = 4
+        self.uav_radius = 0.7
+        self.safety_replanning_trigger_odist = 1
+        self.min_planning_odist = 3
+        self.max_planning_odist = 5
+        self.path_step_size = 3
+
 
         # BLUEFOX UAV
         # self.K = np.array([227.4, 0, 376, 0, 227.4, 240, 0, 0, 1]).reshape((3,3))
@@ -252,12 +260,6 @@ class NavNode:
         print("T_imu(fcu)_to_cam")
         print(self.T_imu_to_cam)
 
-        self.carryover_dist = 4
-        self.uav_radius = 0.2
-        self.safety_replanning_trigger_odist = 0.2
-        self.min_planning_odist = 0.2
-        self.max_planning_odist = 2
-
         # --INITIALIZE MODULES
 
         # FIRESLAM
@@ -283,6 +285,12 @@ class NavNode:
         ptraj_topic = '/uav1/control_manager/mpc_tracker/prediction_full_state'
         output_path_topic = '/uav1/trajectory_generation/path'
         self.local_navigator_module = LocalNavigatorModule(self.submap_builder_module, ptraj_topic, output_path_topic)
+        self.local_navigator_module.marker_scale = self.marker_scale
+
+        self.local_navigator_module.safety_replanning_trigger_odist = self.safety_replanning_trigger_odist 
+        self.local_navigator_module.min_planning_odist = self.min_planning_odist
+        self.local_navigator_module.max_planning_odist = self.max_planning_odist
+        self.local_navigator_module.path_step_size = self.path_step_size
 
         # --SUB
         self.sub_cam = rospy.Subscriber(img_topic, Image, self.image_callback, queue_size=10)
