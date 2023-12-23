@@ -46,10 +46,14 @@ def getVisiblePoints(pts, normals, max_angle, max_dist, w, h, K):
     dists = np.linalg.norm(pts, axis=1)
     pt_dirs = pts / dists.reshape((dists.size, 1))
 
-    arccos = np.sum(np.multiply(pt_dirs, -normals), axis = 1) / 2
+    arccos = np.sum(np.multiply(pt_dirs, normals), axis = 1) / 2
     min_arccos = np.cos(max_angle)
     ok_angles = arccos > min_arccos
     # ok_angles = np.full(inside_fov.shape, True)
+    print("MIN ARCCOS:")
+    print(min_arccos)
+    print("DOTPRODS:")
+    print(arccos)
     print("OK ANGLES: " + str(np.sum(ok_angles)))
 
     ok_dists = dists < max_dist

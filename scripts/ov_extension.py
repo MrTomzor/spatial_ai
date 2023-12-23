@@ -138,7 +138,7 @@ class NavNode:
         self.return_home_srv = rospy.Service("home", EmptySrv, self.return_home)
 
         # TIMERS
-        self.planning_frequency = 1
+        self.planning_frequency = 0.5
         self.planning_timer = rospy.Timer(rospy.Duration(1.0 / self.planning_frequency), self.planning_loop_iter)
 
         # VIS PUB
@@ -174,7 +174,7 @@ class NavNode:
 
         self.marker_scale = 1
         self.slam_kf_dist_thr = 4
-        self.smap_fragmentation_dist = 30
+        self.smap_fragmentation_dist = 300
         self.slam_filtering_enabled = False
         self.using_external_slam_pts = True
         self.max_sphere_sampling_z  = 50
@@ -183,7 +183,7 @@ class NavNode:
         self.safety_replanning_trigger_odist = 1
         self.min_planning_odist = 1
         self.max_planning_odist = 5
-        self.path_step_size = 3
+        self.path_step_size = 1.5
 
 
         # BLUEFOX UAV

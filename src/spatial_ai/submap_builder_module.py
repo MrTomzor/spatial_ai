@@ -113,7 +113,7 @@ class SubmapBuilderModule:
         print("T_imu(fcu)_to_cam")
         print(self.T_imu_to_cam)
 
-        self.carryover_dist = 4
+        self.carryover_dist = 10
         self.uav_radius = 0.2
         self.safety_replanning_trigger_odist = 0.2
         self.min_planning_odist = 0.2
@@ -121,7 +121,7 @@ class SubmapBuilderModule:
 
         # META PARAMS
         self.n_sphere_samples_per_update = 100
-        self.fragmenting_travel_dist = 10
+        self.fragmenting_travel_dist = 20
         self.max_sphere_sampling_z = 10
         self.visual_kf_addition_heading = 3.14159 /2
         self.visual_kf_addition_dist = 2

@@ -86,7 +86,7 @@ class LocalNavigatorModule:
 
         self.marker_scale = 0.15
         self.path_step_size = 0.5
-        self.max_heading_change_per_m = np.pi / 4
+        self.max_heading_change_per_m = np.pi / 10
 
         self.safety_replanning_trigger_odist = 0.2
         self.min_planning_odist = 0.2
@@ -115,7 +115,7 @@ class LocalNavigatorModule:
         self.max_goal_vp_pathfinding_times = 3
         self.current_goal_vp_pathfinding_times = 0
 
-        self.fspace_bonus_mod = 2
+        self.fspace_bonus_mod = 1.2
         self.safety_weight = 5
 
         # ROOMBA PARAMS
@@ -425,7 +425,7 @@ class LocalNavigatorModule:
 
             # FIND PATH TO GOAL
             goal_vp_smap_pos, goal_vp_smap_heading = transformViewpoints(self.current_goal_vp_global.position.reshape((1,3)), np.array([self.current_goal_vp_global.heading]), np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin))
-            best_path_pts, best_path_headings = self.find_paths_rrt(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist, mode = 'to_goal', goal_vp_smap = Viewpoint(goal_vp_smap_pos, goal_vp_smap_heading))
+            best_path_pts, best_path_headings = self.find_paths_rrt(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist, mode = 'to_goal', goal_vp_smap = Viewpoint(goal_vp_smap_pos, goal_vp_smap_heading), max_step_size = self.path_step_size)
 
             if best_path_pts is None:
                 print("NO PATH FOUND TO GOAL VP! TRY: " + str(self.current_goal_vp_pathfinding_times) + "/" + str(self.max_goal_vp_pathfinding_times))
@@ -694,21 +694,33 @@ class LocalNavigatorModule:
                     w = self.mapper.width
                     h = self.mapper.height
                     K = self.mapper.K
+                    # print("FCU TO CAM COMP")
                     T_fcu_to_cam = lookupTransformAsMatrix(self.fcu_frame, self.mapper.camera_frame, self.tf_listener)
+                    # print(T_fcu_to_cam)
 
                     for i in range(heads_indices.size):
+                        print("HEAD INDEX: " + str(heads_indices[i]))
                         idx = heads_indices[i]
                         T_smap_orig_to_head_fcu = posAndHeadingToMatrix(tree_pos[idx, :], tree_headings[idx])
                         T_smap_orig_to_head_cam = T_smap_orig_to_head_fcu @ T_fcu_to_cam 
+                        # print("START HEADING:")
+                        # print(start_vp.heading)
+                        # print("GOAL HEADING:")
+                        # print(tree_headings[idx])
+
+                        # print(T_smap_orig_to_head_fcu )
+                        # print(T_smap_orig_to_head_cam )
 
                         frontier_points_in_camframe = transformPoints(self.mapper.spheremap.frontier_points, np.linalg.inv(T_smap_orig_to_head_cam))
                         frontier_normals_in_camframe = transformPoints(self.mapper.spheremap.frontier_normals, np.linalg.inv(T_smap_orig_to_head_cam))
 
-                        visible_pts_mask = getVisiblePoints(frontier_points_in_camframe, frontier_normals_in_camframe, np.pi/4, 50, w, h, K)
+                        # print(frontier_points_in_camframe)
+
+                        visible_pts_mask = getVisiblePoints(frontier_points_in_camframe, frontier_normals_in_camframe, np.pi/2, 15, w, h, K)
                         n_visible = np.sum(visible_pts_mask)
                         print("N VISIBLE FRONTIERS: " + str(n_visible))
                         if n_visible > 0:
-                            heads_values[i] = n_visible * 10
+                            heads_values[i] = n_visible * 100
             else:
                 toofar = np.logical_not(check_points_in_box(heads_global, self.roomba_bounds_global))
                 if np.all(toofar):
@@ -744,6 +756,7 @@ class LocalNavigatorModule:
         best_head = np.argmax(heads_scores)
         print("BEST HEAD: " + str(best_head))
         best_node_index = heads_indices[best_head]
+        print("BEST HEAD IDX: " + str(best_node_index))
         print("-----BEST NODE VALUE (mode:"+mode+ ") : " +str(heads_values[best_head]))
         print("-----BEST NODE COST: " +str(total_costs[best_node_index]))
 
@@ -757,7 +770,7 @@ class LocalNavigatorModule:
         parent = parent_indices[best_node_index]
 
         dvec = tree_pos[best_node_index, :] - tree_pos[0, :]
-        tree_headings[best_node_index] = start_vp.heading
+        # tree_headings[best_node_index] = start_vp.heading
 
         while parent >= 0:
             path_idxs.append(parent)
