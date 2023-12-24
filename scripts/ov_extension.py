@@ -181,9 +181,9 @@ class NavNode:
         self.carryover_dist = 4
         self.uav_radius = 0.7
         self.safety_replanning_trigger_odist = 1
-        self.min_planning_odist = 1
+        self.min_planning_odist = 1.4
         self.max_planning_odist = 5
-        self.path_step_size = 1.5
+        self.path_step_size = 1
 
 
         # BLUEFOX UAV

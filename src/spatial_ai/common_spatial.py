@@ -34,30 +34,40 @@ def getPixelPositions(pts, K):
     pixpos = pixpos / pixpos[2, :]
     return pixpos[:2, :].T
 
-def getVisiblePoints(pts, normals, max_angle, max_dist, w, h, K):
+def getVisiblePoints(pts, normals, max_angle, max_dist, w, h, K, verbose=False, check_normals=True):
     n_pts = pts.shape[0]
     pixpos = getPixelPositions(pts.T, K)
     inside_fov = np.logical_and(np.logical_and(pixpos[:, 0] > 0, pixpos[:, 1] > 0), np.logical_and(pixpos[:, 0] < w, pixpos[:, 1] < h))
     inside_fov = np.logical_and(pts[:, 2] > 0, inside_fov)
     
-    print("PTS: " + str(n_pts))
-    print("INSIDE_FOV: " + str(np.sum(inside_fov)))
+    if verbose:
+        print("PTS: " + str(n_pts))
+        print("INSIDE_FOV: " + str(np.sum(inside_fov)))
 
     dists = np.linalg.norm(pts, axis=1)
     pt_dirs = pts / dists.reshape((dists.size, 1))
 
-    arccos = np.sum(np.multiply(pt_dirs, normals), axis = 1) / 2
-    min_arccos = np.cos(max_angle)
-    ok_angles = arccos > min_arccos
-    # ok_angles = np.full(inside_fov.shape, True)
-    print("MIN ARCCOS:")
-    print(min_arccos)
-    print("DOTPRODS:")
-    print(arccos)
-    print("OK ANGLES: " + str(np.sum(ok_angles)))
+    ok_angles = np.full(inside_fov.shape, True)
+    if check_normals:
+        arccos = np.sum(np.multiply(pt_dirs, -normals), axis = 1) / 2
+        min_arccos = np.cos(max_angle)
+        ok_angles = arccos > min_arccos
+
+        if verbose:
+            print("MIN ARCCOS:")
+            print(min_arccos)
+            print("VECS:")
+            print(pt_dirs)
+            print(normals)
+            print(np.multiply(pt_dirs, normals))
+
+            print("DOTPRODS:")
+            print(arccos)
+            print("OK ANGLES: " + str(np.sum(ok_angles)))
 
     ok_dists = dists < max_dist
-    print("OK DISTS: " + str(np.sum(ok_dists)))
+    if verbose:
+        print("OK DISTS: " + str(np.sum(ok_dists)))
 
     visible_pts_mask = np.logical_and(inside_fov, np.logical_and(ok_dists, ok_angles))
     return visible_pts_mask 
@@ -276,6 +286,7 @@ class SphereMap:
                 continue
 
             # CHECK IF NOT TOO CLOSE TO SURFELS
+            # surf_min_dist = filtering_radius * 2
             surf_dist = np.min(np.linalg.norm(self.surfel_points - self.frontier_points[i,:], axis=1))
             if surf_dist < filtering_radius:
                 keep_frontiers_mask[i] = False
@@ -284,16 +295,24 @@ class SphereMap:
             # CHECK IF CLEAR NORMAL (disallow small pts in nothingness
             normals = (self.points[found_sphere_indicies, :] - self.frontier_points[i].reshape(1,3)) / found_dists.reshape(n_considered, 1)
             fr_normal = (np.sum(normals, axis = 0) / n_considered).reshape((3,1))
+            fr_normal_mag = np.linalg.norm(fr_normal)
+            fr_normal = fr_normal / fr_normal_mag
+
             if np.any((normals).dot(fr_normal)) <= 0:
                 keep_frontiers_mask[i] = False
                 continue
+            if fr_normal[2, 0] < -0.2:
+                keep_frontiers_mask[i] = False
+                continue
+
             self.frontier_normals[i, :] = fr_normal.flatten()
 
 
         # SAVE NEW PTS AND THEIR NORMALS
         n_keep = np.sum(keep_frontiers_mask)
         self.frontier_points = self.frontier_points[keep_frontiers_mask, :]
-        self.frontier_normals = self.frontier_normals[keep_frontiers_mask, :] / np.linalg.norm(self.frontier_normals[keep_frontiers_mask, :], axis=1).reshape(n_keep, 1)
+        # self.frontier_normals = self.frontier_normals[keep_frontiers_mask, :] / np.linalg.norm(self.frontier_normals[keep_frontiers_mask, :], axis=1).reshape(n_keep, 1)
+        self.frontier_normals = self.frontier_normals[keep_frontiers_mask, :] 
         print("N KEEP: " +str(n_keep))
         print("N CUR FRONTIERS: " + str(self.frontier_points.shape[0]))
 

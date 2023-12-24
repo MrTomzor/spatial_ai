@@ -86,7 +86,8 @@ class LocalNavigatorModule:
 
         self.marker_scale = 0.15
         self.path_step_size = 0.5
-        self.max_heading_change_per_m = np.pi / 10
+        # self.max_heading_change_per_m = np.pi / 10
+        self.max_heading_change_per_m = np.pi / 6
 
         self.safety_replanning_trigger_odist = 0.2
         self.min_planning_odist = 0.2
@@ -109,13 +110,13 @@ class LocalNavigatorModule:
 
         self.currently_navigating_pts = None
         self.current_goal_vp_global = None
-        self.reaching_dist = 0.5
+        self.reaching_dist = 1
         self.reaching_angle = np.pi/2
 
         self.max_goal_vp_pathfinding_times = 3
         self.current_goal_vp_pathfinding_times = 0
 
-        self.fspace_bonus_mod = 1.2
+        self.fspace_bonus_mod = 2
         self.safety_weight = 5
 
         # ROOMBA PARAMS
@@ -272,7 +273,7 @@ class LocalNavigatorModule:
         heading_in_smap_frame = transformationMatrixToHeading(T_smap_frame_to_fcu)
         planning_start_vp = Viewpoint(T_smap_frame_to_fcu[:3, 3], heading_in_smap_frame)
 
-        planning_time = 0.5
+        planning_time = 1.0
         current_maxodist = self.max_planning_odist
         current_minodist = self.min_planning_odist
 
@@ -502,6 +503,7 @@ class LocalNavigatorModule:
         comp_start_time = rospy.get_rostime()
         n_iters = 0
         n_unsafe = 0
+        n_odom_unsafe  = 0
         n_rewirings = 0
 
         # INIT TREE
@@ -513,6 +515,10 @@ class LocalNavigatorModule:
         # child_indices = np.array([-1])
         child_indices = [[]]
         total_costs = np.array([0])
+        T_fcu_to_cam = lookupTransformAsMatrix(self.fcu_frame, self.mapper.camera_frame, self.tf_listener)
+        w = self.mapper.width
+        h = self.mapper.height
+        K = self.mapper.K
 
         # so always can move!
         if odists < min_odist:
@@ -597,6 +603,26 @@ class LocalNavigatorModule:
             newnode_heading = potential_headings[new_node_parent_idx2]
             new_node_parent_idx = connectable_indices[new_node_parent_idx2]
 
+            # CHECK IF ODOM PTS VISIBLE
+            T_smap_orig_to_head_fcu = posAndHeadingToMatrix(new_node_pos, newnode_heading)
+            T_smap_orig_to_head_cam = T_smap_orig_to_head_fcu @ T_fcu_to_cam 
+            T_head_cam_to_smap_orig = np.linalg.inv(T_smap_orig_to_head_cam)
+            
+
+            surfel_points_in_camframe = transformPoints(self.mapper.spheremap.surfel_points, T_head_cam_to_smap_orig)
+            only_rotmatrix = np.eye(4)
+            only_rotmatrix[:3,:3] = T_head_cam_to_smap_orig[:3,:3]
+
+            surfel_normals_in_camframe = transformPoints(self.mapper.spheremap.surfel_normals, only_rotmatrix)
+
+            visible_pts_mask = getVisiblePoints(surfel_points_in_camframe, surfel_normals_in_camframe, np.pi/3, 100, w, h, K, check_normals=False)
+            n_visible = np.sum(visible_pts_mask)
+            # print("VISIBLE:" +str(n_visible))
+            if n_visible < 3:
+                n_odom_unsafe += 1
+                continue
+
+
             # ADD NODE TO TREE
             tree_pos = np.concatenate((tree_pos, new_node_pos))
             tree_headings = np.concatenate((tree_headings, np.array([newnode_heading]) ))
@@ -653,7 +679,7 @@ class LocalNavigatorModule:
 
 
 
-        print("SPREAD FINISHED, HAVE " + str(tree_pos.shape[0]) + " NODES. ITERS: " +str(n_iters) + " UNSAFE: " + str(n_unsafe) + " REWIRINGS: " + str(n_rewirings))
+        print("SPREAD FINISHED, HAVE " + str(tree_pos.shape[0]) + " NODES. ITERS: " +str(n_iters) + " UNSAFE: " + str(n_unsafe) + " ODOM_UNSAFE: " + str(n_odom_unsafe) + " REWIRINGS: " + str(n_rewirings))
         if visualize:
             self.visualize_rrt_tree(self.mapper.spheremap.T_global_to_own_origin, tree_pos, None, odists, parent_indices)
 
@@ -691,32 +717,30 @@ class LocalNavigatorModule:
                 # frontier_normals_in_camframe = transformPoints(self.mapper.spheremap.frontier_normals, np.linalg.inv(T_smap_orig_to_cam))
 
                 if not self.mapper.spheremap.frontier_points is None:
-                    w = self.mapper.width
-                    h = self.mapper.height
-                    K = self.mapper.K
                     # print("FCU TO CAM COMP")
-                    T_fcu_to_cam = lookupTransformAsMatrix(self.fcu_frame, self.mapper.camera_frame, self.tf_listener)
                     # print(T_fcu_to_cam)
 
                     for i in range(heads_indices.size):
-                        print("HEAD INDEX: " + str(heads_indices[i]))
                         idx = heads_indices[i]
+                        print("HEAD INDEX: " + str(idx))
+                        if np.linalg.norm(tree_pos[idx] - start_vp.position) < self.reaching_dist:
+                            print("TOO CLOSE")
+                            continue
                         T_smap_orig_to_head_fcu = posAndHeadingToMatrix(tree_pos[idx, :], tree_headings[idx])
                         T_smap_orig_to_head_cam = T_smap_orig_to_head_fcu @ T_fcu_to_cam 
-                        # print("START HEADING:")
-                        # print(start_vp.heading)
-                        # print("GOAL HEADING:")
-                        # print(tree_headings[idx])
+                        T_head_cam_to_smap_orig = np.linalg.inv(T_smap_orig_to_head_cam)
 
-                        # print(T_smap_orig_to_head_fcu )
-                        # print(T_smap_orig_to_head_cam )
+                        frontier_points_in_camframe = transformPoints(self.mapper.spheremap.frontier_points, T_head_cam_to_smap_orig)
+                        only_rotmatrix = np.eye(4)
+                        only_rotmatrix[:3,:3] = T_head_cam_to_smap_orig[:3,:3]
+                        frontier_normals_in_camframe = transformPoints(self.mapper.spheremap.frontier_normals, only_rotmatrix)
 
-                        frontier_points_in_camframe = transformPoints(self.mapper.spheremap.frontier_points, np.linalg.inv(T_smap_orig_to_head_cam))
-                        frontier_normals_in_camframe = transformPoints(self.mapper.spheremap.frontier_normals, np.linalg.inv(T_smap_orig_to_head_cam))
+                        # TODO - visitedness of frontiers - check which are seen by cam!!!
+                        # normals_not_too_down_mask = frontier_points_in_camframe[:, 0] > -0.2
 
                         # print(frontier_points_in_camframe)
 
-                        visible_pts_mask = getVisiblePoints(frontier_points_in_camframe, frontier_normals_in_camframe, np.pi/2, 15, w, h, K)
+                        visible_pts_mask = getVisiblePoints(frontier_points_in_camframe, frontier_normals_in_camframe, np.pi/2, 15, w, h, K, verbose=True)
                         n_visible = np.sum(visible_pts_mask)
                         print("N VISIBLE FRONTIERS: " + str(n_visible))
                         if n_visible > 0:

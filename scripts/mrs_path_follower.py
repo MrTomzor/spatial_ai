@@ -80,7 +80,7 @@ class FollowerNode():
         self.path_headings_global = None
 
         self.reaching_dist = 0.5
-        self.reaching_heading = np.pi / 10
+        self.reaching_heading = np.pi / 8
 
         # PUB
         self.pub_twist = rospy.Publisher(twist_topic, Twist, queue_size=10)
@@ -167,7 +167,7 @@ class FollowerNode():
             # print(rot_error_vec )
 
             p_linear = 2.2
-            p_angular = 0.6
+            p_angular = 1.3
             # max_vel = 5
 
             vel_cmd = (pos_error) * p_linear
