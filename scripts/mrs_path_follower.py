@@ -166,8 +166,8 @@ class FollowerNode():
             # print("ROT DIF ROTVEC: ")
             # print(rot_error_vec )
 
-            p_linear = 2.2
-            p_angular = 1.3
+            p_linear = 2.0
+            p_angular = 0.8
             # max_vel = 5
 
             vel_cmd = (pos_error) * p_linear

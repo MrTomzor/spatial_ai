@@ -17,6 +17,7 @@ from spatial_ai.common_spatial import *
 from spatial_ai.fire_slam_module import *
 from spatial_ai.submap_builder_module import *
 from spatial_ai.local_navigator_module import *
+from spatial_ai.global_navigator_module import *
 
 from sensor_msgs.msg import Image, CompressedImage, PointCloud2
 import sensor_msgs.point_cloud2 as pc2
@@ -130,7 +131,6 @@ class NavNode:
         self.keyframes = []
         self.noprior_triangulation_points = None
         self.odomprior_triangulation_points = None
-        self.spheremap_mutex = threading.Lock()
         self.predicted_traj_mutex = threading.Lock()
 
         # SRV
@@ -140,6 +140,9 @@ class NavNode:
         # TIMERS
         self.planning_frequency = 0.5
         self.planning_timer = rospy.Timer(rospy.Duration(1.0 / self.planning_frequency), self.planning_loop_iter)
+
+        self.global_nav_frequency = 0.1
+        self.global_nav_timer = rospy.Timer(rospy.Duration(1.0 / self.global_nav_frequency), self.global_nav_loop_iter)
 
         # VIS PUB
         self.slam_points = None
@@ -183,7 +186,7 @@ class NavNode:
         self.safety_replanning_trigger_odist = 1
         self.min_planning_odist = 1.4
         self.max_planning_odist = 5
-        self.path_step_size = 1
+        self.path_step_size = 1.2
 
 
         # BLUEFOX UAV
@@ -395,14 +398,12 @@ class NavNode:
     # --SERVICE CALLBACKS
     def return_home(self, req):# # #{
         print("RETURN HOME SRV")
-        with ScopedLock(self.spheremap_mutex):
-            self.state = 'home'
+        self.state = 'home'
         return EmptySrvResponse()# # #}
 
     # -- MEMORY MANAGING
     def saveEpisodeFull(self, req):# # #{
-        with ScopedLock(self.spheremap_mutex):
-            self.submap_builder_module.saveEpisodeFull(None)
+        self.submap_builder_module.saveEpisodeFull(None)
         return EmptySrvResponse()# # #}
 
     # --SUBSCRIBE CALLBACKS
@@ -411,9 +412,14 @@ class NavNode:
         print("PLANNING ITER")
         if not self.node_initialized:
             return
-        with ScopedLock(self.spheremap_mutex):
-            self.local_navigator_module.planning_loop_iter()
+        self.local_navigator_module.planning_loop_iter()
     # # #}
+
+    def global_nav_loop_iter(self, event):
+        print("PLANNING ITER")
+        if not self.node_initialized:
+            return
+        self.global_navigator_module.main_iter()
 
     def lookupTransformAsMatrix(self, frame1, frame2):# # #{
         return lookupTransformAsMatrix(frame1, frame2, self.tf_listener)
@@ -457,8 +463,7 @@ class NavNode:
             pcl_msg = copy.deepcopy(self.submap_builder_input_pcl)
             points_info = copy.deepcopy(self.submap_builder_input_point_ids)
 
-        with ScopedLock(self.spheremap_mutex):
-            self.submap_builder_module.camera_update_iter(pcl_msg, points_info) 
+        self.submap_builder_module.camera_update_iter(pcl_msg, points_info) 
     # # #}
 
     def slam_points_callback(self, msg):# # #{

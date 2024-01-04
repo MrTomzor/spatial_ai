@@ -87,7 +87,7 @@ class LocalNavigatorModule:
         self.marker_scale = 0.15
         self.path_step_size = 0.5
         # self.max_heading_change_per_m = np.pi / 10
-        self.max_heading_change_per_m = np.pi / 6
+        self.max_heading_change_per_m = np.pi * 5
 
         self.safety_replanning_trigger_odist = 0.2
         self.min_planning_odist = 0.2
@@ -221,7 +221,8 @@ class LocalNavigatorModule:
         return np.array(res), odists# # #}
         
     def planning_loop_iter(self):# # #{
-        self.dumb_forward_flight_rrt_iter()
+        with ScopedLock(self.mapper.spheremap_mutex):
+            self.dumb_forward_flight_rrt_iter()
     # # #}
 
     def postproc_path(self, pos_in_smap_frame, headings_in_smap_frame):# # #{
