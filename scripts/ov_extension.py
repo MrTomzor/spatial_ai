@@ -259,7 +259,6 @@ class NavNode:
         self.submap_builder_input_point_ids = None
 
         self.submap_builder_module = SubmapBuilderModule(self.width, self.height, self.K, self.camera_frame, self.odom_frame,self.fcu_frame, self.tf_listener, self.T_imu_to_cam, self.T_fcu_to_imu)
-        self.submap_builder_module.min_planning_odist = self.min_planning_odist
 
         # LOCAL NAVIGATOR
         ptraj_topic = '/uav1/control_manager/mpc_tracker/prediction_full_state'
@@ -300,22 +299,25 @@ class NavNode:
     # # #}
 
     def global_nav_loop_iter(self, event):
-        print("PLANNING ITER")
+        print("GLOBAL PLANNING ITER")
         if not self.node_initialized:
             return
-        self.global_navigator_module.main_iter()
+        # self.global_navigator_module.main_iter()
 
     def lookupTransformAsMatrix(self, frame1, frame2):# # #{
         return lookupTransformAsMatrix(frame1, frame2, self.tf_listener)
     # # #}
 
     def odometry_callback(self, msg):# # #{
+        if not self.node_initialized:
+            return
+
         self.odom_buffer.append(msg)
         if len(self.odom_buffer) > self.odom_buffer_maxlen:
             self.odom_buffer.pop(0)# # #}
 
     def image_callback(self, msg):# # #{
-        if self.node_offline:
+        if not self.node_initialized:
             return
 
         # UPDATE VISUAL SLAM MODULE, PASS INPUT TO SUBMAP BUILDER IF NEW INPUT
@@ -334,6 +336,8 @@ class NavNode:
         # # #}
 
     def submap_builder_update_iter(self, event=None):# # #{
+        if not self.node_initialized:
+            return
 
         # copy deepcopy the input data, its not that big! then can leave mutex!! (so rest of img callback is not held up)
         pcl_msg = None
@@ -351,6 +355,8 @@ class NavNode:
     # # #}
 
     def slam_points_callback(self, msg):# # #{
+        if not self.node_initialized:
+            return
         if self.using_external_slam_pts:
             with ScopedLock(self.submap_builder_input_mutex):
                 self.submap_builder_input_pcl = msg

@@ -227,8 +227,8 @@ class SphereMap:
         # pts_added_mask = np.full((n_survived_first_filter), False)
         pts_added_mask = np.full((n_survived_first_filter), True)
         n_added = np.sum(pts_added_mask)
-        print("N FRONTIERS SAMPLED: " +str(n_test_new_pts))
-        print("N FRONTIERS FAR ENOUGH FROM OLD: " +str(n_survived_first_filter))
+        # print("N FRONTIERS SAMPLED: " +str(n_test_new_pts))
+        # print("N FRONTIERS FAR ENOUGH FROM OLD: " +str(n_survived_first_filter))
         self_distmatrix = scipy.spatial.distance_matrix(pts_survived_filter_with_mappoints, pts_survived_filter_with_mappoints)
 
         # ADD NEW PTS IF NOT BAD AGAINST OTHERS OR AGAINST DISTMATRIX
@@ -244,7 +244,7 @@ class SphereMap:
                 self.frontier_points = pts_survived_filter_with_mappoints[pts_added_mask]
             else:
                 self.frontier_points = np.concatenate((self.frontier_points, pts_survived_filter_with_mappoints[pts_added_mask]))
-        print("N ADDED: " +str(n_added))
+        # print("N ADDED FRONTIERS: " +str(n_added))
 
         # NOW CHECK ALL FRONTIERS IF DEEP ENOUGH IN FREESPACE -> DELETE THEM
         deleting_inside_dist = 0
@@ -313,8 +313,8 @@ class SphereMap:
         self.frontier_points = self.frontier_points[keep_frontiers_mask, :]
         # self.frontier_normals = self.frontier_normals[keep_frontiers_mask, :] / np.linalg.norm(self.frontier_normals[keep_frontiers_mask, :], axis=1).reshape(n_keep, 1)
         self.frontier_normals = self.frontier_normals[keep_frontiers_mask, :] 
-        print("N KEEP: " +str(n_keep))
-        print("N CUR FRONTIERS: " + str(self.frontier_points.shape[0]))
+        # print("N KEEP: " +str(n_keep))
+        # print("N CUR FRONTIERS: " + str(self.frontier_points.shape[0]))
 
 
     # # #}
