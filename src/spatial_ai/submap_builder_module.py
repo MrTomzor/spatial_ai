@@ -72,7 +72,6 @@ class SubmapBuilderModule:
         self.T_imu_to_cam = T_imu_to_cam
         self.T_fcu_to_imu = T_fcu_to_imu 
 
-        self.verbose_submap_construction = False
         self.do_frontiers = True
 
         self.bridge = CvBridge()
@@ -108,21 +107,21 @@ class SubmapBuilderModule:
         self.depth_pub = rospy.Publisher('estim_depth_img', Image, queue_size=1)
         self.marker_pub = rospy.Publisher('/vo_odom', Marker, queue_size=10)
 
-        self.marker_scale = 0.15
 
         print("T_imu(fcu)_to_cam")
         print(self.T_imu_to_cam)
 
-        self.carryover_dist = 10
-        self.uav_radius = 0.2
-        self.safety_replanning_trigger_odist = 0.2
-        self.min_planning_odist = 0.2
-        self.max_planning_odist = 2
 
-        # META PARAMS
-        self.n_sphere_samples_per_update = 100
-        self.fragmenting_travel_dist = 20
-        self.max_sphere_sampling_z = 10
+        # LOAD PARAMS
+        self.verbose_submap_construction = rospy.get_param("local_mapping/verbose_submap_construction")
+        self.carryover_dist = rospy.get_param("local_mapping/carryover_dist")
+        self.uav_radius = rospy.get_param("local_nav/uav_radius")
+        self.min_planning_odist = rospy.get_param("local_nav/min_planning_odist")
+
+        self.marker_scale = rospy.get_param("marker_scale")
+        self.n_sphere_samples_per_update = rospy.get_param("local_mapping/n_sphere_samples_per_update")
+        self.fragmenting_travel_dist = rospy.get_param("local_mapping/smap_fragmentation_dist")
+        self.max_sphere_sampling_z = rospy.get_param("local_mapping/max_sphere_sampling_z")
         self.visual_kf_addition_heading = 3.14159 /2
         self.visual_kf_addition_dist = 2
         

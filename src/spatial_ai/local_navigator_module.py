@@ -84,14 +84,13 @@ class LocalNavigatorModule:
         self.path_planning_vis_pub = rospy.Publisher('path_planning_vis', MarkerArray, queue_size=10)
         self.unsorted_vis_pub = rospy.Publisher('unsorted_markers', MarkerArray, queue_size=10)
 
-        self.marker_scale = 0.15
-        self.path_step_size = 0.5
-        # self.max_heading_change_per_m = np.pi / 10
-        self.max_heading_change_per_m = np.pi * 5
+        self.marker_scale = rospy.get_param("marker_scale")
+        self.path_step_size = rospy.get_param("local_nav/max_rrt_step_size")
+        self.max_heading_change_per_m = rospy.get_param("local_nav/max_heading_change_per_m")
 
-        self.safety_replanning_trigger_odist = 0.2
-        self.min_planning_odist = 0.2
-        self.max_planning_odist = 2
+        self.safety_replanning_trigger_odist = rospy.get_param("local_nav/safety_replanning_trigger_odist")
+        self.min_planning_odist = rospy.get_param("local_nav/min_planning_odist")
+        self.max_planning_odist = rospy.get_param("local_nav/max_planning_odist")
 
         # PREDICTED TRAJ
         self.sub_predicted_trajectory = rospy.Subscriber(ptraj_topic, mrs_msgs.msg.MpcPredictionFullState, self.predicted_trajectory_callback, queue_size=10000)

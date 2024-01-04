@@ -1,0 +1,24 @@
+marker_scale: 1
+
+platform: "hardnav_underwater"
+
+local_mapping:
+  using_external_slam_pts: True
+  verbose_submap_construction: False
+
+  keyframe_dist_thr: 4
+  slam_filtering_enabled: False
+
+  smap_fragmentation_dist: 300
+  n_sphere_samples_per_update: 100
+  carryover_dist: 4
+  max_sphere_sampling_z : 50
+
+local_nav:
+  uav_radius: 0.7
+  safety_replanning_trigger_odist: 1
+  min_planning_odist: 1.4
+  max_planning_odist: 5
+
+  max_rrt_step_size: 1.2
+  max_heading_change_per_m: 0.314159 

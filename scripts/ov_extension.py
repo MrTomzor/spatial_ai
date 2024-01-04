@@ -138,6 +138,9 @@ class NavNode:
         self.return_home_srv = rospy.Service("home", EmptySrv, self.return_home)
 
         # TIMERS
+        self.submap_builder_rate = 10
+        self.submap_builder_timer = rospy.Timer(rospy.Duration(1.0 / self.submap_builder_rate), self.submap_builder_update_iter)
+
         self.planning_frequency = 0.5
         self.planning_timer = rospy.Timer(rospy.Duration(1.0 / self.planning_frequency), self.planning_loop_iter)
 
@@ -155,107 +158,87 @@ class NavNode:
 
         self.tf_listener = tf.TransformListener()
 
-
-        self.verbose_submap_construction = True
         # --Load calib
-        # UNITY
-        self.K = np.array([642.8495341420769, 0, 400, 0, 644.5958939934509, 300, 0, 0, 1]).reshape((3,3))
-        self.T_imu_to_cam = np.eye(4)
-        self.T_fcu_to_imu = np.eye(4)
-        self.width = 800
-        self.height = 600
-        ov_slampoints_topic = '/ov_msckf/points_slam'
-        # ov_slampoints_topic = 'extended_slam_points'
-        # img_topic = '/robot1/camera1/raw'
-        img_topic = '/robot1/camera1/image'
-        odom_topic = '/ov_msckf/odomimu'
-        self.imu_frame = 'imu'
-        # self.fcu_frame = 'uav1/fcu'
-        self.fcu_frame = 'imu'
-        self.camera_frame = 'cam0'
-        self.odom_frame = 'global'
 
-        self.marker_scale = 1
-        self.slam_kf_dist_thr = 4
-        self.smap_fragmentation_dist = 300
-        self.slam_filtering_enabled = False
-        self.using_external_slam_pts = True
-        self.max_sphere_sampling_z  = 50
-        self.carryover_dist = 4
-        self.uav_radius = 0.7
-        self.safety_replanning_trigger_odist = 1
-        self.min_planning_odist = 1.4
-        self.max_planning_odist = 5
-        self.path_step_size = 1.2
+        self.robot_platform = rospy.get_param("platform")
+        self.marker_scale = rospy.get_param("marker_scale")
+        self.using_external_slam_pts = rospy.get_param("local_mapping/using_external_slam_pts")
 
+        if self.robot_platform == "hardnav_underwater":
+            # UNITY
+            self.K = np.array([642.8495341420769, 0, 400, 0, 644.5958939934509, 300, 0, 0, 1]).reshape((3,3))
+            self.T_imu_to_cam = np.eye(4)
+            self.T_fcu_to_imu = np.eye(4)
+            self.width = 800
+            self.height = 600
+            self.ov_slampoints_topic = '/ov_msckf/points_slam'
+            self.img_topic = '/robot1/camera1/image'
+            self.odom_topic = '/ov_msckf/odomimu'
+            self.imu_frame = 'imu'
+            # self.fcu_frame = 'uav1/fcu'
+            self.fcu_frame = 'imu'
+            self.camera_frame = 'cam0'
+            self.odom_frame = 'global'
+        elif self.robot_platform == "bluefox_uav_gazebo":
+            # BLUEFOX UAV
+            self.K = np.array([227.4, 0, 376, 0, 227.4, 240, 0, 0, 1]).reshape((3,3))
+            self.P = np.zeros((3,4))
+            self.P[:3, :3] = self.K
 
-        # BLUEFOX UAV
-        # self.K = np.array([227.4, 0, 376, 0, 227.4, 240, 0, 0, 1]).reshape((3,3))
-        # self.P = np.zeros((3,4))
-        # self.P[:3, :3] = self.K
-        # print(self.P)
+            self.T_imu_to_cam = np.eye(4)
+            self.T_fcu_to_imu = np.eye(4)
+            self.width = 752
+            self.height = 480
+            self.ov_slampoints_topic = '/ov_msckf/points_slam'
+            self.img_topic = '/uav1/vio/camera/image_raw'
+            self.odom_topic = '/ov_msckf/odomimu'
+            self.imu_frame = 'imu'
+            self.fcu_frame = 'uav1/fcu'
+            self.camera_frame = 'cam0'
+            self.odom_frame = 'global'
+            # self.marker_scale = 0.5
 
-        # self.T_imu_to_cam = np.eye(4)
-        # self.T_fcu_to_imu = np.eye(4)
-        # self.width = 752
-        # self.height = 480
-        # ov_slampoints_topic = '/ov_msckf/points_slam'
-        # img_topic = '/uav1/vio/camera/image_raw'
-        # odom_topic = '/ov_msckf/odomimu'
-        # self.imu_frame = 'imu'
-        # self.fcu_frame = 'uav1/fcu'
-        # self.camera_frame = 'cam0'
-        # self.odom_frame = 'global'
-        # self.marker_scale = 0.5
+            # # Get the transform
+            # self.tf_listener.waitForTransform(self.fcu_frame, self.imu_frame, rospy.Time(), rospy.Duration(4.0))
+            # (trans, rotation) = self.tf_listener.lookupTransform(self.fcu_frame, self.imu_frame, rospy.Time(0))
+            # rotation_matrix = tfs.quaternion_matrix(rotation)
+            # print(rotation_matrix)
+            # self.T_fcu_to_imu[:3, :3] = rotation_matrix[:3,:3]
+            # self.T_fcu_to_imu[:3, 3] = trans
+            # print("T_fcu_to_imu")
+            # print(self.T_fcu_to_imu)
 
-        # # Get the transform
-        # self.tf_listener.waitForTransform(self.fcu_frame, self.imu_frame, rospy.Time(), rospy.Duration(4.0))
-        # (trans, rotation) = self.tf_listener.lookupTransform(self.fcu_frame, self.imu_frame, rospy.Time(0))
-        # rotation_matrix = tfs.quaternion_matrix(rotation)
-        # print(rotation_matrix)
-        # self.T_fcu_to_imu[:3, :3] = rotation_matrix[:3,:3]
-        # self.T_fcu_to_imu[:3, 3] = trans
-        # print("T_fcu_to_imu")
-        # print(self.T_fcu_to_imu)
+            # self.tf_listener.waitForTransform(self.imu_frame, self.camera_frame, rospy.Time(), rospy.Duration(4.0))
+            # (trans, rotation) = self.tf_listener.lookupTransform(self.imu_frame, self.camera_frame, rospy.Time(0))
+            # rotation_matrix = tfs.quaternion_matrix(rotation)
+            # print(rotation_matrix)
+            # self.T_imu_to_cam[:3, :3] = rotation_matrix[:3,:3]
+            # self.T_imu_to_cam[:3, 3] = trans
+            # print("T_imu_to_cam")
+            # print(self.T_imu_to_cam)
 
-        # self.tf_listener.waitForTransform(self.imu_frame, self.camera_frame, rospy.Time(), rospy.Duration(4.0))
-        # (trans, rotation) = self.tf_listener.lookupTransform(self.imu_frame, self.camera_frame, rospy.Time(0))
-        # rotation_matrix = tfs.quaternion_matrix(rotation)
-        # print(rotation_matrix)
-        # self.T_imu_to_cam[:3, :3] = rotation_matrix[:3,:3]
-        # self.T_imu_to_cam[:3, 3] = trans
-        # print("T_imu_to_cam")
-        # print(self.T_imu_to_cam)
-
-        # self.carryover_dist = 8
-        # self.uav_radius = 0.6
-        # self.safety_replanning_trigger_odist = 0.6
-        # self.min_planning_odist = 0.8
-        # self.max_planning_odist = 2
-
-
-
+        elif self.robot_platform == "tello":
         # TELLo (imu = fcu)
-        # self.K = np.array([933.5640667549508, 0.0, 500.5657553739987, 0.0, 931.5001605952165, 379.0130687255228, 0.0, 0.0, 1.0]).reshape((3,3))
+            self.K = np.array([933.5640667549508, 0.0, 500.5657553739987, 0.0, 931.5001605952165, 379.0130687255228, 0.0, 0.0, 1.0]).reshape((3,3))
+            self.T_imu_to_cam = np.eye(4)
+            self.T_fcu_to_imu = np.eye(4)
+            self.width = 960
+            self.height = 720
+            self.img_topic = '/uav1/tellopy_wrapper/rgb/image_raw'
+            self.odom_topic = '/uav1/estimation_manager/odom_main'
 
-        # self.T_imu_to_cam = np.eye(4)
-        # self.T_fcu_to_imu = np.eye(4)
-        # self.width = 960
-        # self.height = 720
-        # ov_slampoints_topic = 'extended_slam_points'
-        # img_topic = '/uav1/tellopy_wrapper/rgb/image_raw'
-        # odom_topic = '/uav1/estimation_manager/odom_main'
+            self.imu_frame = 'imu'
+            self.fcu_frame = 'uav1/fcu'
+            self.odom_frame = 'uav1/passthrough_origin'
+            self.camera_frame = "uav1/rgb"
 
-        # self.imu_frame = 'imu'
-        # self.fcu_frame = 'uav1/fcu'
-        # self.odom_frame = 'uav1/passthrough_origin'
-        # self.camera_frame = "uav1/rgb"
-
-        # self.marker_scale = 0.15
-        # self.slam_kf_dist_thr = 0.5
-        # self.smap_fragmentation_dist = 10
+            self.marker_scale = 0.15
+            self.slam_kf_dist_thr = 0.5
+            self.smap_fragmentation_dist = 10
 
 
+        # GET IMU TO CAM TRANSFORM
+        # TODO - maybe not for tello?
         self.tf_listener.waitForTransform(self.fcu_frame, self.camera_frame, rospy.Time(), rospy.Duration(4.0))
         (trans, rotation) = self.tf_listener.lookupTransform(self.fcu_frame, self.camera_frame, rospy.Time(0))
         rotation_matrix = tfs.quaternion_matrix(rotation)
@@ -269,9 +252,6 @@ class NavNode:
 
         # FIRESLAM
         self.fire_slam_module = FireSLAMModule(self.width, self.height, self.K, self.camera_frame, self.odom_frame, self.tf_listener)
-        self.fire_slam_module.kf_dist_thr = self.slam_kf_dist_thr
-        self.fire_slam_module.marker_scale = self.marker_scale
-        self.fire_slam_module.slam_filtering_enabled = self.slam_filtering_enabled 
 
         # SUBMAP BUILDER
         self.submap_builder_input_mutex = threading.Lock()
@@ -279,118 +259,22 @@ class NavNode:
         self.submap_builder_input_point_ids = None
 
         self.submap_builder_module = SubmapBuilderModule(self.width, self.height, self.K, self.camera_frame, self.odom_frame,self.fcu_frame, self.tf_listener, self.T_imu_to_cam, self.T_fcu_to_imu)
-        self.submap_builder_module.marker_scale = self.marker_scale
-        self.submap_builder_module.fragmenting_travel_dist = self.smap_fragmentation_dist
-        self.submap_builder_module.max_sphere_sampling_z = self.max_sphere_sampling_z
-        self.submap_builder_module.verbose_submap_construction = self.verbose_submap_construction
         self.submap_builder_module.min_planning_odist = self.min_planning_odist
-
-        self.submap_builder_rate = 10
-        self.submap_builder_timer = rospy.Timer(rospy.Duration(1.0 / self.submap_builder_rate), self.submap_builder_update_iter)
 
         # LOCAL NAVIGATOR
         ptraj_topic = '/uav1/control_manager/mpc_tracker/prediction_full_state'
         output_path_topic = '/uav1/trajectory_generation/path'
         self.local_navigator_module = LocalNavigatorModule(self.submap_builder_module, ptraj_topic, output_path_topic)
-        self.local_navigator_module.marker_scale = self.marker_scale
 
-        self.local_navigator_module.safety_replanning_trigger_odist = self.safety_replanning_trigger_odist 
-        self.local_navigator_module.min_planning_odist = self.min_planning_odist
-        self.local_navigator_module.max_planning_odist = self.max_planning_odist
-        self.local_navigator_module.path_step_size = self.path_step_size
-
-        # --SUB
-        self.sub_cam = rospy.Subscriber(img_topic, Image, self.image_callback, queue_size=10)
+        # --INIT SUBSCRIBERS
+        # CAMERA
+        self.sub_cam = rospy.Subscriber(self.img_topic, Image, self.image_callback, queue_size=10)
         if self.using_external_slam_pts:
-            self.sub_slam_pts = rospy.Subscriber(ov_slampoints_topic, PointCloud2, self.slam_points_callback, queue_size=10)
+            self.sub_slam_pts = rospy.Subscriber(self.ov_slampoints_topic, PointCloud2, self.slam_points_callback, queue_size=10)
 
         self.odom_buffer = []
         self.odom_buffer_maxlen = 1000
-        self.sub_odom = rospy.Subscriber(odom_topic, Odometry, self.odometry_callback, queue_size=10000)
-
-        self.tf_broadcaster = tf.TransformBroadcaster()
-
-        self.orb = cv2.ORB_create(nfeatures=30)
-
-        # LOAD VOCAB FOR DBOW
-        # vocab_path = rospkg.RosPack().get_path('spatial_ai') + "/vision_data/vocabulary.pickle"
-        # self.visual_vocab = dbow.Vocabulary.load(vocab_path)
-        # self.test_db = dbow.Database(self.visual_vocab)
-        # self.test_db_n_kframes = 0
-        # self.test_db_indexing = {}
-
-
-        # NEW
-        self.new_frame = None
-        self.last_frame = None
-        self.last_img_stamp = None
-        self.new_img_stamp = None
-        self.cur_R = None
-        self.cur_t = None
-        self.px_ref = None
-        self.px_cur = None
-        # self.focal = cam.fx
-        # self.pp = (cam.cx, cam.cy)
-        self.focal = 643.3520818301457
-        self.pp = (400, 300)
-        self.tracking_bin_width = 100
-        self.min_features_per_bin = 1
-        self.max_features_per_bin = 2
-        self.tracking_history_len = 4
-        self.last_tried_landmarks_pxs = None
-
-        self.trueX, self.trueY, self.trueZ = 0, 0, 0
-        self.detector = cv2.FastFeatureDetector_create(threshold=30, nonmaxSuppression=True)
-
-        self.tracking_colors = np.random.randint(0, 255, (100, 3)) 
-
-        self.n_frames = 0
-        self.tracked_features = []
-
-        self.global_roadmap = None
-        self.global_roadmap_index = None
-        self.global_roadmap_len = None
-        self.roadmap_start_time = None
-
-        self.local_nav_start_time = rospy.get_rostime()
-        self.local_reaching_dist = 3
-        self.last_traj_send_time =  rospy.get_rostime()
-        self.traj_min_duration = 10
-
-        self.currently_navigating_pts = None
-        self.current_goal_vp_global = None
-        self.reaching_dist = 0.5
-        self.reaching_angle = np.pi/2
-
-        self.max_goal_vp_pathfinding_times = 3
-        self.current_goal_vp_pathfinding_times = 0
-
-        # META PARAMS
-        self.state = 'explore'
-        self.n_sphere_samples_per_update = 100
-
-
-        self.fspace_bonus_mod = 2
-        self.safety_weight = 5
-        self.fragmenting_travel_dist = 20
-        self.visual_kf_addition_heading = 3.14159 /2
-        self.visual_kf_addition_dist = 2
-
-        # ROOMBA PARAMS
-        self.roomba_progress_lasttime = None
-        self.roomba_dirvec_global = None
-        self.roomba_motion_start_global = None
-        self.roomba_value_weight = 5
-        self.roomba_progress_index = 0
-        self.roomba_progress_step = 3
-        self.roomba_progress_max_time_per_step = 50
-        self.roomba_doubletime = False
-
-        self.roomba_bounds_global = [-20, 20, -30, 30, -10, 20]
-
-
-        self.predicted_trajectory_pts_global = None
-
+        self.sub_odom = rospy.Subscriber(self.odom_topic, Odometry, self.odometry_callback, queue_size=10000)
         
         self.node_initialized = True
         # # #}

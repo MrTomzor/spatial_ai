@@ -115,9 +115,6 @@ class FireSLAMModule:
         self.standalone_mode = standalone_mode
         self.has_new_pcl_data = False
 
-        self.kf_dist_thr = 0.5
-        self.slam_filtering_enabled = False
-        self.marker_scale = 1
         self.toonear_vis_dist = 1
         self.invdist_meas_cov = 0.002
 
@@ -192,6 +189,11 @@ class FireSLAMModule:
             self.tf_listener = tf.TransformListener()
         else:
             self.tf_listener = tf_listener
+
+        # LOAD PARAMS
+        self.kf_dist_thr = rospy.get_param("local_mapping/keyframe_dist_thr")
+        self.marker_scale = rospy.get_param("marker_scale")
+        self.slam_filtering_enabled = rospy.get_param("local_mapping/slam_filtering_enabled")
 
         # NEW
         self.new_frame = None
