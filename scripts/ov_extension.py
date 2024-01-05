@@ -144,7 +144,7 @@ class NavNode:
         self.planning_frequency = 0.5
         self.planning_timer = rospy.Timer(rospy.Duration(1.0 / self.planning_frequency), self.planning_loop_iter)
 
-        self.global_nav_frequency = 0.1
+        self.global_nav_frequency = 1
         self.global_nav_timer = rospy.Timer(rospy.Duration(1.0 / self.global_nav_frequency), self.global_nav_loop_iter)
 
         # VIS PUB

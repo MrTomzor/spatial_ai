@@ -141,21 +141,25 @@ class GlobalNavigatorModule:
         mchunk2 = self.test_mchunk
         
         start1 = len(mchunk1.submaps) - 1
-        if star1 < 0:
+        if start1 < 0:
             print("NOT ENOUGH SUBMAPS IN CURRENT MAP")
             return
         
-        start2 = len(mchunk2.submaps) - 1
+        start2 = np.random.randint(0, len(mchunk2.submaps))
+        print("START2: " + str(start2))
         if start2 < 0:
             print("NOT ENOUGH SUBMAPS IN OLD MAP")
             return
 
         max_submaps = 3
+        # TODO - check by SIZE (of radii of traveled dists!) rather than max submaps!!!
+
         idxs1, transforms1 = getConnectedSubmapsWithTransforms(mchunk1, start1, max_submaps)
         idxs2, transforms2 = getConnectedSubmapsWithTransforms(mchunk2, start2, max_submaps)
 
         print("N MAPS FOR MATCHING IN CHUNK1: " + str(len(idxs1)))
         print("N MAPS FOR MATCHING IN CHUNK2: " + str(len(idxs2)))
+        print(transforms2)
 
         # SCROUNGE ALL MAP MATCHING DATA
         matching_data1 = getMapMatchingDataSimple(mchunk1, idxs1, transforms1)
@@ -166,15 +170,18 @@ class GlobalNavigatorModule:
 
         # VISUALIZE MATCH OVERLAP!!
         print("MATCHING DONE!!!")
-        # T_odom_chunk1 = mchunk1.sumaps[start1].T_global_to_own_origin
+        T_odom_chunk1 = mchunk1.submaps[start1].T_global_to_own_origin
         # T_vis_chunk1 = [T_odom_chunk1 @ tr for tr in transforms1]
 
-        T_odom_chunk2 = mchunk2.sumaps[start2].T_global_to_own_origin
+        # T_odom_chunk2 = mchunk2.submaps[start2].T_global_to_own_origin
         T_vis_chunk2 = [T_odom_chunk1 @ T_res @ tr for tr in transforms2]
+        # print(T_odom_chunk1)
+        print("T_VIS:")
 
         marker_array = MarkerArray()
         for i in range(len(idxs2)):
-            mapper.get_spheremap_marker_array(marker_array, mchunk2.submaps[idxs2[i]], T_vis_chunk2[i], alternative_look = True, do_connections = False, do_surfels = True, do_spheres = False, do_map2map_conns=False, ms=self.mapper.marker_scale, clr_index = 0, alpha = 0.5)
+            print(T_vis_chunk2[i][:3,3])
+            self.mapper.get_spheremap_marker_array(marker_array, mchunk2.submaps[idxs2[i]], T_vis_chunk2[i], alternative_look = True, do_connections = False, do_surfels = True, do_spheres = False, do_map2map_conns=False, ms=self.mapper.marker_scale, clr_index = 42, alpha = 1)
 
         self.matching_result_vis.publish(marker_array)
 

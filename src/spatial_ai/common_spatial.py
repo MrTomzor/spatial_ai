@@ -768,13 +768,20 @@ def matchMapGeomSimple(data1, data2):# # #{
 # # #}
 
 class MapMatchingData:# # #{
-    def __ini(self):
+    def __init__(self):
         self.surfel_pts = None
         self.surfel_normals = None
         self.freespace_pts = None
         self.freespace_radii = None
 
-    def addSubmap(submap, transform):
+    def addSubmap(self, submap, transform):
+        if submap.surfel_points is None:
+            print("WARN! SUBMAP HAS NO SURFEL PTS!")
+            return
+        if submap.points is None:
+            print("WARN! SUBMAP HAS NO FREESPACE!")
+            return
+
         _spts = submap.surfel_points
         _snorm = submap.surfel_normals
         _fpts = submap.points
@@ -787,22 +794,22 @@ class MapMatchingData:# # #{
         _fpts = transformPoints(_fpts, transform)
         _snorm = transformPoints(_snorm, only_rot)
 
-        if surfel_pts is None:
+        if self.surfel_pts is None:
             self.surfel_pts = _spts
-            self.freespace_pts = freespace_pts
+            self.freespace_pts = _fpts
             self.surfel_normals = _snorm
             self.freespace_radii = _rad
         else:
-            self.surfel_pts = np.concatenate(self.surfel_pts, _spts)
-            self.freespace_pts = np.concatenate(self.freespace_pts, _fpts)
-            self.surfel_normals = np.concatenate(self.surfel_normals, _snorm)
-            self.freespace_radii = np.concatenate(self.freespace_radii, _rad)
+            self.surfel_pts = np.concatenate((self.surfel_pts, _spts))
+            self.freespace_pts = np.concatenate((self.freespace_pts, _fpts))
+            self.surfel_normals = np.concatenate((self.surfel_normals, _snorm))
+            self.freespace_radii = np.concatenate((self.freespace_radii, _rad))
         
 # # #}
 
 def getMapMatchingDataSimple(mchunk, smap_idxs, transforms):# # #{
     data = MapMatchingData()
-    for i in range(len(smap_idx)):
+    for i in range(len(smap_idxs)):
         data.addSubmap(mchunk.submaps[smap_idxs[i]], transforms[i])
     return data
 # # #}
@@ -814,15 +821,16 @@ def getConnectedSubmapsWithTransforms(mchunk, start_idx, max_submaps):# # #{
     smap_idxs = [start_idx]
     
     n_submaps_map = 1
+    len_smaps = len(mchunk.submaps)
     
     T_inv_start = np.linalg.inv(mchunk.submaps[start_idx].T_global_to_own_origin)
     for i in range(1, max_submaps):
         test_idxs = [start_idx + i, start_idx - i]
         for j in test_idxs:
-            if j >= 0 and j < len1:
+            if j >= 0 and j < len_smaps:
                 smap_idxs.append(j)
                 transforms.append(T_inv_start @ mchunk.submaps[j].T_global_to_own_origin)
 
-    return smap_idx, transforms
+    return smap_idxs, transforms
 # # #}
 

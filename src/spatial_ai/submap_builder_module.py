@@ -635,7 +635,7 @@ class SubmapBuilderModule:
             return
 
         marker_array = MarkerArray()
-        self.get_spheremap_marker_array(marker_array, self.spheremap, self.spheremap.T_global_to_own_origin, ms=self.marker_scale, do_spheres=False, do_surfels=True)
+        self.get_spheremap_marker_array(marker_array, self.spheremap, self.spheremap.T_global_to_own_origin, ms=self.marker_scale, do_spheres=False, do_surfels=True, do_frontiers=True)
         self.spheremap_outline_pub.publish(marker_array)
 
         marker_array = MarkerArray()
@@ -659,7 +659,7 @@ class SubmapBuilderModule:
         return res
 # # #}
 
-    def get_spheremap_marker_array(self, marker_array, smap, T_inv, alternative_look=False, do_connections=False,  do_surfels=True, do_spheres=True, do_keyframes=False, do_normals=False, do_map2map_conns=True, do_frontiers=True, ms=1, clr_index =0, alpha = 1):# # #{
+    def get_spheremap_marker_array(self, marker_array, smap, T_inv, alternative_look=False, do_connections=False,  do_surfels=True, do_spheres=True, do_keyframes=False, do_normals=False, do_map2map_conns=True, do_frontiers=False, ms=1, clr_index =0, alpha = 1):# # #{
         # T_vis = np.linalg.inv(T_inv)
         T_vis = T_inv
         pts = transformPoints(smap.points, T_vis)
@@ -799,6 +799,10 @@ class SubmapBuilderModule:
                         marker.color.r = 0.4
                         marker.color.g = 0.7
                         marker.color.b = 1.0
+                    elif clr_index == 42:
+                        marker.color.r = 0.0
+                        marker.color.g = 0.0
+                        marker.color.b = 0.4
                     else:
                         marker.color.r = 1.0
                         marker.color.g = 0.0
