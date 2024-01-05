@@ -68,7 +68,7 @@ from scipy.spatial.transform import Rotation as R
 # #}
 
 class GlobalNavigatorModule:
-    def __init__(self, mapper, local_navigator, ptraj_topic, output_path_topic):# # #{
+    def __init__(self, mapper, local_navigator):# # #{
 
         self.mapper = mapper
         self.local_navigator = local_navigator
@@ -79,6 +79,8 @@ class GlobalNavigatorModule:
         # VIS PUB
         # self.path_planning_vis_pub = rospy.Publisher('path_planning_vis', MarkerArray, queue_size=10)
         # self.unsorted_vis_pub = rospy.Publisher('unsorted_markers', MarkerArray, queue_size=10)
+        self.matching_result_vis = rospy.Publisher('map_matching_result_vis', MarkerArray, queue_size=10)
+
 
         self.marker_scale = 0.15
         self.path_step_size = 0.5
@@ -93,7 +95,15 @@ class GlobalNavigatorModule:
         # self.sub_predicted_trajectory = rospy.Subscriber(ptraj_topic, mrs_msgs.msg.MpcPredictionFullState, self.predicted_trajectory_callback, queue_size=10000)
         # self.predicted_trajectory_pts_global = None
 
+
+        # LOAD OTHER MAP MCHUNK
+        self.planning_enabled = rospy.get_param("global_nav/enabled")
+        self.testing_mchunk_filename = rospy.get_param("global_nav/testing_mchunk_filename")
+        mchunk_filepath = rospkg.RosPack().get_path('spatial_ai') + "/memories/" + self.testing_mchunk_filename
+        self.test_mchunk = CoherentSpatialMemoryChunk.load(mchunk_filepath)
+
         # PLANNING PARAMS
+
         self.global_roadmap = None
         self.global_roadmap_index = None
         self.global_roadmap_len = None
@@ -124,26 +134,50 @@ class GlobalNavigatorModule:
         # # #}
 
     def main_iter(self):# # #{
-        # self.dumb_forward_flight_rrt_iter()
+        print("N SUBMAPS IN OLD MAP:")
+        print(len(self.test_mchunk.submaps))
 
-        if True:
-            cur_smap_copy = None
-            adjacent_smaps = None
-            mchunk_len = None
-            # copied_
-            with ScopedLock(self.mapper.spheremap_mutex):
-                cur_smap_copy = copy.deepcopy(self.mapper.spheremap)
-                mchunk_len = len(self.mapper.mchunk.submaps)
-                # TODO - stop when odometry unasfe (or maybe tear that to new mchunk!)
-            max_num_submaps = 3
-            prev_smaps_indices = []
-            # TODO ... DRAW!!!
-            # TODO - find smaps coherent with the current one!!! - DRAW!! simplest = just the prev N smaps in chunk!
+        mchunk1 = self.mapper.mchunk
+        mchunk2 = self.test_mchunk
+        
+        start1 = len(mchunk1.submaps) - 1
+        if star1 < 0:
+            print("NOT ENOUGH SUBMAPS IN CURRENT MAP")
+            return
+        
+        start2 = len(mchunk2.submaps) - 1
+        if start2 < 0:
+            print("NOT ENOUGH SUBMAPS IN OLD MAP")
+            return
 
+        max_submaps = 3
+        idxs1, transforms1 = getConnectedSubmapsWithTransforms(mchunk1, start1, max_submaps)
+        idxs2, transforms2 = getConnectedSubmapsWithTransforms(mchunk2, start2, max_submaps)
 
-        return
+        print("N MAPS FOR MATCHING IN CHUNK1: " + str(len(idxs1)))
+        print("N MAPS FOR MATCHING IN CHUNK2: " + str(len(idxs2)))
 
-        # TODO - try matching time!
+        # SCROUNGE ALL MAP MATCHING DATA
+        matching_data1 = getMapMatchingDataSimple(mchunk1, idxs1, transforms1)
+        matching_data2 = getMapMatchingDataSimple(mchunk2, idxs2, transforms2)
+
+        # PERFORM MATCHING!
+        T_res, score_res = matchMapGeomSimple(matching_data1, matching_data2)
+
+        # VISUALIZE MATCH OVERLAP!!
+        print("MATCHING DONE!!!")
+        # T_odom_chunk1 = mchunk1.sumaps[start1].T_global_to_own_origin
+        # T_vis_chunk1 = [T_odom_chunk1 @ tr for tr in transforms1]
+
+        T_odom_chunk2 = mchunk2.sumaps[start2].T_global_to_own_origin
+        T_vis_chunk2 = [T_odom_chunk1 @ T_res @ tr for tr in transforms2]
+
+        marker_array = MarkerArray()
+        for i in range(len(idxs2)):
+            mapper.get_spheremap_marker_array(marker_array, mchunk2.submaps[idxs2[i]], T_vis_chunk2[i], alternative_look = True, do_connections = False, do_surfels = True, do_spheres = False, do_map2map_conns=False, ms=self.mapper.marker_scale, clr_index = 0, alpha = 0.5)
+
+        self.matching_result_vis.publish(marker_array)
+
     # # #}
 
 

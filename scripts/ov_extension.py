@@ -265,6 +265,9 @@ class NavNode:
         output_path_topic = '/uav1/trajectory_generation/path'
         self.local_navigator_module = LocalNavigatorModule(self.submap_builder_module, ptraj_topic, output_path_topic)
 
+        # GLOBAL NAVIGATOR
+        self.global_navigator_module = GlobalNavigatorModule(self.submap_builder_module, self.local_navigator_module)
+
         # --INIT SUBSCRIBERS
         # CAMERA
         self.sub_cam = rospy.Subscriber(self.img_topic, Image, self.image_callback, queue_size=10)
@@ -302,7 +305,7 @@ class NavNode:
         print("GLOBAL PLANNING ITER")
         if not self.node_initialized:
             return
-        # self.global_navigator_module.main_iter()
+        self.global_navigator_module.main_iter()
 
     def lookupTransformAsMatrix(self, frame1, frame2):# # #{
         return lookupTransformAsMatrix(frame1, frame2, self.tf_listener)

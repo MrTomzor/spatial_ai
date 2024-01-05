@@ -9,12 +9,13 @@ local_mapping:
   keyframe_dist_thr: 4
   slam_filtering_enabled: False
 
-  smap_fragmentation_dist: 300
+  smap_fragmentation_dist: 20
   n_sphere_samples_per_update: 100
   carryover_dist: 4
   max_sphere_sampling_z : 50
 
 local_nav:
+  enabled: False
   uav_radius: 0.7
   safety_replanning_trigger_odist: 1
   min_planning_odist: 1.4
@@ -22,3 +23,7 @@ local_nav:
 
   max_rrt_step_size: 1.2
   max_heading_change_per_m: 0.314159 
+
+global_nav:
+  enabled: True
+  testing_mchunk_filename: "threeroom_big_to_left_end.pickle"

@@ -11,8 +11,6 @@ from scipy.spatial.transform import Rotation as R
 
 
 # common utils# #{
-
-
 class ScopedLock:
     def __init__(self, mutex):
         # self.lock = threading.Lock()
@@ -152,6 +150,7 @@ class Viewpoint(object):
         self.use_heading = not (heading is None)
 # # #}
 
+
 class SubmapKeyframe:# # #{
     def __init__(self, T):
         self.position = T[:3,3]
@@ -170,11 +169,11 @@ class SubmapKeyframe:# # #{
         return dif
 # # #}
 
-class MapToMapConnection:
+class MapToMapConnection:# # #{
     def __init__(self, pt_in_first_map_frame, second_map_id, rad):
         self.pt_in_first_map_frame = pt_in_first_map_frame
         self.second_map_id = second_map_id
-        self.radius_at_creation = rad
+        self.radius_at_creation = rad# # #}
 
 # #{ class SphereMap
 class SphereMap:
@@ -761,3 +760,69 @@ class CoherentSpatialMemoryChunk:# # #{
         mem.__dict__.update(cls_dict)
         return mem
 # # #}
+
+
+def matchMapGeomSimple(data1, data2):# # #{
+    print("MATCHING!")
+    return np.eye(4), 0
+# # #}
+
+class MapMatchingData:# # #{
+    def __ini(self):
+        self.surfel_pts = None
+        self.surfel_normals = None
+        self.freespace_pts = None
+        self.freespace_radii = None
+
+    def addSubmap(submap, transform):
+        _spts = submap.surfel_points
+        _snorm = submap.surfel_normals
+        _fpts = submap.points
+        _rad = submap.radii
+
+        only_rot = np.eye(4)
+        only_rot[:3, :3] = transform[:3, :3]
+
+        _spts = transformPoints(_spts, transform)
+        _fpts = transformPoints(_fpts, transform)
+        _snorm = transformPoints(_snorm, only_rot)
+
+        if surfel_pts is None:
+            self.surfel_pts = _spts
+            self.freespace_pts = freespace_pts
+            self.surfel_normals = _snorm
+            self.freespace_radii = _rad
+        else:
+            self.surfel_pts = np.concatenate(self.surfel_pts, _spts)
+            self.freespace_pts = np.concatenate(self.freespace_pts, _fpts)
+            self.surfel_normals = np.concatenate(self.surfel_normals, _snorm)
+            self.freespace_radii = np.concatenate(self.freespace_radii, _rad)
+        
+# # #}
+
+def getMapMatchingDataSimple(mchunk, smap_idxs, transforms):# # #{
+    data = MapMatchingData()
+    for i in range(len(smap_idx)):
+        data.addSubmap(mchunk.submaps[smap_idxs[i]], transforms[i])
+    return data
+# # #}
+
+def getConnectedSubmapsWithTransforms(mchunk, start_idx, max_submaps):# # #{
+    
+    # GET REACHABLE SUBMAP IDXS - FOR NOW GO FORWARD AND BACKWARD UNTIL ENOUGH SUBMAPS!!
+    transforms = [np.eye(4)]
+    smap_idxs = [start_idx]
+    
+    n_submaps_map = 1
+    
+    T_inv_start = np.linalg.inv(mchunk.submaps[start_idx].T_global_to_own_origin)
+    for i in range(1, max_submaps):
+        test_idxs = [start_idx + i, start_idx - i]
+        for j in test_idxs:
+            if j >= 0 and j < len1:
+                smap_idxs.append(j)
+                transforms.append(T_inv_start @ mchunk.submaps[j].T_global_to_own_origin)
+
+    return smap_idx, transforms
+# # #}
+

@@ -288,8 +288,8 @@ class SubmapBuilderModule:
 
 
 
-                # if len(self.mchunk.submaps) > 2:
-                #     self.saveEpisodeFull(None)
+                if len(self.mchunk.submaps) > 2:
+                    self.saveEpisodeFull(None)
             # # #}
 
             # TRANSFORM SLAM PTS TO -----CAMERA FRAME---- AND COMPUTE THEIR PIXPOSITIONS
@@ -569,16 +569,16 @@ class SubmapBuilderModule:
     # UTILS
 
     def saveEpisodeFull(self, req):# # #{
-        with ScopedLock(self.spheremap_mutex):
-            print("SAVING EPISODE MEMORY CHUNK")
+        # with ScopedLock(self.spheremap_mutex):
+        print("SAVING EPISODE MEMORY CHUNK")
 
-            fpath = rospkg.RosPack().get_path('spatial_ai') + "/memories/last_episode.pickle"
-            self.mchunk.submaps.append(self.spheremap)
-            self.mchunk.save(fpath)
-            self.mchunk.submaps.pop()
+        fpath = rospkg.RosPack().get_path('spatial_ai') + "/memories/last_episode.pickle"
+        self.mchunk.submaps.append(self.spheremap)
+        self.mchunk.save(fpath)
+        self.mchunk.submaps.pop()
 
-            print("EPISODE SAVED TO " + str(fpath))
-            return EmptySrvResponse()# # #}
+        print("EPISODE SAVED TO " + str(fpath))
+        return EmptySrvResponse()# # #}
 
     def get_visited_viewpoints_global(self):# # #{
         res_pts = None
@@ -659,7 +659,7 @@ class SubmapBuilderModule:
         return res
 # # #}
 
-    def get_spheremap_marker_array(self, marker_array, smap, T_inv, alternative_look=False, do_connections=False,  do_surfels=True, do_spheres=True, do_keyframes=False, do_normals=False, do_map2map_conns=True, do_frontiers=True, ms=1, clr_index =0):# # #{
+    def get_spheremap_marker_array(self, marker_array, smap, T_inv, alternative_look=False, do_connections=False,  do_surfels=True, do_spheres=True, do_keyframes=False, do_normals=False, do_map2map_conns=True, do_frontiers=True, ms=1, clr_index =0, alpha = 1):# # #{
         # T_vis = np.linalg.inv(T_inv)
         T_vis = T_inv
         pts = transformPoints(smap.points, T_vis)
@@ -781,7 +781,7 @@ class SubmapBuilderModule:
                 # marker.scale.y = 1.2
                 marker.scale.x = ms *0.9  # Adjust the size of the points
                 marker.scale.y = ms *0.9
-                marker.color.a = 1.0
+                marker.color.a = alpha
                 marker.color.r = 1.0
                 marker.color.g = 0.0
                 marker.color.b = 0.0

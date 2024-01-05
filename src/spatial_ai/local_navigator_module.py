@@ -84,6 +84,7 @@ class LocalNavigatorModule:
         self.path_planning_vis_pub = rospy.Publisher('path_planning_vis', MarkerArray, queue_size=10)
         self.unsorted_vis_pub = rospy.Publisher('unsorted_markers', MarkerArray, queue_size=10)
 
+        self.planning_enabled = rospy.get_param("local_nav/enabled")
         self.marker_scale = rospy.get_param("marker_scale")
         self.path_step_size = rospy.get_param("local_nav/max_rrt_step_size")
         self.max_heading_change_per_m = rospy.get_param("local_nav/max_heading_change_per_m")
@@ -220,6 +221,8 @@ class LocalNavigatorModule:
         return np.array(res), odists# # #}
         
     def planning_loop_iter(self):# # #{
+        if not self.planning_enabled:
+            return
         with ScopedLock(self.mapper.spheremap_mutex):
             self.dumb_forward_flight_rrt_iter()
     # # #}
