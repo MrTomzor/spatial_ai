@@ -151,7 +151,7 @@ class GlobalNavigatorModule:
             print("NOT ENOUGH SUBMAPS IN OLD MAP")
             return
 
-        max_submaps = 3
+        max_submaps = 10
         # TODO - check by SIZE (of radii of traveled dists!) rather than max submaps!!!
 
         idxs1, transforms1 = getConnectedSubmapsWithTransforms(mchunk1, start1, max_submaps)
@@ -164,6 +164,9 @@ class GlobalNavigatorModule:
         # SCROUNGE ALL MAP MATCHING DATA
         matching_data1 = getMapMatchingDataSimple(mchunk1, idxs1, transforms1)
         matching_data2 = getMapMatchingDataSimple(mchunk2, idxs2, transforms2)
+
+        matching_data1 = copy.deepcopy(matching_data1)
+        matching_data2 = copy.deepcopy(matching_data2)
 
         # PERFORM MATCHING!
         T_res, score_res = matchMapGeomSimple(matching_data1, matching_data2)
@@ -180,7 +183,6 @@ class GlobalNavigatorModule:
 
         marker_array = MarkerArray()
         for i in range(len(idxs2)):
-            print(T_vis_chunk2[i][:3,3])
             self.mapper.get_spheremap_marker_array(marker_array, mchunk2.submaps[idxs2[i]], T_vis_chunk2[i], alternative_look = True, do_connections = False, do_surfels = True, do_spheres = False, do_map2map_conns=False, ms=self.mapper.marker_scale, clr_index = 42, alpha = 1)
 
         self.matching_result_vis.publish(marker_array)

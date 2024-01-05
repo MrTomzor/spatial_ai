@@ -8,6 +8,7 @@ import pickle
 import rospy
 import tf.transformations as tfs
 from scipy.spatial.transform import Rotation as R
+import open3d 
 
 
 # common utils# #{
@@ -762,9 +763,41 @@ class CoherentSpatialMemoryChunk:# # #{
 # # #}
 
 
-def matchMapGeomSimple(data1, data2):# # #{
+def matchMapGeomSimple(data1, data2, T_init = None):# # #{
     print("MATCHING!")
-    return np.eye(4), 0
+    res = np.eye(4)
+    if T_init is None:
+        T_init = np.eye(4)
+
+    # fspace_mean1 = np.mean(data1.freespace_pts, axis = 0)
+    # fspace_mean2 = np.mean(data2.freespace_pts, axis = 0)
+    # d_means = fspace_mean1  - fspace_mean2
+    # data2.translate(d_means)
+    # print("D MEANS: ")
+    # print(d_means)
+    # res[:3,3] = d_means
+
+    # CONSTRUCT OPEN3D PCL
+    print("N PTS:")
+    print(data1.surfel_pts.shape[0])
+    print(data2.surfel_pts.shape[0])
+
+    pcd1 = open3d.geometry.PointCloud()
+    pcd1.points = open3d.utility.Vector3dVector(data1.surfel_pts)
+
+    pcd2 = open3d.geometry.PointCloud()
+    pcd2.points = open3d.utility.Vector3dVector(data2.surfel_pts)
+
+    # DO ICP
+    print("Apply point-to-point ICP")
+    reg_p2p = open3d.pipelines.registration.registration_icp(
+        pcd2, pcd1, 5, T_init,
+        open3d.pipelines.registration.TransformationEstimationPointToPoint())
+    print(reg_p2p)
+    # print("Transformation is:")
+    # print(reg_p2p.transformation)
+
+    return reg_p2p.transformation, reg_p2p.fitness
 # # #}
 
 class MapMatchingData:# # #{
@@ -773,6 +806,10 @@ class MapMatchingData:# # #{
         self.surfel_normals = None
         self.freespace_pts = None
         self.freespace_radii = None
+
+    def translate(self, vec):
+        self.surfel_pts += vec
+        self.freespace_pts += vec
 
     def addSubmap(self, submap, transform):
         if submap.surfel_points is None:
