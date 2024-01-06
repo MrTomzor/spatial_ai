@@ -145,13 +145,14 @@ class GlobalNavigatorModule:
             print("NOT ENOUGH SUBMAPS IN CURRENT MAP")
             return
         
-        start2 = np.random.randint(0, len(mchunk2.submaps))
+        # start2 = np.random.randint(0, len(mchunk2.submaps))
+        start2 = 0
         print("START2: " + str(start2))
         if start2 < 0:
             print("NOT ENOUGH SUBMAPS IN OLD MAP")
             return
 
-        max_submaps = 10
+        max_submaps = 8
         # TODO - check by SIZE (of radii of traveled dists!) rather than max submaps!!!
 
         idxs1, transforms1 = getConnectedSubmapsWithTransforms(mchunk1, start1, max_submaps)
@@ -159,7 +160,9 @@ class GlobalNavigatorModule:
 
         print("N MAPS FOR MATCHING IN CHUNK1: " + str(len(idxs1)))
         print("N MAPS FOR MATCHING IN CHUNK2: " + str(len(idxs2)))
-        print(transforms2)
+        if len(idxs1) == 0 or len(idxs2) == 0:
+            print("NOT ENOUGH MAPS FOR MATCHING")
+            return
 
         # SCROUNGE ALL MAP MATCHING DATA
         matching_data1 = getMapMatchingDataSimple(mchunk1, idxs1, transforms1)
@@ -170,6 +173,9 @@ class GlobalNavigatorModule:
 
         # PERFORM MATCHING!
         T_res, score_res = matchMapGeomSimple(matching_data1, matching_data2)
+        if T_res is None:
+            print("MATCHING FAILED!")
+            return
 
         # VISUALIZE MATCH OVERLAP!!
         print("MATCHING DONE!!!")
@@ -181,9 +187,21 @@ class GlobalNavigatorModule:
         # print(T_odom_chunk1)
         print("T_VIS:")
 
+        print("MATCHING DATA INLIER RATIOS :")
+        # print(matching_data1.submap_overlap_ratios)
+        # print(matching_data2.submap_overlap_ratios)
+
+        # VISUALIZE OVERLAYED MATCHING SUBMAPS
         marker_array = MarkerArray()
         for i in range(len(idxs2)):
-            self.mapper.get_spheremap_marker_array(marker_array, mchunk2.submaps[idxs2[i]], T_vis_chunk2[i], alternative_look = True, do_connections = False, do_surfels = True, do_spheres = False, do_map2map_conns=False, ms=self.mapper.marker_scale, clr_index = 42, alpha = 1)
+            cmap = plt.get_cmap('viridis')  # You can use other colormaps as well
+            rgba_color = cmap(matching_data2.submap_overlap_ratios[i])
+            # rgba_color = cmap(1)
+            rgb = rgba_color[:3]
+
+            self.mapper.get_spheremap_marker_array(marker_array, mchunk2.submaps[idxs2[i]], T_vis_chunk2[i], alternative_look = True, do_connections = False, do_surfels = True, do_spheres = False, do_map2map_conns=False, ms=self.mapper.marker_scale, clr_index = 42, alpha = 1, rgb = rgb)
+            # print("INLIER RATIO: " + str(matching_data2.submap_overlap_ratios[i]))
+            # TODO - vis only the maps that were put into data!!!
 
         self.matching_result_vis.publish(marker_array)
 

@@ -9,6 +9,7 @@ import rospy
 import tf.transformations as tfs
 from scipy.spatial.transform import Rotation as R
 import open3d 
+import open3d.t.pipelines.registration as treg
 
 
 # common utils# #{
@@ -200,6 +201,14 @@ class SphereMap:
 
         self.min_radius = min_radius
         self.max_radius = init_radius# # #}
+
+    def computeStorageMetrics(self):
+        self.centroid = np.mean(self.points, axis=0)
+        self.freespace_bounding_radius = np.max(np.linalg.norm(self.points - fspace_centroid, axis = 1) + self.radii)
+
+        # fspace_centroid = np.mean(self.points, axis=0)
+        # visited_pts = np.array([kp.position for kp in visual_keyframes])
+        # fspace_distmatrix = 
 
     def getPointOfConnectionToSubmap(self, idx):
         for conn in self.map2map_conns:
@@ -746,6 +755,7 @@ class CoherentSpatialMemoryChunk:# # #{
 
 
     def addSubmap(self, smap):
+        smap.computeStorageMetrics()
         self.submaps.append(smap)
 
     def save(self, path):
@@ -768,6 +778,7 @@ def matchMapGeomSimple(data1, data2, T_init = None):# # #{
     res = np.eye(4)
     if T_init is None:
         T_init = np.eye(4)
+        T_init[:3,:3] = headingToTransformationMatrix(np.random.rand() * 2 * 3.14159)
 
     # fspace_mean1 = np.mean(data1.freespace_pts, axis = 0)
     # fspace_mean2 = np.mean(data2.freespace_pts, axis = 0)
@@ -779,25 +790,100 @@ def matchMapGeomSimple(data1, data2, T_init = None):# # #{
 
     # CONSTRUCT OPEN3D PCL
     print("N PTS:")
-    print(data1.surfel_pts.shape[0])
-    print(data2.surfel_pts.shape[0])
+    n_pts_map1 = data1.surfel_pts.shape[0]
+    n_pts_map2 = data2.surfel_pts.shape[0]
+    print(n_pts_map1)
+    print(n_pts_map2)
 
-    pcd1 = open3d.geometry.PointCloud()
-    pcd1.points = open3d.utility.Vector3dVector(data1.surfel_pts)
+    # pcd1 = open3d.geometry.PointCloud()
+    # pcd1.points = open3d.utility.Vector3dVector(data1.surfel_pts)
+    # pcd1.normals = open3d.utility.Vector3dVector(data1.surfel_normals)
 
-    pcd2 = open3d.geometry.PointCloud()
-    pcd2.points = open3d.utility.Vector3dVector(data2.surfel_pts)
+    # pcd2 = open3d.geometry.PointCloud()
+    # pcd2.points = open3d.utility.Vector3dVector(data2.surfel_pts)
+    # pcd1.normals = open3d.utility.Vector3dVector(data1.surfel_normals)
+
+
+    pcd1 = open3d.t.geometry.PointCloud()
+    pcd1.point.positions = open3d.core.Tensor(data1.surfel_pts)
+    # pcd1.point.normals = open3d.core.Tensor(data1.surfel_normals)
+
+    pcd2 = open3d.t.geometry.PointCloud()
+    pcd2.point.positions = open3d.core.Tensor(data2.surfel_pts)
+    # pcd2.point.normals = open3d.core.Tensor(data2.surfel_normals)
+
+    print("ESTIMATING NORMALS")
+    normals_search_rad = 5
+    normals_search_neighbors = 30
+    sigma = 5
+    max_corresp_dist = 20
+    # voxel_size = 3
+
+    pcd1.estimate_normals(radius = normals_search_rad, max_nn = normals_search_neighbors)
+    pcd2.estimate_normals(radius = normals_search_rad, max_nn = normals_search_neighbors)
 
     # DO ICP
-    print("Apply point-to-point ICP")
-    reg_p2p = open3d.pipelines.registration.registration_icp(
-        pcd2, pcd1, 5, T_init,
-        open3d.pipelines.registration.TransformationEstimationPointToPoint())
-    print(reg_p2p)
-    # print("Transformation is:")
-    # print(reg_p2p.transformation)
 
-    return reg_p2p.transformation, reg_p2p.fitness
+    estimation = treg.TransformationEstimationPointToPlane(
+        treg.robust_kernel.RobustKernel(
+            treg.robust_kernel.RobustKernelMethod.TukeyLoss, sigma))
+
+    print("Apply ICP")
+    # reg_p2p = open3d.pipelines.registration.registration_icp(
+    #     pcd2, pcd1, 4, T_init,
+    #     open3d.pipelines.registration.TransformationEstimationPointToPoint())
+    criteria = treg.ICPConvergenceCriteria(relative_fitness=0.000001,
+                                       relative_rmse=0.000001,
+                                       max_iteration=50)
+
+    reg_p2p = None
+    try:
+        reg_p2p = treg.icp(
+            pcd2, pcd1, max_corresp_dist, T_init, estimation, criteria)
+            # pcd2, pcd1, max_corresp_dist, T_init, estimation, criteria, voxel_size)
+    except:
+        print("ICP ERROR!")
+        return None, None
+    print(reg_p2p)
+    # print(reg_p2p.correspondence_set.numpy())
+    # print("CORRESP:")
+    # corresp = np.asarray(reg_p2p.correspondence_set)
+    # print(reg_p2p.correspondence_set)
+    corresp = reg_p2p.correspondence_set.numpy()
+    # print(corresp)
+    # print(corresp.shape)
+    corresp = corresp.flatten()
+
+    nonzero_mask = corresp > -1
+
+
+    inlier_mask_map1 = np.full((n_pts_map1), False)
+    inlier_mask_map2 = np.full((n_pts_map2), False)
+    inlierss1 = corresp[nonzero_mask]
+    # print(inlierss1)
+    inlier_mask_map1[inlierss1] = True
+    inlier_mask_map2[nonzero_mask] = True
+    # inlier_mask_map1[corresp[:, 1]] = True
+    # inlier_mask_map2[corresp[:, 0]] = True
+
+    # CALCULATE PERCENTAGE OF INLIER PTS IN EACH SUBMAP IN BOTH MAPS
+    for i in range(data1.n_submaps):
+        n_surfels = data1.submap_surfel_idxs[i][1] - data1.submap_surfel_idxs[i][0]
+        perc_inliers = np.sum(inlier_mask_map1[data1.submap_surfel_idxs[i][0] : data1.submap_surfel_idxs[i][1]]) / n_surfels
+        data1.submap_overlap_ratios.append(perc_inliers)
+
+    for i in range(data2.n_submaps):
+        n_surfels = data2.submap_surfel_idxs[i][1] - data2.submap_surfel_idxs[i][0]
+        perc_inliers = np.sum(inlier_mask_map2[data2.submap_surfel_idxs[i][0] : data2.submap_surfel_idxs[i][1]]) / n_surfels
+        data2.submap_overlap_ratios.append(perc_inliers)
+
+
+    print("Transformation is:")
+    # trans = reg_p2p.transformation
+    trans = reg_p2p.transformation.numpy()
+    print(trans)
+
+    return trans, reg_p2p.fitness
 # # #}
 
 class MapMatchingData:# # #{
@@ -806,6 +892,10 @@ class MapMatchingData:# # #{
         self.surfel_normals = None
         self.freespace_pts = None
         self.freespace_radii = None
+        self.n_submaps = 0
+        self.n_surfels = 0
+        self.submap_surfel_idxs = []
+        self.submap_overlap_ratios = []
 
     def translate(self, vec):
         self.surfel_pts += vec
@@ -824,6 +914,8 @@ class MapMatchingData:# # #{
         _fpts = submap.points
         _rad = submap.radii
 
+        n_surfels = _spts.shape[0]
+
         only_rot = np.eye(4)
         only_rot[:3, :3] = transform[:3, :3]
 
@@ -841,6 +933,10 @@ class MapMatchingData:# # #{
             self.freespace_pts = np.concatenate((self.freespace_pts, _fpts))
             self.surfel_normals = np.concatenate((self.surfel_normals, _snorm))
             self.freespace_radii = np.concatenate((self.freespace_radii, _rad))
+
+        self.submap_surfel_idxs.append([self.n_surfels, self.n_surfels+n_surfels])
+        self.n_submaps += 1
+        self.n_surfels += n_surfels
         
 # # #}
 
@@ -851,11 +947,13 @@ def getMapMatchingDataSimple(mchunk, smap_idxs, transforms):# # #{
     return data
 # # #}
 
-def getConnectedSubmapsWithTransforms(mchunk, start_idx, max_submaps):# # #{
+def getConnectedSubmapsWithTransforms(mchunk, start_idx, max_submaps, allow_zerosurfels = False):# # #{
     
     # GET REACHABLE SUBMAP IDXS - FOR NOW GO FORWARD AND BACKWARD UNTIL ENOUGH SUBMAPS!!
     transforms = [np.eye(4)]
     smap_idxs = [start_idx]
+    if mchunk.submaps[start_idx].surfel_points is None:
+        return [], None
     
     n_submaps_map = 1
     len_smaps = len(mchunk.submaps)
@@ -865,8 +963,10 @@ def getConnectedSubmapsWithTransforms(mchunk, start_idx, max_submaps):# # #{
         test_idxs = [start_idx + i, start_idx - i]
         for j in test_idxs:
             if j >= 0 and j < len_smaps:
-                smap_idxs.append(j)
-                transforms.append(T_inv_start @ mchunk.submaps[j].T_global_to_own_origin)
+                has_pts_and_fspace = (not mchunk.submaps[j].surfel_points is None) and (not mchunk.submaps[j].points is None)
+                if (allow_zerosurfels or has_pts_and_fspace):
+                    smap_idxs.append(j)
+                    transforms.append(T_inv_start @ mchunk.submaps[j].T_global_to_own_origin)
 
     return smap_idxs, transforms
 # # #}

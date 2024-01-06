@@ -483,7 +483,15 @@ class SubmapBuilderModule:
             ray_hit_pts, index_ray, index_tri = obstacle_mesh.ray.intersects_location(
             ray_origins=np.zeros(sampling_pts.shape).T, ray_directions=sampling_pts.T)
 
-            # MAKE THEM BE IN RAND POSITION BETWEEN CAM AND MESH HIT POSITION
+            # MAKE THEM BE IN RAND POSITION BETWEEN CAM AND MESH HIT POSITION, UP TO MAX Z (TODO-rename to dist from Z)
+            # ray_hit_dists = np.linalg.norm(ray_hit_pts, axis=1)
+            # ray_hit_pts = ray_hit_pts / ray_hit_dists
+            # ray_hit_dists[ray_hit_dists > max_sphere_sampling_z] = max_sphere_sampling_z
+            scaling = ray_hit_pts[:,2]
+            scaling[ray_hit_pts[:,2] > max_sphere_sampling_z] = max_sphere_sampling_z
+            scaling = scaling.flatten() / ray_hit_pts[:,2].flatten()
+            ray_hit_pts =  ray_hit_pts * scaling.reshape((ray_hit_pts.shape[0], 1))
+
             sampling_pts =  (np.random.rand(n_sampled, 1) * ray_hit_pts).T
             # TODO - add max sampling dist
 
@@ -549,7 +557,9 @@ class SubmapBuilderModule:
             # HANDLE ADDING/REMOVING VISIBLE 3D POINTS
             comp_start_time = time.time()
 
-            visible_pts_in_spheremap_frame = transformPoints(positive_z_points.T, T_orig_to_current_cam)
+            positive_z_points = positive_z_points.T
+            pts_for_surfel_addition = positive_z_points[positive_z_points[:, 2] < max_sphere_sampling_z]
+            visible_pts_in_spheremap_frame = transformPoints(pts_for_surfel_addition, T_orig_to_current_cam)
             self.spheremap.updateSurfels(visible_pts_in_spheremap_frame , pixpos, tri.simplices, positive_z_slam_ids)
 
             if self.do_frontiers:
@@ -623,7 +633,7 @@ class SubmapBuilderModule:
             #     break
             print("T")
             print(self.mchunk.submaps[idx].T_global_to_own_origin)
-            self.get_spheremap_marker_array(marker_array, self.mchunk.submaps[idx], self.mchunk.submaps[idx].T_global_to_own_origin, alternative_look = True, do_connections = False, do_surfels = True, do_spheres = False, do_map2map_conns=False, ms=self.marker_scale, clr_index = clr_index)
+            self.get_spheremap_marker_array(marker_array, self.mchunk.submaps[idx], self.mchunk.submaps[idx].T_global_to_own_origin, alternative_look = True, do_connections = False, do_surfels = True, do_spheres = False, do_map2map_conns=False, ms=self.marker_scale, clr_index = clr_index, alpha = 0.5)
 
         self.recent_submaps_vis_pub.publish(marker_array)
 
@@ -659,7 +669,7 @@ class SubmapBuilderModule:
         return res
 # # #}
 
-    def get_spheremap_marker_array(self, marker_array, smap, T_inv, alternative_look=False, do_connections=False,  do_surfels=True, do_spheres=True, do_keyframes=False, do_normals=False, do_map2map_conns=True, do_frontiers=False, ms=1, clr_index =0, alpha = 1):# # #{
+    def get_spheremap_marker_array(self, marker_array, smap, T_inv, alternative_look=False, do_connections=False,  do_surfels=True, do_spheres=True, do_keyframes=False, do_normals=False, do_map2map_conns=True, do_frontiers=False, ms=1, clr_index =0, alpha = 1, rgb=None):# # #{
         # T_vis = np.linalg.inv(T_inv)
         T_vis = T_inv
         pts = transformPoints(smap.points, T_vis)
@@ -785,28 +795,33 @@ class SubmapBuilderModule:
                 marker.color.r = 1.0
                 marker.color.g = 0.0
                 marker.color.b = 0.0
+                if not rgb is None:
+                    marker.color.r = rgb[0]
+                    marker.color.g = rgb[1]
+                    marker.color.b = rgb[2]
                 if alternative_look:
-                    marker.color.a = 0.5
-                    if clr_index == 0:
-                        marker.color.r = 1.0
-                        marker.color.g = 1.0
-                        marker.color.b = 0.0
-                    elif clr_index == 1:
-                        marker.color.r = 0.0
-                        marker.color.g = 1.0
-                        marker.color.b = 1.0
-                    elif clr_index == 2:
-                        marker.color.r = 0.4
-                        marker.color.g = 0.7
-                        marker.color.b = 1.0
-                    elif clr_index == 42:
-                        marker.color.r = 0.0
-                        marker.color.g = 0.0
-                        marker.color.b = 0.4
-                    else:
-                        marker.color.r = 1.0
-                        marker.color.g = 0.0
-                        marker.color.b = 1.0
+                    # marker.color.a = 0.5
+                    if rgb is None:
+                        if clr_index == 0:
+                            marker.color.r = 1.0
+                            marker.color.g = 1.0
+                            marker.color.b = 0.0
+                        elif clr_index == 1:
+                            marker.color.r = 0.0
+                            marker.color.g = 1.0
+                            marker.color.b = 1.0
+                        elif clr_index == 2:
+                            marker.color.r = 0.4
+                            marker.color.g = 0.7
+                            marker.color.b = 1.0
+                        elif clr_index == 42:
+                            marker.color.r = 0.0
+                            marker.color.g = 0.0
+                            marker.color.b = 0.4
+                        else:
+                            marker.color.r = 1.0
+                            marker.color.g = 0.0
+                            marker.color.b = 1.0
 
                 marker.id = copy.deepcopy(marker_id)
                 marker_id += 1
