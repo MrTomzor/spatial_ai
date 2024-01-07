@@ -688,7 +688,7 @@ class SubmapBuilderModule:
             marker.type = Marker.SPHERE
             marker.action = Marker.ADD
             marker.pose.orientation.w = 1.0
-            vis_r = smap.freespace_bounding_radius / 2
+            vis_r = smap.freespace_bounding_radius / 4
             marker.scale.x = vis_r  # Adjust the size of the points
             marker.scale.y = vis_r
             marker.scale.z = vis_r

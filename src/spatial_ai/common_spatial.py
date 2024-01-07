@@ -827,7 +827,7 @@ def matchMapGeomSimple(data1, data2, T_init = None):# # #{
     normals_search_rad = 5
     normals_search_neighbors = 30
     sigma = 3
-    max_corresp_dist = 10
+    max_corresp_dist = 5
     # voxel_size = 3
 
     pcd1.estimate_normals(radius = normals_search_rad, max_nn = normals_search_neighbors)
@@ -982,7 +982,7 @@ def getConnectedSubmapsWithTransforms(mchunk, start_idx, max_submaps, allow_zero
     return smap_idxs, transforms
 # # #}
 
-def getLineMarker(pos, endpos, thickness, rgb, frame_id, marker_id):# # #{
+def getLineMarker(pos, endpos, thickness, rgba, frame_id, marker_id):# # #{
     marker = Marker()
     marker.header.frame_id = frame_id
     marker.header.stamp = rospy.Time.now()
@@ -993,10 +993,10 @@ def getLineMarker(pos, endpos, thickness, rgb, frame_id, marker_id):# # #{
     # Set the scale
     marker.scale.x = thickness
     
-    marker.color.a = 1
-    marker.color.r = rgb[0]
-    marker.color.g = rgb[1]
-    marker.color.b = rgb[2]
+    marker.color.a = rgba[3]
+    marker.color.r = rgba[0]
+    marker.color.g = rgba[1]
+    marker.color.b = rgba[2]
     
     points_msg = [Point(x=pos[0], y=pos[1], z=pos[2]), Point(x=endpos[0], y=endpos[1], z=endpos[2])]
     marker.points = points_msg

@@ -240,19 +240,20 @@ class GlobalNavigatorModule:
         mchunk1 = self.mapper.mchunk
         mchunk2 = self.test_mchunk
         
-        start1 = len(mchunk1.submaps) - 1
-        if start1 < 0:
-            print("NOT ENOUGH SUBMAPS IN CURRENT MAP")
+        # start1 = len(mchunk1.submaps) - 1
+        if len(mchunk1.submaps) == 0:
+            print("NO SUBMAPS IN MCHUNK1")
             return
+        start1 = np.random.randint(0, len(mchunk1.submaps))
+        print("START1: " + str(start1))
         
-        start2 = np.random.randint(0, len(mchunk2.submaps))
-        # start2 = 0
-        print("START2: " + str(start2))
-        if start2 < 0:
-            print("NOT ENOUGH SUBMAPS IN OLD MAP")
+        if len(mchunk2.submaps) == 0:
+            print("NO SUBMAPS IN MCHUNK1")
             return
+        start2 = np.random.randint(0, len(mchunk2.submaps))
+        print("START2: " + str(start2))
 
-        max_submaps = 5
+        max_submaps = 3
         # TODO - check by SIZE (of radii of traveled dists!) rather than max submaps!!!
 
         idxs1, transforms1 = getConnectedSubmapsWithTransforms(mchunk1, start1, max_submaps)
@@ -305,6 +306,9 @@ class GlobalNavigatorModule:
 
         # STORE MATCH RESULT!
         # new_match = MultiMapMatch(idxs1, idxs2, mchunk1, mchunk2)
+        print("RMSE:" + str(rmse))
+        print("N_INLIERS:" + str(n_inliers))
+        print("-> SCORE: " + str(map_match_score(n_inliers, rmse)))
         new_match = MultiMapMatch([start1], [start2], mchunk1, mchunk2)
         similar_match = None
         for match in self.multimap_matches:
@@ -339,30 +343,86 @@ class GlobalNavigatorModule:
             T_vis = T_common @ smap.T_global_to_own_origin 
             # self.mapper.get_spheremap_marker_array(marker_array, smap, T_vis, alternative_look = True, do_connections = False, do_surfels = False, do_spheres = False, do_map2map_conns=True, do_centroids = True, ms=self.mapper.marker_scale)
             self.mapper.get_spheremap_marker_array(marker_array, smap, T_vis, alternative_look = True, do_connections = False, do_surfels = True, do_spheres = False, do_map2map_conns=False, do_centroids = False, ms=self.mapper.marker_scale, alpha=0.5)
+            # self.mapper.get_spheremap_marker_array(marker_array, smap, T_vis, alternative_look = True, do_connections = False, do_surfels = False, do_spheres = False, do_map2map_conns=True, do_centroids = True, ms=self.mapper.marker_scale, alpha=1)
 
-        marker_id = marker_array.markers[-1].id
 
         # TODO - compute best score out of all matches, normalize scores OR just abs scores
-        for match in self.multimap_matches:
-            # find transform of smap in current odom frame
+
+        # COMPUTE RANKED MATCHES FOR EACH SUBMAP IN CHUNK1
+        print("SORTING MATCH RANKINGS")
+        match_rankings = []
+        for match_data in self.multimap_matches:
+            found_ranking_idx = False
+            idx1 = match_data.idxs1[0]
+            idx2 = match_data.idxs2[0]
+            score = map_match_score(match_data.n_inliers, match_data.rmse)
+
+            for i in range(len(match_rankings)):
+                if match_rankings[i][0] == idx1:
+                    found_ranking_idx = True
+                    match_rankings[i][1].append(score)
+                    match_rankings[i][2].append(idx2)
+                    break
+            if not found_ranking_idx:
+                match_rankings.append([idx1, [score], [idx2]])
+        # NOW SORT FOR EACH IDX1
+        for i in range(len(match_rankings)):
+            match_rankings[i][1] = np.array(match_rankings[i][1])
+            match_rankings[i][2] = np.array(match_rankings[i][2])
+
+            argsorted = np.argsort(-match_rankings[i][1])
+            match_rankings[i][1] = match_rankings[i][1][argsorted]
+            match_rankings[i][2] = match_rankings[i][2][argsorted]
+
+        max_vis_matches_per_idx1 = 3
+
+        marker_id = marker_array.markers[-1].id+1
+        # for match in self.multimap_matches:
+        for ranking in match_rankings:
             # find transform of other smap in current odom frame (in the big map above)
-            smap1 = mchunk1.submaps[match.idxs1[0]]
-            smap2 = mchunk2.submaps[match.idxs2[0]]
+            # smap1 = mchunk1.submaps[match.idxs1[0]]
+            # smap2 = mchunk2.submaps[match.idxs2[0]]
+            # score = map_match_score(match.n_inliers, match.rmse)
+            smap1 = mchunk1.submaps[ranking[0]]
+            # n_vis = ranking[1].size if ranking[1].size < max_vis_matches_per_idx1 else max_vis_matches_per_idx1
+            n_vis = ranking[1].size
+            relativize = True
 
-            T_vis1 = smap1.T_global_to_own_origin 
-            centroid_trans1 = np.eye(4)
-            centroid_trans1[:3, 3] = smap1.centroid
-            T_vis1 = T_vis1 @ centroid_trans1
+            for i in range(n_vis):
+                smap2 = mchunk2.submaps[ranking[2][i]]
+                score = ranking[1][i]
 
-            T_vis2 = T_common @ smap2.T_global_to_own_origin 
-            centroid_trans2 = np.eye(4)
-            centroid_trans2[:3, 3] = smap2.centroid
-            T_vis2 = T_vis2 @ centroid_trans2
+                T_vis1 = smap1.T_global_to_own_origin 
+                centroid_trans1 = np.eye(4)
+                centroid_trans1[:3, 3] = smap1.centroid
+                T_vis1 = T_vis1 @ centroid_trans1
 
-            # draw line between them! (getlinemarker) thiccness related to score!
-            line_marker = getLineMarker(T_vis1[:3,3].flatten(), T_vis2[:3,3].flatten(), map_match_score(match.n_inliers, match.rmse), [1, 0, 0], self.mapper.odom_frame, marker_id)
-            marker_id += 1
-            marker_array.markers.append(line_marker)
+                T_vis2 = T_common @ smap2.T_global_to_own_origin 
+                centroid_trans2 = np.eye(4)
+                centroid_trans2[:3, 3] = smap2.centroid
+                T_vis2 = T_vis2 @ centroid_trans2
+
+                rgb = [1,0,0, 1]
+                if i > max_vis_matches_per_idx1:
+                    rgb = [0.2,0.2,0.8, 0.8]
+                # draw line between them! (getlinemarker) thiccness related to score!
+                # print("LINE MARKER:")
+                pos1 = T_vis1[:3,3].flatten()
+                pos2 = T_vis2[:3,3].flatten()
+                if score < 0.01:
+                    score = 0.01
+                if np.any(np.isnan(score)):
+                    print("NAN SCORE!!!!")
+                    score = 0.01
+                    # TODO - relativize
+
+                # print("SCORE: " + str(score))
+                # print(pos1)
+                # print(pos2)
+                line_marker = getLineMarker(pos1, pos2, score, rgb, self.mapper.odom_frame, marker_id)
+                # line_marker.ns = 'lines'
+                marker_id += 1
+                marker_array.markers.append(line_marker)
 
         self.multimap_matches_vis.publish(marker_array)
 
