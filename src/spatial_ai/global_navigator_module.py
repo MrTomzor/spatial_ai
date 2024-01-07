@@ -74,13 +74,14 @@ def map_match_score(n_inliers, rmse):
     # return n_inliers 
     return 1.0 / rmse 
 
-class MultiMapMatch:
+class MultiMapMatch:# # #{
     def __init__(self, submap_idxs1, submap_idxs2, mchunk1, mchunk2):
         self.idxs1 = submap_idxs1
         self.idxs2 = submap_idxs2
         self.mchunk1 = mchunk1
         self.mchunk2 = mchunk2
         self.n_tries = 0
+        self.score = 0
 
     def add_measurement(self, trans, n_inliers, rmse):
         if self.n_tries == 0 or map_match_score(n_inliers, rmse) > map_match_score(self.n_inliers, self.rmse):
@@ -89,16 +90,30 @@ class MultiMapMatch:
             self.rmse = rmse
             self.trans = trans
             self.n_tries += 1
+            self.score = map_match_score(n_inliers, rmse)
             # TODO - n offending pts in freespace
 
     def same_submaps(self, match2):
         if sorted(self.idxs1) == sorted(match2.idxs1) and sorted(self.idxs2) == sorted(match2.idxs2):
             return True
         return False
+# # #}
+
+class LocalizationParticle:# # #{
+    def __init__(self, poses1, idxs1, poses2, idxs2, sum_odom_error):
+        self.poses1 = poses1
+        self.idxs1 = idxs1
+        self.poses2 = poses2
+        self.idxs2 = idxs2
+        self.sum_odom_error = sum_odom_error
+        self.n_assocs = np.sum(np.array([not a is None for a in idxs2]))
+# # #}
 
 class GlobalNavigatorModule:
     def __init__(self, mapper, local_navigator):# # #{
         self.multimap_matches = []
+        self.localization_particles = None
+        self.matches_mutex = threading.Lock()
 
         self.mapper = mapper
         self.local_navigator = local_navigator
@@ -111,6 +126,7 @@ class GlobalNavigatorModule:
         # self.unsorted_vis_pub = rospy.Publisher('unsorted_markers', MarkerArray, queue_size=10)
         self.matching_result_vis = rospy.Publisher('map_matching_result_vis', MarkerArray, queue_size=10)
         self.multimap_matches_vis = rospy.Publisher('multimap_matches', MarkerArray, queue_size=10)
+        self.particle_vis = rospy.Publisher('particle_vis', MarkerArray, queue_size=10)
 
 
         self.marker_scale = 0.15
@@ -237,7 +253,7 @@ class GlobalNavigatorModule:
         self.matching_result_vis.publish(marker_array)
 # # #}
 
-    def main_iter(self):# # #{
+    def update_matches(self):# # #{
         print("N SUBMAPS IN OLD MAP:")
         print(len(self.test_mchunk.submaps))
 
@@ -326,19 +342,93 @@ class GlobalNavigatorModule:
         else:
             print("SIMILAR MATCH FOUND!")
             similar_match.add_measurement(T_res, n_inliers, rmse)
+# # #}
 
-        # VISUALIZE MATCHES (OR PARTICLE FILTER TIMEr!)
+    def main_iter(self):# # #{
+        # UPDATE AND VISUALIZE MATCHES
+        self.update_matches()
         self.visualize_matches()
+
+        # SAMPLE NEW PARTICLES
+        self.localization_particles = None
+        self.sample_and_propagate_particle(max_submaps = 30, add=True)
+
+        if not self.localization_particles is None:
+            print("PUBLISHING PARTICLE MARKERS")
+            marker_array = MarkerArray()
+            self.get_particle_markers_detailed(marker_array, self.localization_particles[0])
+            self.particle_vis.publish(marker_array)
+
+
+        # n_particle_samples = 10
+        # for i in range(n_particle_samples):
+        #     self.sample_and_propagate_particle(max_submaps = 30, add=True)
+
+        # if not self.localization_particles is None:
+        #     n_kept_particles = 100
+        #     if n_kept_particles > self.localization_particles:
+        #         n_kept_particles = self.localization_particles
+
+
+        #     # RANK PARTICLES
+        #     particle_scores = np.array([len(p.poses1) for p in self.localization_particles])
+        #     ranked_particles = np.argsort(-particle_scores)
+        #     kept_particle_idxs = ranked_particles[:n_kept_particles]
+        #     self.localization_particles = self.localization_particles[kept_particle_idxs] #SORTED
+
+        #     # VIS PARTICLES
+        #     cmap = plt.get_cmap('viridis')  # You can use other colormaps as well
+        #     colors = [cmap(1.0 - (1.0 *i) / n_kept_particles)[:3] for i in range(n_kept_particles)]
+
+        #     marker_array = MarkerArray()
+        #     for i in range(n_kept_particles):
+        #         self.get_particle_markers(marker_array, self.localization_particles[i], colors[i])
+        #     self.particle_vis.publish(marker_array)
+
 
     # # #}
 
-    def visualize_matches(self):
-        # TODO - draw big map in the sky of other mchunk
+    def get_particle_markers_detailed(self, marker_array, particle):# # #{
+        # VIS ASSOC MAPS IN THE SKY
         mchunk1 = self.mapper.mchunk
         mchunk2 = self.test_mchunk
 
         mchunk_centroid_odom = mchunk2.compute_centroid_odom()
         trans_vis = np.array([0, 0, 100])
+        T_common = np.eye(4)
+        T_common[:3, 3] = trans_vis - mchunk_centroid_odom
+
+        for idx in range(len(mchunk2.submaps)):
+            smap = mchunk2.submaps[idx]
+            T_vis = T_common @ smap.T_global_to_own_origin 
+
+            rgb = [0.3, 0.3, 0.3]
+            alpha = 1
+            if idx in particle.idxs2:
+                # print("RED!")
+                rgb = [1, 0, 0]
+                alpha = 1
+                # print("T_vis:")
+                # print(T_vis)
+
+            self.mapper.get_spheremap_marker_array(marker_array, smap, T_vis, alternative_look = True, do_connections = False, do_surfels = True, do_spheres = False, do_map2map_conns=False, do_centroids = False, ms=self.mapper.marker_scale, rgb = rgb, alpha = alpha)
+        # print("N detailed markers:")
+        # print(len(marker_array.markers))
+
+        return
+# # #}
+
+    def get_particle_markers(self, marker_array, particles):# # #{
+        return
+# # #}
+
+    def visualize_matches(self):# # #{
+        # TODO - draw big map in the sky of other mchunk
+        mchunk1 = self.mapper.mchunk
+        mchunk2 = self.test_mchunk
+
+        mchunk_centroid_odom = mchunk2.compute_centroid_odom()
+        trans_vis = np.array([0, 0, -100])
         T_common = np.eye(4)
         T_common[:3, 3] = trans_vis - mchunk_centroid_odom
 
@@ -377,6 +467,7 @@ class GlobalNavigatorModule:
             argsorted = np.argsort(-match_rankings[i][1])
             match_rankings[i][1] = match_rankings[i][1][argsorted]
             match_rankings[i][2] = match_rankings[i][2][argsorted]
+        self.matches_ranked = match_rankings
 
         max_vis_matches_per_idx1 = 3
 
@@ -442,5 +533,157 @@ class GlobalNavigatorModule:
         self.multimap_matches_vis.publish(marker_array)
 
         return
+# # #}
+
+
+
+    def get_potential_matches(self, map1_idx):
+        idxs = []
+        scores = []
+        trans = []
+
+        for match in self.multimap_matches:
+            if match.idxs1[0] == map1_idx:
+                idxs.append(match.idxs2[0])
+                scores.append(match.score)
+                trans.append(match.trans)
+        return idxs, scores, trans
+
+        # matches_data = None
+        # for mr in self.matches_ranked:
+        #     if mr[0] == map1_idx:
+        #         matches_data = mr
+        #         break
+        # if match_data is None:
+        #     print("NO MATCHES FOR THIS MAP IDX YET!")
+        #     return None, None, None
+        # self.matches_ranked = match_rankings
+
+    def sample_and_propagate_particle(self, max_submaps, add=True):
+        # TODO - lock matches mutex, matches cant change!!!
+
+        mchunk1 = self.mapper.mchunk
+        mchunk2 = self.test_mchunk
+
+        n_maps_in_chunk1 = len(mchunk1.submaps)
+        if n_maps_in_chunk1 < 2:
+            print("NOT ENOUGH MAPS FOR PARTICLE PROPAGATION")
+            return
+        n_propagated_maps = n_maps_in_chunk1
+        if n_propagated_maps > max_submaps:
+            n_propagated_maps = max_submaps
+
+        # ownmap_idxs = mchunk1.submaps[(n_maps_in_chunk1-n_propagated_maps-1):(n_maps_in_chunk1)]
+        ownmap_idxs = np.arange(n_maps_in_chunk1-n_propagated_maps, n_maps_in_chunk1)
+        print("N PROPAGATED MAPS:" + str(n_propagated_maps))
+        print(ownmap_idxs)
+        # ownmap_idxs.reverse()
+        ownmap_idxs = np.flip(ownmap_idxs)
+
+        print("PROPAGATING")
+        localized = False
+
+        own_poses = []
+        assoc_poses = []
+        submap_idx_associations = []
+        odom2odom_transforms = []
+        n_assoc_maps = 0
+        last_odom2odom_T = None
+
+        for i in range(n_propagated_maps):
+            map1_idx = ownmap_idxs[i]
+            pose1_odom = mchunk1.submaps[map1_idx].T_global_to_own_origin
+
+            # RETRIEVE potential matches with their absolute similarity scores
+            potential_idxs, potential_scores, potential_transforms = self.get_potential_matches(map1_idx)
+            n_potential_matches = len(potential_idxs)
+
+            # IF ASSOCIATED BEFORE -- filter out matches taht would be too far from integrated pose in map2
+            # TODO
+
+            # CHOOSE some association or no association
+            assoc_idx = None
+            assoc_icp_trans = None
+            if n_potential_matches > 0:
+                prob_no_assoc = -1 # TODO - if bad similarity (all similarities same, no "firing", also allow low assoc. WHen disctinct -> likely assoc)
+
+                # COMPUTE WEIGHTS FOR SELECTING MATCHES
+                potential_scores = np.array(potential_scores)
+                minscore = np.min(potential_scores)
+                maxscore = np.max(potential_scores)
+                score_span = (maxscore - minscore)
+                if score_span > 0.0001 and np.random.rand() > prob_no_assoc:
+                    norm_scores = (potential_scores - minscore) / score_span
+                    norm_scores += 0.1
+                    prob_distrib = norm_scores / np.sum(norm_scores)
+                    print("PROB DISTRIB:")
+                    print(prob_distrib)
+
+                    # CHOOSE
+                    choice_match_idx = np.random.choice(n_potential_matches, 1, p=prob_distrib)[0]
+                    print("CHOSEN INDEX:")
+                    print(choice_match_idx)
+                    assoc_idx = potential_idxs[choice_match_idx]
+                    assoc_icp_trans = potential_transforms[choice_match_idx]
+
+            # IF ASSOCIATED NOW -- set pose in map2 to the associated pose
+            T_cur_odom2odom = None
+            pose2_odom = None # save none if not yet assoc, so that the arrays have same len!
+            if not assoc_idx is None:
+
+                pose2_odom = mchunk2.submaps[assoc_idx].T_global_to_own_origin
+                # T_cur_odom2odom = TODO
+
+                n_assoc_maps += 1
+            else:
+                print("NO ASSOC, BREAKING FOR NOW!")
+                break
+                # IF NOT ASSOCIATED NOW BUT BEFORE -- PROPAGATE the associated position in second map by own odom
+                if n_assoc_maps > 0 and len(own_poses) > 1:
+                    own_delta_odom = np.linalg.inv(own_poses[-2]) @ own_poses[-1]
+
+                    transformed_delta_odom = np.linalg.inv(last_odom2odom_T @ own_poses[-2]) @ (last_odom2odom_T @own_poses[-1])
+
+                    # pose2_odom = last_odom2odom_T @ own_delta_odom @ assoc_poses[-1]
+                    pose2_odom = transformed_delta_odom @ assoc_poses[-1]
+
+            # IF ASSOCIATED and ASSOCIATED BEFORE -- compute translation and rotation error! and accumulate it!
+            own_poses.append(pose1_odom)
+            assoc_poses.append(pose2_odom)
+            submap_idx_associations.append(assoc_idx)
+            odom2odom_transforms.append(T_cur_odom2odom)
+
+        if n_assoc_maps == 0:
+            print("ZERO ASSOCIATIONS! EXITING")
+            return
+
+        if add:
+            p = LocalizationParticle(own_poses, ownmap_idxs, assoc_poses, submap_idx_associations, 0)
+            if self.localization_particles is None:
+                self.localization_particles = np.array([p], dtype=object)
+            else:
+                self.localization_particles = np.concatenate((self.localization_particles, p)) 
+            print("PARTICLE ADDED!")
+
+        # THIS IS HARD, LETS JUST ALWAYS ASSOCIATE!!
+
+        # GO BACK THRU THE MAP FROM FIRST ASSOC AND PROPAGATE WHERE WE COULD BE NOW!! -- ALL THE POSES!! (i guess)
+        # latest_assoc_path_index = None
+        # for i in range(len(own_poses)):
+        #     if not submap_idx_associations[i] is None:
+        #         latest_assoc_path_index = i
+        # print("LATEST ASSOC INDEX (going from now-submap) IS " + str(latest_assoc_path_index))
+        # extrapolating_transform_map1 = np.linalg.inv(own_poses[latest_assoc_path_index]) @ own_poses[0]
+        # extrapolating_transform_map1[:3,:3] = np.eye(3) # JUST TRANSLATION FOR EXTRAPOLATION
+
+        # T_first_odom2odom = odom2odom_transforms[latest_assoc_path_index]
+        # rotmatrix = np.eye(4)
+        # rotmatrix[:3, :3] = T_first_odom2odom[:3,:3] #rot from odom1 to odm2
+        # T_delta_odom_map2 = np.linalg.inv(rotmatrix) @ extrapolating_transform_map1
+
+        # extrapolated_current_pose_map2 = T_delta_odom_map2 @ mchunk2.submaps[submap_idx_associations[latest_assoc_path_index]].T_global_to_own_origin 
+
+
+                    
 
 
