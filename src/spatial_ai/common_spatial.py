@@ -791,6 +791,24 @@ def matchMapGeomSimple(data1, data2, T_init = None):# # #{
         T_init = np.eye(4)
         T_init[:3,:3] = headingToTransformationMatrix(np.random.rand() * 2 * 3.14159)
 
+        # mean_dist_from_center = np.mean(np.linalg.norm(data1.surfel_pts, axis=1), axis=0)
+        # delta_vec = (2 * np.random.rand(3,1) - 1) * mean_dist_from_center
+        pts = data1.surfel_pts
+        xbounds = [np.min(pts[:, 0]), np.max(pts[:,0])]
+        ybounds = [np.min(pts[:, 1]), np.max(pts[:,1])]
+        zbounds = [np.min(pts[:, 2]), np.max(pts[:,2])]
+        x = xbounds[0] + (xbounds[1]-xbounds[0]) * (0.25 + 0.5 * np.random.rand())
+        y = ybounds[0] + (ybounds[1]-ybounds[0]) * (0.25 + 0.5 * np.random.rand())
+        z = zbounds[0] + (zbounds[1]-zbounds[0]) * (0.25 + 0.5 * np.random.rand())
+        delta_vec = np.array([x, y, z]).flatten()
+
+        print("randomization translation:")
+        print(delta_vec)
+        T_init[:3, 3] = delta_vec.flatten()
+        # T_init[3,2] = 100 
+        # delta_vec = 
+        # T_init[:3,:3] = headingToTransformationMatrix(np.random.rand() * 2 * 3.14159)
+
     # fspace_mean1 = np.mean(data1.freespace_pts, axis = 0)
     # fspace_mean2 = np.mean(data2.freespace_pts, axis = 0)
     # d_means = fspace_mean1  - fspace_mean2

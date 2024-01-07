@@ -73,6 +73,7 @@ def map_match_score(n_inliers, rmse):
     # return n_inliers / rmse
     # return n_inliers 
     return 1.0 / rmse 
+    # return n_inliers / rmse 
 
 class MultiMapMatch:# # #{
     def __init__(self, submap_idxs1, submap_idxs2, mchunk1, mchunk2):
@@ -179,79 +180,6 @@ class GlobalNavigatorModule:
         self.best_current_match_score = None
         
         # # #}
-
-    def test_matching(self):# # #{
-        print("N SUBMAPS IN OLD MAP:")
-        print(len(self.test_mchunk.submaps))
-
-        mchunk1 = self.mapper.mchunk
-        mchunk2 = self.test_mchunk
-        
-        start1 = len(mchunk1.submaps) - 1
-        if start1 < 0:
-            print("NOT ENOUGH SUBMAPS IN CURRENT MAP")
-            return
-        
-        start2 = np.random.randint(0, len(mchunk2.submaps))
-        # start2 = 0
-        print("START2: " + str(start2))
-        if start2 < 0:
-            print("NOT ENOUGH SUBMAPS IN OLD MAP")
-            return
-
-        max_submaps = 20
-        # TODO - check by SIZE (of radii of traveled dists!) rather than max submaps!!!
-
-        idxs1, transforms1 = getConnectedSubmapsWithTransforms(mchunk1, start1, max_submaps)
-        idxs2, transforms2 = getConnectedSubmapsWithTransforms(mchunk2, start2, max_submaps)
-
-        print("N MAPS FOR MATCHING IN CHUNK1: " + str(len(idxs1)))
-        print("N MAPS FOR MATCHING IN CHUNK2: " + str(len(idxs2)))
-        if len(idxs1) == 0 or len(idxs2) == 0:
-            print("NOT ENOUGH MAPS FOR MATCHING")
-            return
-
-        # SCROUNGE ALL MAP MATCHING DATA
-        matching_data1 = getMapMatchingDataSimple(mchunk1, idxs1, transforms1)
-        matching_data2 = getMapMatchingDataSimple(mchunk2, idxs2, transforms2)
-
-        matching_data1 = copy.deepcopy(matching_data1)
-        matching_data2 = copy.deepcopy(matching_data2)
-
-        # PERFORM MATCHING!
-        T_res, score_res = matchMapGeomSimple(matching_data1, matching_data2)
-        if T_res is None:
-            print("MATCHING FAILED!")
-            return
-
-        # VISUALIZE MATCH OVERLAP!!
-        print("MATCHING DONE!!!")
-        T_odom_chunk1 = mchunk1.submaps[start1].T_global_to_own_origin
-        # T_vis_chunk1 = [T_odom_chunk1 @ tr for tr in transforms1]
-
-        # T_odom_chunk2 = mchunk2.submaps[start2].T_global_to_own_origin
-        T_vis_chunk2 = [T_odom_chunk1 @ T_res @ tr for tr in transforms2]
-        # print(T_odom_chunk1)
-        print("T_VIS:")
-
-        print("MATCHING DATA INLIER RATIOS :")
-        # print(matching_data1.submap_overlap_ratios)
-        # print(matching_data2.submap_overlap_ratios)
-
-        # VISUALIZE OVERLAYED MATCHING SUBMAPS
-        marker_array = MarkerArray()
-        for i in range(len(idxs2)):
-            cmap = plt.get_cmap('viridis')  # You can use other colormaps as well
-            rgba_color = cmap(matching_data2.submap_overlap_ratios[i])
-            # rgba_color = cmap(1)
-            rgb = rgba_color[:3]
-
-            self.mapper.get_spheremap_marker_array(marker_array, mchunk2.submaps[idxs2[i]], T_vis_chunk2[i], alternative_look = True, do_connections = False, do_surfels = True, do_spheres = False, do_map2map_conns=False, ms=self.mapper.marker_scale, clr_index = 42, alpha = 1, rgb = rgb)
-            # print("INLIER RATIO: " + str(matching_data2.submap_overlap_ratios[i]))
-            # TODO - vis only the maps that were put into data!!!
-
-        self.matching_result_vis.publish(marker_array)
-# # #}
 
     def update_matches(self):# # #{
         print("N SUBMAPS IN OLD MAP:")
@@ -445,28 +373,34 @@ class GlobalNavigatorModule:
         # COMPUTE RANKED MATCHES FOR EACH SUBMAP IN CHUNK1
         print("SORTING MATCH RANKINGS")
         match_rankings = []
-        for match_data in self.multimap_matches:
+        for match_index in range(len(self.multimap_matches)):
+        # for match_data in self.multimap_matches:
+            match_data = self.multimap_matches[match_index]
             found_ranking_idx = False
             idx1 = match_data.idxs1[0]
             idx2 = match_data.idxs2[0]
             score = map_match_score(match_data.n_inliers, match_data.rmse)
+            # match_index = 
 
             for i in range(len(match_rankings)):
                 if match_rankings[i][0] == idx1:
                     found_ranking_idx = True
                     match_rankings[i][1].append(score)
                     match_rankings[i][2].append(idx2)
+                    match_rankings[i][3].append(match_index)
                     break
             if not found_ranking_idx:
-                match_rankings.append([idx1, [score], [idx2]])
+                match_rankings.append([idx1, [score], [idx2], [match_index]])
         # NOW SORT FOR EACH IDX1
         for i in range(len(match_rankings)):
             match_rankings[i][1] = np.array(match_rankings[i][1])
             match_rankings[i][2] = np.array(match_rankings[i][2])
+            match_rankings[i][3] = np.array(match_rankings[i][3])
 
             argsorted = np.argsort(-match_rankings[i][1])
             match_rankings[i][1] = match_rankings[i][1][argsorted]
             match_rankings[i][2] = match_rankings[i][2][argsorted]
+            match_rankings[i][3] = match_rankings[i][3][argsorted]
         self.matches_ranked = match_rankings
 
         max_vis_matches_per_idx1 = 3
@@ -488,8 +422,13 @@ class GlobalNavigatorModule:
             minscore = np.min(scores)
 
             for i in range(n_vis):
+                if i > max_vis_matches_per_idx1:
+                    continue
                 smap2 = mchunk2.submaps[ranking[2][i]]
                 score = ranking[1][i]
+                match_index = ranking[3][i]
+                # T_res = np.linalg.inv(self.multimap_matches[match_index].trans)
+                T_res = self.multimap_matches[match_index].trans
 
                 T_vis1 = smap1.T_global_to_own_origin 
                 centroid_trans1 = np.eye(4)
@@ -499,10 +438,14 @@ class GlobalNavigatorModule:
                 T_vis2 = T_common @ smap2.T_global_to_own_origin 
                 centroid_trans2 = np.eye(4)
                 centroid_trans2[:3, 3] = smap2.centroid
-                T_vis2 = T_vis2 @ centroid_trans2
+                # T_vis2 = T_vis2 @ centroid_trans2
+                # T_vis2 = T_vis2 @ centroid_trans2 @ T_res
+                # T_vis2 = np.linalg.inv(T_res) @ (T_vis2 @ centroid_trans2)
+                # T_vis2 =  T_vis2 @ np.linalg.inv(T_res)
+                T_vis2 =  T_vis2 @ T_res
 
                 rgb = [1,0,0, 1]
-                if i > max_vis_matches_per_idx1:
+                if i > 0:
                     rgb = [0.2,0.2,0.8, 0.8]
                 # draw line between them! (getlinemarker) thiccness related to score!
                 # print("LINE MARKER:")
