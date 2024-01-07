@@ -826,7 +826,7 @@ def matchMapGeomSimple(data1, data2, T_init = None):# # #{
     print("ESTIMATING NORMALS")
     normals_search_rad = 5
     normals_search_neighbors = 30
-    sigma = 3
+    sigma = 0.5
     max_corresp_dist = 5
     # voxel_size = 3
 
@@ -835,9 +835,10 @@ def matchMapGeomSimple(data1, data2, T_init = None):# # #{
 
     # DO ICP
 
-    estimation = treg.TransformationEstimationPointToPlane(
-        treg.robust_kernel.RobustKernel(
-            treg.robust_kernel.RobustKernelMethod.TukeyLoss, sigma))
+    estimation = treg.TransformationEstimationPointToPlane()
+    # estimation = treg.TransformationEstimationPointToPlane(
+    #     treg.robust_kernel.RobustKernel(
+    #         treg.robust_kernel.RobustKernelMethod.TukeyLoss, sigma))
 
     print("Apply ICP")
     # reg_p2p = open3d.pipelines.registration.registration_icp(
@@ -845,7 +846,7 @@ def matchMapGeomSimple(data1, data2, T_init = None):# # #{
     #     open3d.pipelines.registration.TransformationEstimationPointToPoint())
     criteria = treg.ICPConvergenceCriteria(relative_fitness=0.000001,
                                        relative_rmse=0.000001,
-                                       max_iteration=30)
+                                       max_iteration=15)
 
     reg_p2p = None
     try:

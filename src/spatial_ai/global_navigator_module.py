@@ -68,7 +68,11 @@ from scipy.spatial.transform import Rotation as R
 # #}
 
 def map_match_score(n_inliers, rmse):
-    return n_inliers / rmse
+    if n_inliers == 0:
+        return 0
+    # return n_inliers / rmse
+    # return n_inliers 
+    return 1.0 / rmse 
 
 class MultiMapMatch:
     def __init__(self, submap_idxs1, submap_idxs2, mchunk1, mchunk2):
@@ -387,6 +391,10 @@ class GlobalNavigatorModule:
             # n_vis = ranking[1].size if ranking[1].size < max_vis_matches_per_idx1 else max_vis_matches_per_idx1
             n_vis = ranking[1].size
             relativize = True
+            scores = ranking[1]
+            # print(scores)
+            maxscore = np.max(scores)
+            minscore = np.min(scores)
 
             for i in range(n_vis):
                 smap2 = mchunk2.submaps[ranking[2][i]]
@@ -409,12 +417,19 @@ class GlobalNavigatorModule:
                 # print("LINE MARKER:")
                 pos1 = T_vis1[:3,3].flatten()
                 pos2 = T_vis2[:3,3].flatten()
-                if score < 0.01:
-                    score = 0.01
                 if np.any(np.isnan(score)):
                     print("NAN SCORE!!!!")
                     score = 0.01
                     # TODO - relativize
+                if relativize:
+                    max_thicc = 2
+                    if scores.size > 1 and (maxscore - minscore) > 0.0001:
+                        score = max_thicc * (score - minscore) / (maxscore - minscore)
+                    # else:
+                    #     score = max_thicc
+                if score < 0.01:
+                    score = 0.01
+
 
                 # print("SCORE: " + str(score))
                 # print(pos1)
