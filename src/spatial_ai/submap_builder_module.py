@@ -223,7 +223,8 @@ class SubmapBuilderModule:
                         # TODO give it the transform to the next ones origin from previous origin
                         memorized_transform_to_prev_map = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_fcu
 
-                        self.mchunk.submaps.append(self.spheremap)
+                        # self.mchunk.submaps.append(self.spheremap)
+                        self.mchunk.addSubmap(self.spheremap)
                         init_new_spheremap = True
                         self.visualize_episode_submaps()
             if init_new_spheremap:
@@ -669,7 +670,7 @@ class SubmapBuilderModule:
         return res
 # # #}
 
-    def get_spheremap_marker_array(self, marker_array, smap, T_inv, alternative_look=False, do_connections=False,  do_surfels=True, do_spheres=True, do_keyframes=False, do_normals=False, do_map2map_conns=True, do_frontiers=False, ms=1, clr_index =0, alpha = 1, rgb=None):# # #{
+    def get_spheremap_marker_array(self, marker_array, smap, T_inv, alternative_look=False, do_connections=False,  do_surfels=True, do_spheres=True, do_keyframes=False, do_normals=False, do_map2map_conns=True, do_frontiers=False, do_centroids=False, ms=1, clr_index =0, alpha = 1, rgb=None):# # #{
         # T_vis = np.linalg.inv(T_inv)
         T_vis = T_inv
         pts = transformPoints(smap.points, T_vis)
@@ -677,6 +678,29 @@ class SubmapBuilderModule:
         marker_id = 0
         if len(marker_array.markers) > 0:
             marker_id = marker_array.markers[-1].id + 1
+
+        if do_centroids:
+            centroid = smap.centroid.reshape((1,3))
+            t_centroid = transformPoints(centroid, T_vis).flatten()
+
+            marker = Marker()
+            marker.header.frame_id = self.odom_frame  # Adjust the frame_id as needed
+            marker.type = Marker.SPHERE
+            marker.action = Marker.ADD
+            marker.pose.orientation.w = 1.0
+            vis_r = smap.freespace_bounding_radius / 2
+            marker.scale.x = vis_r  # Adjust the size of the points
+            marker.scale.y = vis_r
+            marker.scale.z = vis_r
+            marker.color.a = 1
+            marker.color.r = 0.5
+            marker.color.b = 1
+
+            marker.id = marker_id
+            marker_id += 1
+            marker.pose.position = Point(t_centroid[0], t_centroid[1], t_centroid[2])
+
+            marker_array.markers.append(marker)
 
         if do_map2map_conns and len(smap.map2map_conns) > 0:
             n_conns = len(smap.map2map_conns)

@@ -10,6 +10,8 @@ import tf.transformations as tfs
 from scipy.spatial.transform import Rotation as R
 import open3d 
 import open3d.t.pipelines.registration as treg
+from visualization_msgs.msg import Marker, MarkerArray
+from geometry_msgs.msg import Point
 
 
 # common utils# #{
@@ -204,7 +206,7 @@ class SphereMap:
 
     def computeStorageMetrics(self):
         self.centroid = np.mean(self.points, axis=0)
-        self.freespace_bounding_radius = np.max(np.linalg.norm(self.points - fspace_centroid, axis = 1) + self.radii)
+        self.freespace_bounding_radius = np.max(np.linalg.norm(self.points - self.centroid, axis = 1) + self.radii)
 
         # fspace_centroid = np.mean(self.points, axis=0)
         # visited_pts = np.array([kp.position for kp in visual_keyframes])
@@ -729,6 +731,11 @@ class CoherentSpatialMemoryChunk:# # #{
         self.submaps = []
         self.total_traveled_context_distance = 0
 
+    def compute_centroid_odom(self):
+        # centroid = np.mean(np.array([np.array(smap.centroid) + smap.T_global_to_own_origin[:3,3]  for smap in self.submaps]))
+        centroid = np.mean(np.array([smap.T_global_to_own_origin[:3,3]  for smap in self.submaps]), axis = 0)
+        return centroid
+
     def mergeSubmaps(self, indices):
         '''merges submaps into the first one and returns it'''
         map1 = self.submaps[indices[0]]
@@ -765,10 +772,14 @@ class CoherentSpatialMemoryChunk:# # #{
 
     @classmethod
     def load(cls, path):
+        print("LOADING MEMORY CHUNK FROM " + path)
         with open(path, "rb") as mfile:
             cls_dict = pickle.load(mfile)
         mem = cls.__new__(cls)
         mem.__dict__.update(cls_dict)
+        for smap in mem.submaps:
+            smap.computeStorageMetrics()
+        print("LOADED AND COMPUTED STORAGE METRICS FOR EACH SUBMAP")
         return mem
 # # #}
 
@@ -815,8 +826,8 @@ def matchMapGeomSimple(data1, data2, T_init = None):# # #{
     print("ESTIMATING NORMALS")
     normals_search_rad = 5
     normals_search_neighbors = 30
-    sigma = 5
-    max_corresp_dist = 20
+    sigma = 3
+    max_corresp_dist = 10
     # voxel_size = 3
 
     pcd1.estimate_normals(radius = normals_search_rad, max_nn = normals_search_neighbors)
@@ -834,7 +845,7 @@ def matchMapGeomSimple(data1, data2, T_init = None):# # #{
     #     open3d.pipelines.registration.TransformationEstimationPointToPoint())
     criteria = treg.ICPConvergenceCriteria(relative_fitness=0.000001,
                                        relative_rmse=0.000001,
-                                       max_iteration=50)
+                                       max_iteration=30)
 
     reg_p2p = None
     try:
@@ -843,7 +854,7 @@ def matchMapGeomSimple(data1, data2, T_init = None):# # #{
             # pcd2, pcd1, max_corresp_dist, T_init, estimation, criteria, voxel_size)
     except:
         print("ICP ERROR!")
-        return None, None
+        return None, None, None
     print(reg_p2p)
     # print(reg_p2p.correspondence_set.numpy())
     # print("CORRESP:")
@@ -883,7 +894,7 @@ def matchMapGeomSimple(data1, data2, T_init = None):# # #{
     trans = reg_p2p.transformation.numpy()
     print(trans)
 
-    return trans, reg_p2p.fitness
+    return trans, np.sum(nonzero_mask), reg_p2p.inlier_rmse
 # # #}
 
 class MapMatchingData:# # #{
@@ -971,3 +982,22 @@ def getConnectedSubmapsWithTransforms(mchunk, start_idx, max_submaps, allow_zero
     return smap_idxs, transforms
 # # #}
 
+def getLineMarker(pos, endpos, thickness, rgb, frame_id, marker_id):# # #{
+    marker = Marker()
+    marker.header.frame_id = frame_id
+    marker.header.stamp = rospy.Time.now()
+    marker.type = Marker.LINE_LIST
+    marker.action = Marker.ADD
+    marker.id = marker_id
+    
+    # Set the scale
+    marker.scale.x = thickness
+    
+    marker.color.a = 1
+    marker.color.r = rgb[0]
+    marker.color.g = rgb[1]
+    marker.color.b = rgb[2]
+    
+    points_msg = [Point(x=pos[0], y=pos[1], z=pos[2]), Point(x=endpos[0], y=endpos[1], z=endpos[2])]
+    marker.points = points_msg
+    return marker# # #}

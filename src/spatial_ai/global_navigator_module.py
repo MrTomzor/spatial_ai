@@ -67,8 +67,34 @@ from scipy.spatial.transform import Rotation as R
 
 # #}
 
+def map_match_score(n_inliers, rmse):
+    return n_inliers / rmse
+
+class MultiMapMatch:
+    def __init__(self, submap_idxs1, submap_idxs2, mchunk1, mchunk2):
+        self.idxs1 = submap_idxs1
+        self.idxs2 = submap_idxs2
+        self.mchunk1 = mchunk1
+        self.mchunk2 = mchunk2
+        self.n_tries = 0
+
+    def add_measurement(self, trans, n_inliers, rmse):
+        if self.n_tries == 0 or map_match_score(n_inliers, rmse) > map_match_score(self.n_inliers, self.rmse):
+            print("MEASUREMENT IS BETTER THAN PREV, MEAS INDEX: " + str(self.n_tries))
+            self.n_inliers = n_inliers
+            self.rmse = rmse
+            self.trans = trans
+            self.n_tries += 1
+            # TODO - n offending pts in freespace
+
+    def same_submaps(self, match2):
+        if sorted(self.idxs1) == sorted(match2.idxs1) and sorted(self.idxs2) == sorted(match2.idxs2):
+            return True
+        return False
+
 class GlobalNavigatorModule:
     def __init__(self, mapper, local_navigator):# # #{
+        self.multimap_matches = []
 
         self.mapper = mapper
         self.local_navigator = local_navigator
@@ -80,6 +106,7 @@ class GlobalNavigatorModule:
         # self.path_planning_vis_pub = rospy.Publisher('path_planning_vis', MarkerArray, queue_size=10)
         # self.unsorted_vis_pub = rospy.Publisher('unsorted_markers', MarkerArray, queue_size=10)
         self.matching_result_vis = rospy.Publisher('map_matching_result_vis', MarkerArray, queue_size=10)
+        self.multimap_matches_vis = rospy.Publisher('multimap_matches', MarkerArray, queue_size=10)
 
 
         self.marker_scale = 0.15
@@ -133,7 +160,7 @@ class GlobalNavigatorModule:
         
         # # #}
 
-    def main_iter(self):# # #{
+    def test_matching(self):# # #{
         print("N SUBMAPS IN OLD MAP:")
         print(len(self.test_mchunk.submaps))
 
@@ -145,14 +172,14 @@ class GlobalNavigatorModule:
             print("NOT ENOUGH SUBMAPS IN CURRENT MAP")
             return
         
-        # start2 = np.random.randint(0, len(mchunk2.submaps))
-        start2 = 0
+        start2 = np.random.randint(0, len(mchunk2.submaps))
+        # start2 = 0
         print("START2: " + str(start2))
         if start2 < 0:
             print("NOT ENOUGH SUBMAPS IN OLD MAP")
             return
 
-        max_submaps = 8
+        max_submaps = 20
         # TODO - check by SIZE (of radii of traveled dists!) rather than max submaps!!!
 
         idxs1, transforms1 = getConnectedSubmapsWithTransforms(mchunk1, start1, max_submaps)
@@ -204,7 +231,141 @@ class GlobalNavigatorModule:
             # TODO - vis only the maps that were put into data!!!
 
         self.matching_result_vis.publish(marker_array)
+# # #}
+
+    def main_iter(self):# # #{
+        print("N SUBMAPS IN OLD MAP:")
+        print(len(self.test_mchunk.submaps))
+
+        mchunk1 = self.mapper.mchunk
+        mchunk2 = self.test_mchunk
+        
+        start1 = len(mchunk1.submaps) - 1
+        if start1 < 0:
+            print("NOT ENOUGH SUBMAPS IN CURRENT MAP")
+            return
+        
+        start2 = np.random.randint(0, len(mchunk2.submaps))
+        # start2 = 0
+        print("START2: " + str(start2))
+        if start2 < 0:
+            print("NOT ENOUGH SUBMAPS IN OLD MAP")
+            return
+
+        max_submaps = 5
+        # TODO - check by SIZE (of radii of traveled dists!) rather than max submaps!!!
+
+        idxs1, transforms1 = getConnectedSubmapsWithTransforms(mchunk1, start1, max_submaps)
+        idxs2, transforms2 = getConnectedSubmapsWithTransforms(mchunk2, start2, max_submaps)
+
+
+        print("N MAPS FOR MATCHING IN CHUNK1: " + str(len(idxs1)))
+        print("N MAPS FOR MATCHING IN CHUNK2: " + str(len(idxs2)))
+        if len(idxs1) == 0 or len(idxs2) == 0:
+            print("NOT ENOUGH MAPS FOR MATCHING")
+            return
+
+        # SCROUNGE ALL MAP MATCHING DATA
+        matching_data1 = getMapMatchingDataSimple(mchunk1, idxs1, transforms1)
+        matching_data2 = getMapMatchingDataSimple(mchunk2, idxs2, transforms2)
+
+        matching_data1 = copy.deepcopy(matching_data1)
+        matching_data2 = copy.deepcopy(matching_data2)
+
+        # PERFORM MATCHING!
+        T_res, n_inliers, rmse = matchMapGeomSimple(matching_data1, matching_data2)
+        if T_res is None:
+            print("MATCHING FAILED!")
+            return
+
+        # COMPUTE PERCENTAGE OF INLIERS wrt THE SMALLER MAP
+        n_inliers = n_inliers / np.min(np.array([matching_data1.surfel_pts.shape[0], matching_data2.surfel_pts.shape[0]]))
+
+        # VISUALIZE MATCH OVERLAP!!
+        print("MATCHING DONE!!!")
+        T_odom_chunk1 = mchunk1.submaps[start1].T_global_to_own_origin
+        T_vis_chunk2 = [T_odom_chunk1 @ T_res @ tr for tr in transforms2]
+
+        print("MATCHING DATA INLIER RATIOS :")
+        # print(matching_data1.submap_overlap_ratios)
+        # print(matching_data2.submap_overlap_ratios)
+
+        # VISUALIZE OVERLAYED MATCHING SUBMAPS
+        marker_array = MarkerArray()
+        for i in range(len(idxs2)):
+            cmap = plt.get_cmap('viridis')  # You can use other colormaps as well
+            rgba_color = cmap(matching_data2.submap_overlap_ratios[i])
+            # rgba_color = cmap(1)
+            rgb = rgba_color[:3]
+
+            self.mapper.get_spheremap_marker_array(marker_array, mchunk2.submaps[idxs2[i]], T_vis_chunk2[i], alternative_look = True, do_connections = False, do_surfels = True, do_spheres = False, do_map2map_conns=False, ms=self.mapper.marker_scale, clr_index = 42, alpha = 1, rgb = rgb)
+            # print("INLIER RATIO: " + str(matching_data2.submap_overlap_ratios[i]))
+            # TODO - vis only the maps that were put into data!!!
+        self.matching_result_vis.publish(marker_array)
+
+        # STORE MATCH RESULT!
+        # new_match = MultiMapMatch(idxs1, idxs2, mchunk1, mchunk2)
+        new_match = MultiMapMatch([start1], [start2], mchunk1, mchunk2)
+        similar_match = None
+        for match in self.multimap_matches:
+            if new_match.same_submaps(match):
+                similar_match = match
+                break
+        if similar_match is None:
+            print("INITING NEW MATCH!")
+            new_match.add_measurement(T_res, n_inliers, rmse)
+            self.multimap_matches.append(new_match)
+        else:
+            print("SIMILAR MATCH FOUND!")
+            similar_match.add_measurement(T_res, n_inliers, rmse)
+
+        # VISUALIZE MATCHES (OR PARTICLE FILTER TIMEr!)
+        self.visualize_matches()
 
     # # #}
+
+    def visualize_matches(self):
+        # TODO - draw big map in the sky of other mchunk
+        mchunk1 = self.mapper.mchunk
+        mchunk2 = self.test_mchunk
+
+        mchunk_centroid_odom = mchunk2.compute_centroid_odom()
+        trans_vis = np.array([0, 0, 100])
+        T_common = np.eye(4)
+        T_common[:3, 3] = trans_vis - mchunk_centroid_odom
+
+        marker_array = MarkerArray()
+        for smap in mchunk2.submaps:
+            T_vis = T_common @ smap.T_global_to_own_origin 
+            # self.mapper.get_spheremap_marker_array(marker_array, smap, T_vis, alternative_look = True, do_connections = False, do_surfels = False, do_spheres = False, do_map2map_conns=True, do_centroids = True, ms=self.mapper.marker_scale)
+            self.mapper.get_spheremap_marker_array(marker_array, smap, T_vis, alternative_look = True, do_connections = False, do_surfels = True, do_spheres = False, do_map2map_conns=False, do_centroids = False, ms=self.mapper.marker_scale, alpha=0.5)
+
+        marker_id = marker_array.markers[-1].id
+
+        # TODO - compute best score out of all matches, normalize scores OR just abs scores
+        for match in self.multimap_matches:
+            # find transform of smap in current odom frame
+            # find transform of other smap in current odom frame (in the big map above)
+            smap1 = mchunk1.submaps[match.idxs1[0]]
+            smap2 = mchunk2.submaps[match.idxs2[0]]
+
+            T_vis1 = smap1.T_global_to_own_origin 
+            centroid_trans1 = np.eye(4)
+            centroid_trans1[:3, 3] = smap1.centroid
+            T_vis1 = T_vis1 @ centroid_trans1
+
+            T_vis2 = T_common @ smap2.T_global_to_own_origin 
+            centroid_trans2 = np.eye(4)
+            centroid_trans2[:3, 3] = smap2.centroid
+            T_vis2 = T_vis2 @ centroid_trans2
+
+            # draw line between them! (getlinemarker) thiccness related to score!
+            line_marker = getLineMarker(T_vis1[:3,3].flatten(), T_vis2[:3,3].flatten(), map_match_score(match.n_inliers, match.rmse), [1, 0, 0], self.mapper.odom_frame, marker_id)
+            marker_id += 1
+            marker_array.markers.append(line_marker)
+
+        self.multimap_matches_vis.publish(marker_array)
+
+        return
 
 
