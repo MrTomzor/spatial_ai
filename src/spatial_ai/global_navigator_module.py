@@ -620,16 +620,18 @@ class GlobalNavigatorModule:
             pose2_odom = None # save none if not yet assoc, so that the arrays have same len!
             if not assoc_idx is None:
                 pose2_odom = mchunk2.submaps[assoc_idx].T_global_to_own_origin
-                pose2_odom_plus_icp = pose2_odom @ assoc_icp_trans 
+                pose2_odom = pose2_odom @ assoc_icp_trans 
+                # pose2_odom_plus_icp = pose2_odom @ assoc_icp_trans 
+
                 # pose2_odom_plus_icp = assoc_icp_trans @ pose2_odom  
                 # T_cur_odom2odom = TODO
                 if fresest_odom12_T is None:
                     # fresest_odom12_T = np.linalg.inv(pose1_odom) @ pose2_odom_plus_icp
                     # fresest_odom12_T = np.linalg.inv(pose1_odom) @ pose2_odom
 
-                    # fresest_odom12_T =  pose2_odom @ np.linalg.inv(pose1_odom) #WORKS
+                    # fresest_odom12_T =  pose2_odom @ np.linalg.inv(pose1_odom) #TODO - WORKS!!! kinda
 
-                    fresest_odom12_T =  (pose2_odom_plus_icp) @ np.linalg.inv(pose1_odom)
+                    fresest_odom12_T =  (pose2_odom) @ np.linalg.inv(pose1_odom)
 
                     # fresest_odom12_T = np.linalg.inv(pose2_odom_plus_icp) @ pose1_odom
 
