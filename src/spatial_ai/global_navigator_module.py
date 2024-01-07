@@ -114,6 +114,7 @@ class GlobalNavigatorModule:
     def __init__(self, mapper, local_navigator):# # #{
         self.multimap_matches = []
         self.localization_particles = None
+        self.cur_best_particle = None
         self.matches_mutex = threading.Lock()
 
         self.mapper = mapper
@@ -278,13 +279,31 @@ class GlobalNavigatorModule:
         self.visualize_matches()
 
         # SAMPLE NEW PARTICLES
-        self.localization_particles = None
-        self.sample_and_propagate_particle(max_submaps = 30, add=True)
+        for i in range(50):
+            self.localization_particles = None
+            self.sample_and_propagate_particle(max_submaps = 30, add=True)
+            if not self.localization_particles is None:
+                # EVAL SCORE OF PARTICLE
+                new_err = self.eval_particle_relative_odom_error(self.localization_particles[0])
+                new_len = len(self.localization_particles[0].poses1)
+                self.localization_particles[0].odom_error = new_err
 
-        if not self.localization_particles is None:
+                if self.cur_best_particle is None or (self.cur_best_particle.odom_error > new_err or new_len > len(self.cur_best_particle.poses1)):
+                    print("NEW BEST PARTICLE!")
+                    print("ERR:" + str(new_err) + " LEN: " + str(new_len))
+                    self.cur_best_particle = self.localization_particles[0]
+
+                # print("PUBLISHING PARTICLE MARKERS")
+                # marker_array = MarkerArray()
+                # self.get_particle_markers_detailed(marker_array, self.localization_particles[0])
+                # self.particle_vis.publish(marker_array)
+
+        if not self.cur_best_particle is None:
+            print("BEST PART ERROR:")
+            self.eval_particle_relative_odom_error(self.cur_best_particle)
             print("PUBLISHING PARTICLE MARKERS")
             marker_array = MarkerArray()
-            self.get_particle_markers_detailed(marker_array, self.localization_particles[0])
+            self.get_particle_markers_detailed(marker_array, self.cur_best_particle )
             self.particle_vis.publish(marker_array)
 
 
@@ -546,6 +565,32 @@ class GlobalNavigatorModule:
         #     return None, None, None
         # self.matches_ranked = match_rankings
 # # #}
+
+    def eval_particle_relative_odom_error(self, particle, relative=False):
+        res = 0
+        len_path = len(particle.poses1)
+        print("odom disrepancy:")
+
+        if relative:
+            for i in range(len_path - 1):
+                T_delta_odom1 = np.linalg.inv(particle.poses1[i-1]) @ particle.poses1[i]
+                T_delta_odom2 = np.linalg.inv(particle.poses2[i-1]) @ particle.poses2[i]
+
+                abs_dif = np.linalg.norm(T_delta_odom2[:3,3] - T_delta_odom1[:3,3])
+                res += abs_dif
+                print("REL DIF:" + str(abs_dif))
+        else:
+            # end_transform = np.linalg.inv(particle.poses1[0]) @ particle.poses2[0]
+            end_transform =  particle.poses1[0] @ np.linalg.inv(particle.poses2[0])
+            for i in range(len_path - 1):
+                T_delta_odom1 = particle.poses1[i]
+                T_delta_odom2 = end_transform @ particle.poses2[i]
+
+                abs_dif = np.linalg.norm(T_delta_odom2[:3,3] - T_delta_odom1[:3,3])
+                res += abs_dif
+                print("ABS DIF:" + str(abs_dif))
+
+        return res
 
     def sample_and_propagate_particle(self, max_submaps, add=True):# # #{
         # TODO - lock matches mutex, matches cant change!!!
