@@ -320,26 +320,72 @@ class GlobalNavigatorModule:
         # VIS ASSOC MAPS IN THE SKY
         mchunk1 = self.mapper.mchunk
         mchunk2 = self.test_mchunk
+        n_poses = len(particle.poses2)
 
         mchunk_centroid_odom = mchunk2.compute_centroid_odom()
         trans_vis = np.array([0, 0, 100])
         T_common = np.eye(4)
         T_common[:3, 3] = trans_vis - mchunk_centroid_odom
 
+        # VIS ACTIVE MAPS
         for idx in range(len(mchunk2.submaps)):
             smap = mchunk2.submaps[idx]
             T_vis = T_common @ smap.T_global_to_own_origin 
 
             rgb = [0.3, 0.3, 0.3]
             alpha = 1
-            if idx in particle.idxs2:
+            # if idx in particle.idxs2:
+            if idx == particle.idxs2[0]:
                 # print("RED!")
                 rgb = [1, 0, 0]
+                alpha = 1
+            elif idx in particle.idxs2:
+                rgb = [1, 0.7, 0.2]
                 alpha = 1
                 # print("T_vis:")
                 # print(T_vis)
 
             self.mapper.get_spheremap_marker_array(marker_array, smap, T_vis, alternative_look = True, do_connections = False, do_surfels = True, do_spheres = False, do_map2map_conns=False, do_centroids = False, ms=self.mapper.marker_scale, rgb = rgb, alpha = alpha)
+
+        # VIS PATH OF PARTICLE in MAP2
+        print("PATHS!")
+        pts1 = []
+        pts2 = []
+        pts3 = []
+        for i in range(n_poses):
+            # T_odom1_map2 = particle.poses1[i] @ np.linalg.inv(particle.freshest_odom12_T) #TODO - STRETCHED
+            # T_odom1_map2 = np.linalg.inv(particle.freshest_odom12_T) @ particle.poses1[i]
+            T_odom1_map2 = particle.freshest_odom12_T @ particle.poses1[i] # TODO - SHAPE OK BUT WEIRD TRANSLATION (LATERAL)
+            # T_odom1_map2 = particle.poses1[i] @ particle.freshest_odom12_T
+            T_odom2_map2 = particle.poses2[i]
+
+            vis1 = T_common @ T_odom1_map2
+            vis2 = T_common @ T_odom2_map2
+            vis3 = particle.poses1[i]
+
+            # pts1.append(T_odom1_map2[:3, 3].flatten())
+            # pts2.append(T_odom2_map2[:3, 3].flatten())
+            pts1.append(vis1[:3, 3].flatten())
+            pts2.append(vis2[:3, 3].flatten())
+            pts3.append(vis3[:3, 3].flatten())
+
+        pts1 = np.array(pts1)
+        # print(pts1.shape)
+        pts2 = np.array(pts2)
+        pts3 = np.array(pts3)
+        # print(pts1)
+        # print(pts2)
+
+        marker_id = marker_array.markers[-1].id+1
+
+        line1 = getLineMarkerPts(pts1, 2, [0, 0, 1, 1], self.mapper.odom_frame, 0, ns='lines')
+        line2 = getLineMarkerPts(pts2, 1.5, [1, 1, 0, 1], self.mapper.odom_frame, 1, ns='lines')
+        line3 = getLineMarkerPts(pts3, 2, [0, 0, 1, 1], self.mapper.odom_frame, 2, ns='lines')
+        marker_array.markers.append(line1)
+        marker_array.markers.append(line2)
+        marker_array.markers.append(line3)
+        
+
         # print("N detailed markers:")
         # print(len(marker_array.markers))
 
@@ -478,9 +524,7 @@ class GlobalNavigatorModule:
         return
 # # #}
 
-
-
-    def get_potential_matches(self, map1_idx):
+    def get_potential_matches(self, map1_idx):# # #{
         idxs = []
         scores = []
         trans = []
@@ -501,8 +545,9 @@ class GlobalNavigatorModule:
         #     print("NO MATCHES FOR THIS MAP IDX YET!")
         #     return None, None, None
         # self.matches_ranked = match_rankings
+# # #}
 
-    def sample_and_propagate_particle(self, max_submaps, add=True):
+    def sample_and_propagate_particle(self, max_submaps, add=True):# # #{
         # TODO - lock matches mutex, matches cant change!!!
 
         mchunk1 = self.mapper.mchunk
@@ -532,6 +577,7 @@ class GlobalNavigatorModule:
         odom2odom_transforms = []
         n_assoc_maps = 0
         last_odom2odom_T = None
+        fresest_odom12_T = None
 
         for i in range(n_propagated_maps):
             map1_idx = ownmap_idxs[i]
@@ -573,9 +619,19 @@ class GlobalNavigatorModule:
             T_cur_odom2odom = None
             pose2_odom = None # save none if not yet assoc, so that the arrays have same len!
             if not assoc_idx is None:
-
                 pose2_odom = mchunk2.submaps[assoc_idx].T_global_to_own_origin
+                pose2_odom_plus_icp = pose2_odom @ assoc_icp_trans 
+                # pose2_odom_plus_icp = assoc_icp_trans @ pose2_odom  
                 # T_cur_odom2odom = TODO
+                if fresest_odom12_T is None:
+                    # fresest_odom12_T = np.linalg.inv(pose1_odom) @ pose2_odom_plus_icp
+                    # fresest_odom12_T = np.linalg.inv(pose1_odom) @ pose2_odom
+
+                    # fresest_odom12_T =  pose2_odom @ np.linalg.inv(pose1_odom) #WORKS
+
+                    fresest_odom12_T =  (pose2_odom_plus_icp) @ np.linalg.inv(pose1_odom)
+
+                    # fresest_odom12_T = np.linalg.inv(pose2_odom_plus_icp) @ pose1_odom
 
                 n_assoc_maps += 1
             else:
@@ -602,6 +658,8 @@ class GlobalNavigatorModule:
 
         if add:
             p = LocalizationParticle(own_poses, ownmap_idxs, assoc_poses, submap_idx_associations, 0)
+            p.freshest_odom12_T = fresest_odom12_T 
+
             if self.localization_particles is None:
                 self.localization_particles = np.array([p], dtype=object)
             else:
@@ -626,7 +684,7 @@ class GlobalNavigatorModule:
 
         # extrapolated_current_pose_map2 = T_delta_odom_map2 @ mchunk2.submaps[submap_idx_associations[latest_assoc_path_index]].T_global_to_own_origin 
 
-
+# # #}
                     
 
 

@@ -1020,3 +1020,27 @@ def getLineMarker(pos, endpos, thickness, rgba, frame_id, marker_id):# # #{
     points_msg = [Point(x=pos[0], y=pos[1], z=pos[2]), Point(x=endpos[0], y=endpos[1], z=endpos[2])]
     marker.points = points_msg
     return marker# # #}
+
+def getLineMarkerPts(pts, thickness, rgba, frame_id, marker_id, ns='todo'):# # #{
+    marker = Marker()
+    marker.header.frame_id = frame_id
+    marker.header.stamp = rospy.Time.now()
+    marker.type = Marker.LINE_LIST
+    marker.action = Marker.ADD
+    marker.id = marker_id
+    marker.ns = ns
+    
+    # Set the scale
+    marker.scale.x = thickness
+    
+    marker.color.a = rgba[3]
+    marker.color.r = rgba[0]
+    marker.color.g = rgba[1]
+    marker.color.b = rgba[2]
+    
+    # points_msg = [Point(x=pos[0], y=pos[1], z=pos[2]), Point(x=endpos[0], y=endpos[1], z=endpos[2])]
+    for i in range(pts.shape[0] - 1):
+        marker.points.append(Point(x=pts[i, 0], y=pts[i, 1], z=pts[i, 2]))
+        marker.points.append(Point(x=pts[i+1, 0], y=pts[i+1, 1], z=pts[i+1, 2]))
+    return marker# # #}
+
