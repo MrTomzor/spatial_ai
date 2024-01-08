@@ -192,9 +192,31 @@ class GlobalNavigatorModule:
         mchunk2 = self.test_mchunk
         
         # start1 = len(mchunk1.submaps) - 1
-        if len(mchunk1.submaps) == 0:
+        n_submaps1 = len(mchunk1.submaps)
+        if n_submaps1 == 0:
             print("NO SUBMAPS IN MCHUNK1")
             return
+
+        # CHECK WHICH ONES HAVE HOW MANY MATCHES
+        start1 = None
+        if not self.match_rankings is None:
+            nums_matches = np.full(n_submaps1, 1.0)
+            for idx in range(len(self.match_rankings)):
+                if not self.match_rankings[idx] is None:
+                    # nums_matches[idx] += self.match_rankings[idx][2].size
+                    for j in range(self.match_rankings[idx][3].size):
+                        nums_matches[idx] += self.multimap_matches[self.match_rankings[idx][3][j]].n_tries
+            print(self.match_rankings)
+            print("MA")
+            print(nums_matches)
+            p_dist = np.reciprocal(np.power(nums_matches, 3)) 
+            print(p_dist)
+            p_dist = p_dist / np.sum(p_dist)
+            print(p_dist)
+
+            start1 = np.random.choice(n_submaps1, 1, p=p_dist)[0] 
+                    
+
         start1 = np.random.randint(0, len(mchunk1.submaps))
         print("START1: " + str(start1))
         
@@ -320,6 +342,8 @@ class GlobalNavigatorModule:
     def main_iter(self):# # #{
         # UPDATE AND VISUALIZE MATCHES
         self.update_matches()
+        self.update_matches()
+        self.update_matches()
         self.rank_matches()
 
         if self.match_rankings is None:
@@ -330,7 +354,7 @@ class GlobalNavigatorModule:
         self.visualize_matches()
 
         if not self.match_rankings is None and len(self.mapper.mchunk.submaps) > 0:
-            n_submaps_for_alignment = 8
+            n_submaps_for_alignment = 10
 
             idxs1, transforms1 = getConnectedSubmapsWithTransforms(self.mapper.mchunk, len(self.mapper.mchunk.submaps) - 1, n_submaps_for_alignment)
             for idx in idxs1:
@@ -567,7 +591,7 @@ class GlobalNavigatorModule:
 
         return res# # #}
 
-    def local_map_alignment(self, idxs1, n_iters = 1000, nearest_neighbors = 3, inlier_dist_base = 30):# # #{
+    def local_map_alignment(self, idxs1, n_iters = 1000, nearest_neighbors = 6, inlier_dist_base = 15):# # #{
         mchunk1 = self.mapper.mchunk
         mchunk2 = self.test_mchunk
 
@@ -608,13 +632,13 @@ class GlobalNavigatorModule:
                 score_span = (maxscore - minscore)
                 choice_match_idx = np.random.randint(n_potential_matches)
 
-                # if score_span > 0.0001:
-                #     norm_scores = (scores - minscore) / score_span
-                #     norm_scores += 0.001
-                #     prob_distrib = norm_scores / np.sum(norm_scores)
+                if score_span > 0.0001:
+                    norm_scores = (scores - minscore) / score_span
+                    norm_scores += 0.001
+                    prob_distrib = norm_scores / np.sum(norm_scores)
 
-                #     # CHOOSE
-                #     choice_match_idx = np.random.choice(n_potential_matches, 1, p=prob_distrib)[0]
+                    # CHOOSE
+                    choice_match_idx = np.random.choice(n_potential_matches, 1, p=prob_distrib)[0]
 
                 corresp[i] = potential_idxs[choice_match_idx]
                 # transforms[i] = potential_transforms[choice_match_idx]

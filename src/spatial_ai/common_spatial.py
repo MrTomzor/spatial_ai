@@ -766,9 +766,10 @@ class CoherentSpatialMemoryChunk:# # #{
         self.submaps.append(smap)
 
     def save(self, path):
-        print("MCHUNK SAVING " + str(len(self.submaps)) + " SUBMAPS")
-        with open(path, "wb") as output:
-            pickle.dump(self.__dict__, output, -1)
+        # print("MCHUNK SAVING " + str(len(self.submaps)) + " SUBMAPS")
+        # with open(path, "wb") as output:
+        #     pickle.dump(self.__dict__, output, -1)
+        return
 
     @classmethod
     def load(cls, path):
@@ -864,7 +865,7 @@ def matchMapGeomSimple(data1, data2, T_init = None):# # #{
     #     open3d.pipelines.registration.TransformationEstimationPointToPoint())
     criteria = treg.ICPConvergenceCriteria(relative_fitness=0.000001,
                                        relative_rmse=0.000001,
-                                       max_iteration=15)
+                                       max_iteration=8)
 
     reg_p2p = None
     try:
