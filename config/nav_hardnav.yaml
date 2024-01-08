@@ -14,6 +14,9 @@ local_mapping:
   carryover_dist: 4
   max_sphere_sampling_z : 50
 
+  surfel_resolution: 1
+  frontier_resolution: 2
+
 local_nav:
   enabled: False
   uav_radius: 0.7

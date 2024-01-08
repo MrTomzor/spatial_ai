@@ -188,7 +188,7 @@ class SphereMap:
         self.connections = np.array([None], dtype=object)
         self.visual_keyframes = []
         self.traveled_context_distance = 0
-        self.surfels_filtering_radius = 1
+        # self.surfels_filtering_radius = 1
         self.map2map_conns = []
 
         self.surfels_kdtree = None
@@ -219,11 +219,10 @@ class SphereMap:
                 return conn.pt_in_first_map_frame
         return None
 
-    def updateFrontiers(self, fr_samples):# # #{
+    def updateFrontiers(self, fr_samples, filtering_radius):# # #{
         # SIMPLEST: 
         n_test_new_pts = fr_samples.shape[0]
-
-        filtering_radius = 2
+        # filtering_radius = 2
 
         # FILTER OUT THE NEW ONES TOO CLOSE TO PREVIOUS ONES
         pts_survived_first_mask = np.full((n_test_new_pts), True)
@@ -330,7 +329,7 @@ class SphereMap:
 
     # # #}
 
-    def updateSurfels(self, visible_points, pixpos, simplices, slam_ids=None):# # #{
+    def updateSurfels(self, visible_points, pixpos, simplices, filtering_radius, slam_ids=None):# # #{
         # Compute normals measurements for the visible points, all should be pointing towards the camera
         # What frame are the points in?
         # print("UPDATING SURFELS")
@@ -338,7 +337,7 @@ class SphereMap:
         n_test_new_pts = visible_points.shape[0]
 
         # TODO do based on map scale!!!
-        filtering_radius = self.surfels_filtering_radius
+        # filtering_radius = self.surfels_filtering_radius
 
 
         # FIRST CHECK WHICH INPUT PTS ALREADY EXIST IN THE MAP AND JUST UPDATE THEIR POSITIONS

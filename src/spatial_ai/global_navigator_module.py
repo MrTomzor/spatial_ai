@@ -340,6 +340,9 @@ class GlobalNavigatorModule:
 # # #}
 
     def main_iter(self):# # #{
+        if not self.planning_enabled:
+            return
+
         # UPDATE AND VISUALIZE MATCHES
         self.update_matches()
         self.update_matches()

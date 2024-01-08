@@ -84,14 +84,17 @@ class LocalNavigatorModule:
         self.path_planning_vis_pub = rospy.Publisher('path_planning_vis', MarkerArray, queue_size=10)
         self.unsorted_vis_pub = rospy.Publisher('unsorted_markers', MarkerArray, queue_size=10)
 
+        # PARAMS
         self.planning_enabled = rospy.get_param("local_nav/enabled")
-        self.marker_scale = rospy.get_param("marker_scale")
+        self.marker_scale = rospy.get_param("marker_scale") * 1.2
         self.path_step_size = rospy.get_param("local_nav/max_rrt_step_size")
         self.max_heading_change_per_m = rospy.get_param("local_nav/max_heading_change_per_m")
 
         self.safety_replanning_trigger_odist = rospy.get_param("local_nav/safety_replanning_trigger_odist")
         self.min_planning_odist = rospy.get_param("local_nav/min_planning_odist")
         self.max_planning_odist = rospy.get_param("local_nav/max_planning_odist")
+
+        self.planning_clearing_dist = rospy.get_param("local_nav/clearing_dist")
 
         # PREDICTED TRAJ
         self.sub_predicted_trajectory = rospy.Subscriber(ptraj_topic, mrs_msgs.msg.MpcPredictionFullState, self.predicted_trajectory_callback, queue_size=10000)
@@ -492,7 +495,7 @@ class LocalNavigatorModule:
         return
     # # #}
 
-    def find_paths_rrt(self, start_vp, visualize = True, max_comp_time=0.5, max_step_size = 0.5, max_spread_dist=15, min_odist = 0.1, max_odist = 0.5, max_iter = 700006969420, goal_vp_smap=None, p_greedy = 0.3, mode='find_goals'):# # #{
+    def find_paths_rrt(self, start_vp, visualize = True, max_comp_time=0.5, max_step_size = 0.5, max_spread_dist=10, min_odist = 0.1, max_odist = 0.5, max_iter = 700006969420, goal_vp_smap=None, p_greedy = 0.3, mode='find_goals'):# # #{
         # print("RRT: STARTING, FROM TO:")
         # print(start_vp)
 
@@ -557,8 +560,10 @@ class LocalNavigatorModule:
             # IF IN SPHERE
             new_node_fspace_dist = self.mapper.spheremap.getMaxDistToFreespaceEdge(new_node_pos) * self.fspace_bonus_mod 
             if new_node_fspace_dist < min_odist:
-                n_unsafe += 1
-                continue
+                # IF AT LEAST IN SPHERE AND WITHIN CLEARING DIST -> IS OK
+                if new_node_fspace_dist < 0 or np.linalg.norm(new_node_pos - start_vp.position) > self.planning_clearing_dist:
+                    n_unsafe += 1
+                    continue
 
             # new_node_odist = self.mapper.spheremap.getMaxDistToFreespaceEdge(new_node_pos)
             new_node_odist = self.mapper.spheremap.getMinDistToSurfaces(new_node_pos)
@@ -612,18 +617,22 @@ class LocalNavigatorModule:
             T_head_cam_to_smap_orig = np.linalg.inv(T_smap_orig_to_head_cam)
             
 
+            # IF NO SURFELS IN MAP, FUCK IT ALL!
+            if self.mapper.spheremap.surfel_points is None:
+                continue
+
             surfel_points_in_camframe = transformPoints(self.mapper.spheremap.surfel_points, T_head_cam_to_smap_orig)
             only_rotmatrix = np.eye(4)
             only_rotmatrix[:3,:3] = T_head_cam_to_smap_orig[:3,:3]
 
             surfel_normals_in_camframe = transformPoints(self.mapper.spheremap.surfel_normals, only_rotmatrix)
 
-            visible_pts_mask = getVisiblePoints(surfel_points_in_camframe, surfel_normals_in_camframe, np.pi/3, 100, w, h, K, check_normals=False)
-            n_visible = np.sum(visible_pts_mask)
+            # visible_pts_mask = getVisiblePoints(surfel_points_in_camframe, surfel_normals_in_camframe, np.pi/3, 100, w, h, K, check_normals=False)
+            # n_visible = np.sum(visible_pts_mask)
             # print("VISIBLE:" +str(n_visible))
-            if n_visible < 3:
-                n_odom_unsafe += 1
-                continue
+            # if n_visible < 3:
+            #     n_odom_unsafe += 1
+            #     continue
 
 
             # ADD NODE TO TREE
@@ -930,7 +939,8 @@ class LocalNavigatorModule:
             line_marker.header.frame_id = self.odom_frame  # Set your desired frame_id
             line_marker.type = Marker.LINE_LIST
             line_marker.action = Marker.ADD
-            line_marker.scale.x = 0.04 * self.marker_scale  # Line width
+            # line_marker.scale.x = 0.04 * self.marker_scale  # Line width
+            line_marker.scale.x = 0.4 * self.marker_scale  # Line width
             line_marker.color.a = 1.0  # Alpha
             line_marker.color.r = 0.5  
             line_marker.color.b = 1.0  

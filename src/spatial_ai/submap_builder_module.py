@@ -113,6 +113,9 @@ class SubmapBuilderModule:
 
 
         # LOAD PARAMS
+        self.surfel_resolution = rospy.get_param("local_mapping/surfel_resolution")
+        self.frontier_resolution = rospy.get_param("local_mapping/frontier_resolution")
+
         self.verbose_submap_construction = rospy.get_param("local_mapping/verbose_submap_construction")
         self.carryover_dist = rospy.get_param("local_mapping/carryover_dist")
         self.uav_radius = rospy.get_param("local_nav/uav_radius")
@@ -121,7 +124,7 @@ class SubmapBuilderModule:
         self.marker_scale = rospy.get_param("marker_scale")
         self.n_sphere_samples_per_update = rospy.get_param("local_mapping/n_sphere_samples_per_update")
         self.fragmenting_travel_dist = rospy.get_param("local_mapping/smap_fragmentation_dist")
-        self.max_sphere_sampling_z = rospy.get_param("local_mapping/max_sphere_sampling_z")
+        self.max_sphere_update_dist = rospy.get_param("local_mapping/max_sphere_sampling_z")
         self.visual_kf_addition_heading = 3.14159 /2
         self.visual_kf_addition_dist = 2
         
@@ -454,7 +457,7 @@ class SubmapBuilderModule:
                     # self.spheremap.removeNodes(np.where(idx_picker)[0])
 
             # TODO fix - by raycasting!!!
-            max_sphere_sampling_z = self.max_sphere_sampling_z
+            max_sphere_update_dist = self.max_sphere_update_dist
 
             n_sampled = self.n_sphere_samples_per_update
             sampling_pts = np.random.rand(n_sampled, 2)  # Random points in [0, 1] range for x and y
@@ -477,8 +480,9 @@ class SubmapBuilderModule:
 
             invK = np.linalg.inv(self.K)
             sampling_pts = invK @ sampling_pts
-            rand_z = np.random.rand(1, n_sampled) * max_sphere_sampling_z
-            rand_z[rand_z > max_sphere_sampling_z] = max_sphere_sampling_z
+
+            # rand_z = np.random.rand(1, n_sampled) * max_sphere_update_dist
+            # rand_z[rand_z > max_sphere_update_dist] = max_sphere_update_dist
 
             # FILTER PTS - CHECK THAT THE MAX DIST IS NOT BEHIND THE OBSTACLE MESH BY RAYCASTING
             ray_hit_pts, index_ray, index_tri = obstacle_mesh.ray.intersects_location(
@@ -487,11 +491,18 @@ class SubmapBuilderModule:
             # MAKE THEM BE IN RAND POSITION BETWEEN CAM AND MESH HIT POSITION, UP TO MAX Z (TODO-rename to dist from Z)
             # ray_hit_dists = np.linalg.norm(ray_hit_pts, axis=1)
             # ray_hit_pts = ray_hit_pts / ray_hit_dists
-            # ray_hit_dists[ray_hit_dists > max_sphere_sampling_z] = max_sphere_sampling_z
-            scaling = ray_hit_pts[:,2]
-            scaling[ray_hit_pts[:,2] > max_sphere_sampling_z] = max_sphere_sampling_z
-            scaling = scaling.flatten() / ray_hit_pts[:,2].flatten()
-            ray_hit_pts =  ray_hit_pts * scaling.reshape((ray_hit_pts.shape[0], 1))
+            # ray_hit_dists[ray_hit_dists > max_sphere_update_dist] = max_sphere_update_dist
+
+            # scaling = ray_hit_pts[:,2]
+            scaling = np.ones(ray_hit_pts.shape[0])
+            hit_dists = np.linalg.norm(ray_hit_pts, axis=1)
+            # scaling[ray_hit_pts[:,2] > max_sphere_update_dist] = max_sphere_update_dist
+            farmask = hit_dists > max_sphere_update_dist
+            scaling[farmask] = max_sphere_update_dist * np.reciprocal(hit_dists[farmask])
+            ray_hit_pts = ray_hit_pts * scaling.reshape((ray_hit_pts.shape[0], 1))
+
+            # scaling = scaling.flatten() / ray_hit_pts[:,2].flatten()
+            # ray_hit_pts =  ray_hit_pts * scaling.reshape((ray_hit_pts.shape[0], 1))
 
             sampling_pts =  (np.random.rand(n_sampled, 1) * ray_hit_pts).T
             # TODO - add max sampling dist
@@ -559,12 +570,13 @@ class SubmapBuilderModule:
             comp_start_time = time.time()
 
             positive_z_points = positive_z_points.T
-            pts_for_surfel_addition = positive_z_points[positive_z_points[:, 2] < max_sphere_sampling_z]
+            # pts_for_surfel_addition = positive_z_points[positive_z_points[:, 2] < max_sphere_update_dist]
+            pts_for_surfel_addition = positive_z_points[np.linalg.norm(positive_z_points, axis=1) < max_sphere_update_dist]
             visible_pts_in_spheremap_frame = transformPoints(pts_for_surfel_addition, T_orig_to_current_cam)
-            self.spheremap.updateSurfels(visible_pts_in_spheremap_frame , pixpos, tri.simplices, positive_z_slam_ids)
+            self.spheremap.updateSurfels(visible_pts_in_spheremap_frame , pixpos, tri.simplices, self.surfel_resolution, positive_z_slam_ids)
 
             if self.do_frontiers:
-                self.spheremap.updateFrontiers(transformPoints(fr_samples, T_orig_to_current_cam))
+                self.spheremap.updateFrontiers(transformPoints(fr_samples, T_orig_to_current_cam), self.frontier_resolution)
 
             comp_time = time.time() - comp_start_time
             if self.verbose_submap_construction:

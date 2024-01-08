@@ -352,7 +352,8 @@ class NavNode:
 
         with ScopedLock(self.submap_builder_input_mutex):
             pcl_msg = copy.deepcopy(self.submap_builder_input_pcl)
-            points_info = copy.deepcopy(self.submap_builder_input_point_ids)
+            # points_info = copy.deepcopy(self.submap_builder_input_point_ids)
+            points_info = None
 
         self.submap_builder_module.camera_update_iter(pcl_msg, points_info) 
     # # #}
