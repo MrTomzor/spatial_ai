@@ -567,7 +567,7 @@ class GlobalNavigatorModule:
 
         return res# # #}
 
-    def local_map_alignment(self, idxs1, n_iters = 100, nearest_neighbors = 3, inlier_dist_base = 8):# # #{
+    def local_map_alignment(self, idxs1, n_iters = 1000, nearest_neighbors = 3, inlier_dist_base = 15):# # #{
         mchunk1 = self.mapper.mchunk
         mchunk2 = self.test_mchunk
 
@@ -607,19 +607,21 @@ class GlobalNavigatorModule:
                 maxscore = np.max(scores)
                 score_span = (maxscore - minscore)
                 choice_match_idx = np.random.randint(n_potential_matches)
-                if score_span > 0.0001:
-                    norm_scores = (scores - minscore) / score_span
-                    norm_scores += 0.001
-                    prob_distrib = norm_scores / np.sum(norm_scores)
 
-                    # CHOOSE
-                    choice_match_idx = np.random.choice(n_potential_matches, 1, p=prob_distrib)[0]
+                # if score_span > 0.0001:
+                #     norm_scores = (scores - minscore) / score_span
+                #     norm_scores += 0.001
+                #     prob_distrib = norm_scores / np.sum(norm_scores)
+
+                #     # CHOOSE
+                #     choice_match_idx = np.random.choice(n_potential_matches, 1, p=prob_distrib)[0]
+
                 corresp[i] = potential_idxs[choice_match_idx]
                 # transforms[i] = potential_transforms[choice_match_idx]
                 transforms[i] = self.multimap_matches[potential_transforms_match_idxs[choice_match_idx]].trans
 
-            print("CORRESP SET:")
-            print(corresp)
+            # print("CORRESP SET:")
+            # print(corresp)
 
             # CHOOSE SUBMAP WHICH DETERMINES TRANSFORMATION
             transform_det_i = np.random.randint(0, n_maps1)
@@ -627,8 +629,14 @@ class GlobalNavigatorModule:
             t_idx2 = corresp[transform_det_i]
             T_icp = transforms[transform_det_i]
 
-            print("T MAPS:")
-            print(mchunk2.submaps[t_idx2].T_global_to_own_origin)
+            # print("DET I")
+            # print(transform_det_i)
+            # print(t_idx1)
+            # print(t_idx2)
+
+            # print("T MAPS:")
+            # print(mchunk2.submaps[t_idx2].T_global_to_own_origin)
+
             T_odom1 = mchunk1.submaps[t_idx1].T_global_to_own_origin
             T_odom2 = mchunk2.submaps[t_idx2].T_global_to_own_origin @ T_icp
 
@@ -640,22 +648,26 @@ class GlobalNavigatorModule:
             n_inliers = 0
             reproj_error_sum = 0
             for i in range(n_maps1):
-                T_odom1 = mchunk1.submaps[t_idx1].T_global_to_own_origin
-                T_odom2 = mchunk2.submaps[t_idx2].T_global_to_own_origin @ T_icp
+                T_icp = transforms[i]
+                idx1 = idxs1[i]
+                idx2 = corresp[i]
+
+                T_odom1 = mchunk1.submaps[idx1].T_global_to_own_origin
+                T_odom2 = mchunk2.submaps[idx2].T_global_to_own_origin @ T_icp
                 # T_proj = T_map1map2 @ T_odom1
                 T_proj = T_map1map2 @ T_odom1
 
                 proj_pos_error = np.linalg.norm(T_proj[:3,3] - T_odom2[:3,3])
-                print("PROJ ERROR: " + str(proj_pos_error))
+                # print("PROJ ERROR: " + str(proj_pos_error))
                 if proj_pos_error < inlier_dist_base:
                     inliers[i] = corresp[i]
                     n_inliers += 1
                     reproj_error_sum += proj_pos_error
-                else:
-                    print("OUTLIER")
-                    print(T_odom1[:3,3])
-                    print(T_proj[:3,3])
-                    print(T_odom2[:3,3])
+                # else:
+                #     print("OUTLIER")
+                #     print(T_odom1[:3,3])
+                #     print(T_proj[:3,3])
+                #     print(T_odom2[:3,3])
 
             # SAVE IF BEST
             if n_inliers > n_inliers_best or (n_inliers == n_inliers_best and reproj_error_sum < reproj_error_sum_best):
