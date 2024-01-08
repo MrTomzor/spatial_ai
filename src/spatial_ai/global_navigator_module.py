@@ -330,7 +330,7 @@ class GlobalNavigatorModule:
         self.visualize_matches()
 
         if not self.match_rankings is None and len(self.mapper.mchunk.submaps) > 0:
-            n_submaps_for_alignment = 10
+            n_submaps_for_alignment = 8
 
             idxs1, transforms1 = getConnectedSubmapsWithTransforms(self.mapper.mchunk, len(self.mapper.mchunk.submaps) - 1, n_submaps_for_alignment)
             for idx in idxs1:
@@ -567,7 +567,7 @@ class GlobalNavigatorModule:
 
         return res# # #}
 
-    def local_map_alignment(self, idxs1, n_iters = 1000, nearest_neighbors = 3, inlier_dist_base = 15):# # #{
+    def local_map_alignment(self, idxs1, n_iters = 1000, nearest_neighbors = 3, inlier_dist_base = 30):# # #{
         mchunk1 = self.mapper.mchunk
         mchunk2 = self.test_mchunk
 
