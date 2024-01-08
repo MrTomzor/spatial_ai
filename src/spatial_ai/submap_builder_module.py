@@ -113,6 +113,7 @@ class SubmapBuilderModule:
 
 
         # LOAD PARAMS
+        self.min_sphere_rad = rospy.get_param("local_mapping/min_sphere_rad")
         self.surfel_resolution = rospy.get_param("local_mapping/surfel_resolution")
         self.frontier_resolution = rospy.get_param("local_mapping/frontier_resolution")
 
@@ -271,7 +272,7 @@ class SubmapBuilderModule:
                             pts_to_transfer = transformPoints(pts_to_transfer, np.linalg.inv(memorized_transform_to_prev_map))
 
 
-                self.spheremap = SphereMap(init_rad, min_rad)
+                self.spheremap = SphereMap(init_rad, self.min_sphere_rad)
                 self.spheremap.surfels_filtering_radius = 0.2
 
 

@@ -739,7 +739,8 @@ class LocalNavigatorModule:
                     for i in range(heads_indices.size):
                         idx = heads_indices[i]
                         print("HEAD INDEX: " + str(idx))
-                        if np.linalg.norm(tree_pos[idx] - start_vp.position) < self.reaching_dist:
+                        startdist = np.linalg.norm(tree_pos[idx] - start_vp.position)
+                        if startdist < self.reaching_dist:
                             print("TOO CLOSE")
                             continue
                         T_smap_orig_to_head_fcu = posAndHeadingToMatrix(tree_pos[idx, :], tree_headings[idx])
@@ -760,7 +761,8 @@ class LocalNavigatorModule:
                         n_visible = np.sum(visible_pts_mask)
                         print("N VISIBLE FRONTIERS: " + str(n_visible))
                         if n_visible > 0:
-                            heads_values[i] = n_visible * 100
+                            # heads_values[i] = n_visible * 100
+                            heads_values[i] = startdist * 100
             else:
                 toofar = np.logical_not(check_points_in_box(heads_global, self.roomba_bounds_global))
                 if np.all(toofar):
