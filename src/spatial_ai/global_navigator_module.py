@@ -113,6 +113,7 @@ class LocalizationParticle:# # #{
 class GlobalNavigatorModule:
     def __init__(self, mapper, local_navigator):# # #{
         self.multimap_matches = []
+        self.match_rankings = None
         self.localization_particles = None
         self.cur_best_particle = None
         self.matches_mutex = threading.Lock()
@@ -129,6 +130,7 @@ class GlobalNavigatorModule:
         self.matching_result_vis = rospy.Publisher('map_matching_result_vis', MarkerArray, queue_size=10)
         self.multimap_matches_vis = rospy.Publisher('multimap_matches', MarkerArray, queue_size=10)
         self.particle_vis = rospy.Publisher('particle_vis', MarkerArray, queue_size=10)
+        self.ransac_vis = rospy.Publisher('localization_ransac_vis', MarkerArray, queue_size=10)
 
 
         self.marker_scale = 0.15
@@ -273,65 +275,73 @@ class GlobalNavigatorModule:
             similar_match.add_measurement(T_res, n_inliers, rmse)
 # # #}
 
+    def rank_matches(self):# # #{
+        # COMPUTE RANKED MATCHES FOR EACH SUBMAP IN CHUNK1
+        print("SORTING MATCH RANKINGS")
+        match_rankings = [None for i in range(len(self.mapper.mchunk.submaps))]
+        for match_index in range(len(self.multimap_matches)):
+        # for match_data in self.multimap_matches:
+            match_data = self.multimap_matches[match_index]
+            found_ranking_idx = False
+            idx1 = match_data.idxs1[0]
+            idx2 = match_data.idxs2[0]
+            score = map_match_score(match_data.n_inliers, match_data.rmse)
+            # match_index = 
+            if match_rankings[idx1] is None:
+                match_rankings[idx1] = [idx1, [score], [idx2], [match_index]]
+            else:
+                match_rankings[idx1][1].append(score)
+                match_rankings[idx1][2].append(idx2)
+                match_rankings[idx1][3].append(match_index)
+            # for i in range(len(match_rankings)):
+            #     if match_rankings[i][0] == idx1:
+            #         found_ranking_idx = True
+            #         match_rankings[i][1].append(score)
+            #         match_rankings[i][2].append(idx2)
+            #         match_rankings[i][3].append(match_index)
+            #         break
+            # if not found_ranking_idx:
+            #     match_rankings.append([idx1, [score], [idx2], [match_index]])
+
+        # NOW SORT FOR EACH IDX1
+        for i in range(len(match_rankings)):
+            if not match_rankings[i] is None:
+                match_rankings[i][1] = np.array(match_rankings[i][1])
+                match_rankings[i][2] = np.array(match_rankings[i][2])
+                match_rankings[i][3] = np.array(match_rankings[i][3])
+
+                argsorted = np.argsort(-match_rankings[i][1])
+                match_rankings[i][1] = match_rankings[i][1][argsorted]
+                match_rankings[i][2] = match_rankings[i][2][argsorted]
+                match_rankings[i][3] = match_rankings[i][3][argsorted]
+        self.match_rankings = match_rankings
+# # #}
+
     def main_iter(self):# # #{
         # UPDATE AND VISUALIZE MATCHES
         self.update_matches()
+        self.rank_matches()
+
+        if self.match_rankings is None:
+            print("NO MATCHES IN MAP!")
+            return
+
+        n_own_maps_after_match_update = len(self.match_rankings)
         self.visualize_matches()
 
-        # SAMPLE NEW PARTICLES
-        for i in range(50):
-            self.localization_particles = None
-            self.sample_and_propagate_particle(max_submaps = 30, add=True)
-            if not self.localization_particles is None:
-                # EVAL SCORE OF PARTICLE
-                new_err = self.eval_particle_relative_odom_error(self.localization_particles[0])
-                new_len = len(self.localization_particles[0].poses1)
-                self.localization_particles[0].odom_error = new_err
+        if not self.match_rankings is None and len(self.mapper.mchunk.submaps) > 0:
+            n_submaps_for_alignment = 10
 
-                if self.cur_best_particle is None or (self.cur_best_particle.odom_error > new_err or new_len > len(self.cur_best_particle.poses1)):
-                    print("NEW BEST PARTICLE!")
-                    print("ERR:" + str(new_err) + " LEN: " + str(new_len))
-                    self.cur_best_particle = self.localization_particles[0]
+            idxs1, transforms1 = getConnectedSubmapsWithTransforms(self.mapper.mchunk, len(self.mapper.mchunk.submaps) - 1, n_submaps_for_alignment)
+            for idx in idxs1:
+                if idx >= n_own_maps_after_match_update: 
+                    print("NEW MAP WAS ADDED SINCE RANKING MATCHES! EXITING!")
+                    return
 
-                # print("PUBLISHING PARTICLE MARKERS")
-                # marker_array = MarkerArray()
-                # self.get_particle_markers_detailed(marker_array, self.localization_particles[0])
-                # self.particle_vis.publish(marker_array)
-
-        if not self.cur_best_particle is None:
-            print("BEST PART ERROR:")
-            self.eval_particle_relative_odom_error(self.cur_best_particle)
-            print("PUBLISHING PARTICLE MARKERS")
-            marker_array = MarkerArray()
-            self.get_particle_markers_detailed(marker_array, self.cur_best_particle )
-            self.particle_vis.publish(marker_array)
-
-
-        # n_particle_samples = 10
-        # for i in range(n_particle_samples):
-        #     self.sample_and_propagate_particle(max_submaps = 30, add=True)
-
-        # if not self.localization_particles is None:
-        #     n_kept_particles = 100
-        #     if n_kept_particles > self.localization_particles:
-        #         n_kept_particles = self.localization_particles
-
-
-        #     # RANK PARTICLES
-        #     particle_scores = np.array([len(p.poses1) for p in self.localization_particles])
-        #     ranked_particles = np.argsort(-particle_scores)
-        #     kept_particle_idxs = ranked_particles[:n_kept_particles]
-        #     self.localization_particles = self.localization_particles[kept_particle_idxs] #SORTED
-
-        #     # VIS PARTICLES
-        #     cmap = plt.get_cmap('viridis')  # You can use other colormaps as well
-        #     colors = [cmap(1.0 - (1.0 *i) / n_kept_particles)[:3] for i in range(n_kept_particles)]
-
-        #     marker_array = MarkerArray()
-        #     for i in range(n_kept_particles):
-        #         self.get_particle_markers(marker_array, self.localization_particles[i], colors[i])
-        #     self.particle_vis.publish(marker_array)
-
+            print("ALIGNING MAPS LOCALLY!")
+            T_maps, corresp = self.local_map_alignment(idxs1)
+            if not T_maps is None:
+                self.visualize_map_alignment(T_maps, None, None)
 
     # # #}
 
@@ -435,44 +445,14 @@ class GlobalNavigatorModule:
 
         # TODO - compute best score out of all matches, normalize scores OR just abs scores
 
-        # COMPUTE RANKED MATCHES FOR EACH SUBMAP IN CHUNK1
-        print("SORTING MATCH RANKINGS")
-        match_rankings = []
-        for match_index in range(len(self.multimap_matches)):
-        # for match_data in self.multimap_matches:
-            match_data = self.multimap_matches[match_index]
-            found_ranking_idx = False
-            idx1 = match_data.idxs1[0]
-            idx2 = match_data.idxs2[0]
-            score = map_match_score(match_data.n_inliers, match_data.rmse)
-            # match_index = 
-
-            for i in range(len(match_rankings)):
-                if match_rankings[i][0] == idx1:
-                    found_ranking_idx = True
-                    match_rankings[i][1].append(score)
-                    match_rankings[i][2].append(idx2)
-                    match_rankings[i][3].append(match_index)
-                    break
-            if not found_ranking_idx:
-                match_rankings.append([idx1, [score], [idx2], [match_index]])
-        # NOW SORT FOR EACH IDX1
-        for i in range(len(match_rankings)):
-            match_rankings[i][1] = np.array(match_rankings[i][1])
-            match_rankings[i][2] = np.array(match_rankings[i][2])
-            match_rankings[i][3] = np.array(match_rankings[i][3])
-
-            argsorted = np.argsort(-match_rankings[i][1])
-            match_rankings[i][1] = match_rankings[i][1][argsorted]
-            match_rankings[i][2] = match_rankings[i][2][argsorted]
-            match_rankings[i][3] = match_rankings[i][3][argsorted]
-        self.matches_ranked = match_rankings
 
         max_vis_matches_per_idx1 = 3
 
         marker_id = marker_array.markers[-1].id+1
         # for match in self.multimap_matches:
-        for ranking in match_rankings:
+        for ranking in self.match_rankings:
+            if ranking is None:
+                continue
             # find transform of other smap in current odom frame (in the big map above)
             # smap1 = mchunk1.submaps[match.idxs1[0]]
             # smap2 = mchunk2.submaps[match.idxs2[0]]
@@ -554,19 +534,14 @@ class GlobalNavigatorModule:
                 scores.append(match.score)
                 trans.append(match.trans)
         return idxs, scores, trans
-
-        # matches_data = None
-        # for mr in self.matches_ranked:
-        #     if mr[0] == map1_idx:
-        #         matches_data = mr
-        #         break
-        # if match_data is None:
-        #     print("NO MATCHES FOR THIS MAP IDX YET!")
-        #     return None, None, None
-        # self.matches_ranked = match_rankings
 # # #}
 
-    def eval_particle_relative_odom_error(self, particle, relative=False):
+    # def get_potential_matches_sorted(self, map1_idx):# # #{
+    #     res = self.matches_ranked[map1_idx]
+    #     return res[0], res[1], res[2]
+# # # #}
+
+    def eval_particle_relative_odom_error(self, particle, relative=False):# # #{
         res = 0
         len_path = len(particle.poses1)
         print("odom disrepancy:")
@@ -590,7 +565,132 @@ class GlobalNavigatorModule:
                 res += abs_dif
                 print("ABS DIF:" + str(abs_dif))
 
-        return res
+        return res# # #}
+
+    def local_map_alignment(self, idxs1, n_iters = 100, nearest_neighbors = 3, inlier_dist_base = 8):# # #{
+        mchunk1 = self.mapper.mchunk
+        mchunk2 = self.test_mchunk
+
+        n_maps1 = len(idxs1)
+        T_best = None
+        score_best = None
+        corresp_best = np.full(n_maps1, -1)
+        n_inliers_best = 0
+        reproj_error_sum_best = 0
+
+        for iter_idx in range(n_iters):
+            corresp = np.full(n_maps1, -1)
+            inliers = np.full(n_maps1, -1)
+            transforms = np.full(n_maps1, None)
+            proj_poses = np.full(n_maps1, None)
+            proj_points = np.full((n_maps1, 3), 0)
+            # corres_abs_scores = np.full(n_maps1, -1)
+
+            # CHOOSE CORRESPONDENCES
+            for i in range(n_maps1):
+                idx = idxs1[i]
+
+                matches = self.match_rankings[idx]
+                if matches is None:
+                    print("WARN! no matches, not aligning for idx " + str(idx))
+                    return None, None
+                scores = matches[1]
+                potential_idxs = matches[2]
+                potential_transforms_match_idxs = matches[3]
+
+                n_potential_matches = scores.size
+                if n_potential_matches > nearest_neighbors: 
+                    scores = scores[:nearest_neighbors]
+                    n_potential_matches = nearest_neighbors
+
+                minscore = np.min(scores)
+                maxscore = np.max(scores)
+                score_span = (maxscore - minscore)
+                choice_match_idx = np.random.randint(n_potential_matches)
+                if score_span > 0.0001:
+                    norm_scores = (scores - minscore) / score_span
+                    norm_scores += 0.001
+                    prob_distrib = norm_scores / np.sum(norm_scores)
+
+                    # CHOOSE
+                    choice_match_idx = np.random.choice(n_potential_matches, 1, p=prob_distrib)[0]
+                corresp[i] = potential_idxs[choice_match_idx]
+                # transforms[i] = potential_transforms[choice_match_idx]
+                transforms[i] = self.multimap_matches[potential_transforms_match_idxs[choice_match_idx]].trans
+
+            print("CORRESP SET:")
+            print(corresp)
+
+            # CHOOSE SUBMAP WHICH DETERMINES TRANSFORMATION
+            transform_det_i = np.random.randint(0, n_maps1)
+            t_idx1 = idxs1[transform_det_i]
+            t_idx2 = corresp[transform_det_i]
+            T_icp = transforms[transform_det_i]
+
+            print("T MAPS:")
+            print(mchunk2.submaps[t_idx2].T_global_to_own_origin)
+            T_odom1 = mchunk1.submaps[t_idx1].T_global_to_own_origin
+            T_odom2 = mchunk2.submaps[t_idx2].T_global_to_own_origin @ T_icp
+
+            # T_map1map2 = np.linalg.inv(T_odom1) @ T_odom2
+            T_map1map2 =  T_odom2 @ np.linalg.inv(T_odom1)
+
+            # PROJECT CORRESPONDING POINTS TO OTHER MAPS
+            # DETERMINE INLIERS OUTLIERS
+            n_inliers = 0
+            reproj_error_sum = 0
+            for i in range(n_maps1):
+                T_odom1 = mchunk1.submaps[t_idx1].T_global_to_own_origin
+                T_odom2 = mchunk2.submaps[t_idx2].T_global_to_own_origin @ T_icp
+                # T_proj = T_map1map2 @ T_odom1
+                T_proj = T_map1map2 @ T_odom1
+
+                proj_pos_error = np.linalg.norm(T_proj[:3,3] - T_odom2[:3,3])
+                print("PROJ ERROR: " + str(proj_pos_error))
+                if proj_pos_error < inlier_dist_base:
+                    inliers[i] = corresp[i]
+                    n_inliers += 1
+                    reproj_error_sum += proj_pos_error
+                else:
+                    print("OUTLIER")
+                    print(T_odom1[:3,3])
+                    print(T_proj[:3,3])
+                    print(T_odom2[:3,3])
+
+            # SAVE IF BEST
+            if n_inliers > n_inliers_best or (n_inliers == n_inliers_best and reproj_error_sum < reproj_error_sum_best):
+                T_best = T_map1map2
+                corresp_best = inliers
+                n_inliers_best = n_inliers
+                reproj_error_sum_best = reproj_error_sum
+
+        print("RANSAC ENDED WITH INLIER RATIO: " + str(n_inliers_best) + "/" + str(n_maps1) + " REPROJ ERR SUM:" + str(reproj_error_sum_best))
+
+        return T_best, corresp_best
+# # #}
+
+    def visualize_map_alignment(self, T_res, idxs1, idxs2, outlier_idxs1 = None, outlier_idxs2 = None):# # #{
+        # assuming idxs are inliers
+
+        mchunk1 = self.mapper.mchunk
+        mchunk2 = self.test_mchunk
+        marker_array = MarkerArray()
+
+        mchunk_centroid_odom = mchunk2.compute_centroid_odom()
+        # trans_vis = np.array([0, 0, -100])
+        # T_common = np.eye(4)
+        # T_common[:3, 3] = trans_vis - mchunk_centroid_odom
+        T_common = np.linalg.inv(T_res)
+
+
+        for smap in mchunk2.submaps:
+            T_vis = T_common @ smap.T_global_to_own_origin 
+
+            self.mapper.get_spheremap_marker_array(marker_array, smap, T_vis, alternative_look = True, do_connections = False, do_surfels = True, do_spheres = False, do_map2map_conns=False, do_centroids = False, ms=self.mapper.marker_scale, alpha=0.5, rgb = [0.5, 0.5, 0.5])
+
+        self.ransac_vis.publish(marker_array)
+# # #}
+
 
     def sample_and_propagate_particle(self, max_submaps, add=True):# # #{
         # TODO - lock matches mutex, matches cant change!!!
