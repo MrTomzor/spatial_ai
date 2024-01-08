@@ -19,16 +19,19 @@ local_mapping:
 
 local_nav:
   enabled: true
-  uav_radius: 0.3
+  uav_radius: 0.4
   safety_replanning_trigger_odist: 0.3
-  min_planning_odist: 0.2
+  min_planning_odist: 0.3
   max_planning_odist: 2
 
-  max_rrt_step_size: 0.1
+  max_rrt_step_size: 0.05
   # max_heading_change_per_m: 0.314159 
   max_heading_change_per_m: 0.5 
+  path_abandon_time: 8
 
-  clearing_dist: 1
+  clearing_dist: 1.2
+  reaching_dist: 0.5
+  out_path_resolution: 0.5
 
 global_nav:
   enabled: False

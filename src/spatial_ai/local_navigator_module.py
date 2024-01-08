@@ -93,8 +93,11 @@ class LocalNavigatorModule:
         self.safety_replanning_trigger_odist = rospy.get_param("local_nav/safety_replanning_trigger_odist")
         self.min_planning_odist = rospy.get_param("local_nav/min_planning_odist")
         self.max_planning_odist = rospy.get_param("local_nav/max_planning_odist")
+        self.path_abandon_time = rospy.get_param("local_nav/path_abandon_time")
 
         self.planning_clearing_dist = rospy.get_param("local_nav/clearing_dist")
+        self.output_path_resolution = rospy.get_param("local_nav/out_path_resolution")
+
 
         # PREDICTED TRAJ
         self.sub_predicted_trajectory = rospy.Subscriber(ptraj_topic, mrs_msgs.msg.MpcPredictionFullState, self.predicted_trajectory_callback, queue_size=10000)
@@ -113,7 +116,7 @@ class LocalNavigatorModule:
 
         self.currently_navigating_pts = None
         self.current_goal_vp_global = None
-        self.reaching_dist = 1
+        self.reaching_dist = rospy.get_param("local_nav/reaching_dist")
         self.reaching_angle = np.pi/2
 
         self.max_goal_vp_pathfinding_times = 3
@@ -241,7 +244,7 @@ class LocalNavigatorModule:
 
         prev_pos = pos_in_smap_frame[0, :]
 
-        min_travers_dist = 0.7
+        min_travers_dist = self.output_path_resolution
 
         for i in range(n_pts):
             dist = np.linalg.norm(prev_pos - pos_in_smap_frame[i,:])
@@ -357,7 +360,7 @@ class LocalNavigatorModule:
                 print("REACHED GOAL OF CURRENTLY SENT PATH!")
                 self.currently_navigating_pts = None
             else:
-                if (rospy.get_rostime() - self.trajectory_following_moved_time).to_sec() > 8:
+                if (rospy.get_rostime() - self.trajectory_following_moved_time).to_sec() > self.path_abandon_time:
                     print("NOT PROGRESSING ON PATH FOR LONG TIME! THROWING AWAY PATH!")
                     self.currently_navigating_pts = None
                     return
@@ -508,7 +511,8 @@ class LocalNavigatorModule:
 
         comp_start_time = rospy.get_rostime()
         n_iters = 0
-        n_unsafe = 0
+        n_unsafe_fspace = 0
+        n_unsafe_obs = 0
         n_odom_unsafe  = 0
         n_rewirings = 0
 
@@ -562,13 +566,13 @@ class LocalNavigatorModule:
             if new_node_fspace_dist < min_odist:
                 # IF AT LEAST IN SPHERE AND WITHIN CLEARING DIST -> IS OK
                 if new_node_fspace_dist < 0 or np.linalg.norm(new_node_pos - start_vp.position) > self.planning_clearing_dist:
-                    n_unsafe += 1
+                    n_unsafe_fspace += 1
                     continue
 
             # new_node_odist = self.mapper.spheremap.getMaxDistToFreespaceEdge(new_node_pos)
             new_node_odist = self.mapper.spheremap.getMinDistToSurfaces(new_node_pos)
             if new_node_odist < min_odist:
-                n_unsafe += 1
+                n_unsafe_obs += 1
                 continue
             new_node_odist = min(new_node_odist, new_node_fspace_dist)
 
@@ -691,7 +695,7 @@ class LocalNavigatorModule:
 
 
 
-        print("SPREAD FINISHED, HAVE " + str(tree_pos.shape[0]) + " NODES. ITERS: " +str(n_iters) + " UNSAFE: " + str(n_unsafe) + " ODOM_UNSAFE: " + str(n_odom_unsafe) + " REWIRINGS: " + str(n_rewirings))
+        print("SPREAD FINISHED, HAVE " + str(tree_pos.shape[0]) + " NODES. ITERS: " +str(n_iters) + " F-UNSAFE: " + str(n_unsafe_fspace) + " O-UNSAFE: " + str(n_unsafe_obs) + " ODOM_UNSAFE: " + str(n_odom_unsafe) + " REWIRINGS: " + str(n_rewirings))
         if visualize:
             self.visualize_rrt_tree(self.mapper.spheremap.T_global_to_own_origin, tree_pos, None, odists, parent_indices)
 
