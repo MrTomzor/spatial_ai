@@ -696,11 +696,11 @@ class FireSLAMModule:
 
             comp_time = time.time() - comp_start_time
             print("computation time: " + str((comp_time) * 1000) +  " ms")
+            self.track_vis_pub.publish(self.bridge.cv2_to_imgmsg(self.visualize_tracking(), "bgr8"))
 
         # VISUALIZE FEATURES
 
         # self.triang_vis_pub.publish(self.bridge.cv2_to_imgmsg(self.visualize_triang(), "bgr8"))
-        self.track_vis_pub.publish(self.bridge.cv2_to_imgmsg(self.visualize_tracking(), "bgr8"))
         self.keyframes_marker_pub.publish(self.visualize_keyframes())
 
 # # #}

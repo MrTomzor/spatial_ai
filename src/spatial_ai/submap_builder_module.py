@@ -500,6 +500,9 @@ class SubmapBuilderModule:
             # scaling[ray_hit_pts[:,2] > max_sphere_update_dist] = max_sphere_update_dist
             farmask = hit_dists > max_sphere_update_dist
             scaling[farmask] = max_sphere_update_dist * np.reciprocal(hit_dists[farmask])
+            # for i in range(scaling.shape[0]):
+            #     if np.random.rand() < 0.1 and hit_dists[i] > 2:
+            #         scaling[i] = 2.0 / hit_dists[i]
             ray_hit_pts = ray_hit_pts * scaling.reshape((ray_hit_pts.shape[0], 1))
 
             # scaling = scaling.flatten() / ray_hit_pts[:,2].flatten()

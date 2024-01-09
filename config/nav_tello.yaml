@@ -9,8 +9,8 @@ local_mapping:
   keyframe_dist_thr: 0.8
   slam_filtering_enabled: True
 
-  smap_fragmentation_dist: 10
-  n_sphere_samples_per_update: 100
+  smap_fragmentation_dist: 60
+  n_sphere_samples_per_update: 400
   carryover_dist: 2.5
   max_sphere_sampling_z : 10
 

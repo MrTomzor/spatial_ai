@@ -278,6 +278,8 @@ class NavNode:
         self.odom_buffer_maxlen = 1000
         self.sub_odom = rospy.Subscriber(self.odom_topic, Odometry, self.odometry_callback, queue_size=10000)
         
+        self.n_plan_iters_without_smap_update = 0
+        self.n_smap_iters_since_last_planning = 0
         self.node_initialized = True
         # # #}
 
@@ -298,7 +300,17 @@ class NavNode:
         print("PLANNING ITER")
         if not self.node_initialized:
             return
+        if self.n_plan_iters_without_smap_update > 1:
+            print("NOT LOCAL NAVING, GIVING SMAP BUILDER CHANCE TO UPDATE!")
+            return
+        n_upd = 4
+        if self.n_smap_iters_since_last_planning < n_upd :
+            print("NOT LOCAL NAVING, GIVING SMAP BUILDER CHANCE TO DO " + str(n_upd) + "UPDATES!")
+            return
+
         self.local_navigator_module.planning_loop_iter()
+        self.n_plan_iters_without_smap_update += 1
+        self.n_smap_iters_since_last_planning = 0
     # # #}
 
     def global_nav_loop_iter(self, event):
@@ -355,7 +367,11 @@ class NavNode:
             # points_info = copy.deepcopy(self.submap_builder_input_point_ids)
             points_info = None
 
+        print("SMAP ITER")
         self.submap_builder_module.camera_update_iter(pcl_msg, points_info) 
+        print("SMAP ITER DONE")
+        self.n_plan_iters_without_smap_update = 0
+        self.n_smap_iters_since_last_planning += 1
     # # #}
 
     def slam_points_callback(self, msg):# # #{

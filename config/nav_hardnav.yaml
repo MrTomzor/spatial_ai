@@ -36,5 +36,5 @@ local_nav:
   out_path_resolution: 0.5
 
 global_nav:
-  enabled: True
+  enabled: False
   testing_mchunk_filename: "threeroom_big_to_left_end.pickle"
