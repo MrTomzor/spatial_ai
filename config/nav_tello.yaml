@@ -14,25 +14,25 @@ local_mapping:
   carryover_dist: 2.5
   max_sphere_sampling_z : 10
 
-  surfel_resolution: 0.8
-  frontier_resolution: 1
+  surfel_resolution: 0.2
+  frontier_resolution: 0.8
 
   min_sphere_rad: 0.1
 
 local_nav:
   enabled: true
   uav_radius: 0.4
-  safety_replanning_trigger_odist: 0.3
-  min_planning_odist: 0.3
-  max_planning_odist: 2
+  safety_replanning_trigger_odist: 0.5
+  min_planning_odist: 0.7 # is halved for free space
+  max_planning_odist: 3
+  safety_weight: 5
 
-  max_rrt_step_size: 0.05
-  # max_heading_change_per_m: 0.314159 
+  max_rrt_step_size: 0.3
   max_heading_change_per_m: 0.5 
-  path_abandon_time: 8
+  path_abandon_time: 2
 
   clearing_dist: 1.5
-  reaching_dist: 0.8
+  reaching_dist: 1.5
   out_path_resolution: 0.5
 
 global_nav:

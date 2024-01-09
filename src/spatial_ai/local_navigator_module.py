@@ -119,11 +119,11 @@ class LocalNavigatorModule:
         self.reaching_dist = rospy.get_param("local_nav/reaching_dist")
         self.reaching_angle = np.pi/2
 
-        self.max_goal_vp_pathfinding_times = 3
+        self.max_goal_vp_pathfinding_times = 2
         self.current_goal_vp_pathfinding_times = 0
 
         self.fspace_bonus_mod = 2
-        self.safety_weight = 5
+        self.safety_weight = rospy.get_param("local_nav/reaching_dist")
 
         # ROOMBA PARAMS
         self.roomba_progress_lasttime = None
@@ -177,7 +177,14 @@ class LocalNavigatorModule:
         headings = None
 
         if self.predicted_trajectory_pts_global is None:
-            return None, None, None
+            # return None, None, None
+
+            T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
+            pos = T_global_to_fcu[:3, 3].reshape((1,3))
+            # pos[0] += 0.001
+            heading = transformationMatrixToHeading(T_global_to_fcu)
+
+            return pos, heading.reshape((1,1)), np.array([0])
 
         with ScopedLock(self.predicted_traj_mutex):
             stamps = self.predicted_trajectory_stamps
@@ -215,6 +222,7 @@ class LocalNavigatorModule:
             odist_fs = self.mapper.spheremap.getMaxDistToFreespaceEdge(pts_in_smap_frame[i, :]) * self.fspace_bonus_mod
             odist_surf = self.mapper.spheremap.getMinDistToSurfaces(pts_in_smap_frame[i, :])
             odist = min(odist_fs, odist_surf)
+            print("CHECKING ODIST: " + str(odist))
 
             odists.append(odist)
             if odist < min_odist and dists_from_start[i] > clearing_dist:
@@ -325,7 +333,7 @@ class LocalNavigatorModule:
 
         arrow_pos = copy.deepcopy(pos_fcu_in_global_frame)
         arrow_pos[2] += 10
-        self.visualize_arrow(arrow_pos.flatten(), (arrow_pos + self.roomba_dirvec_global*5).flatten(), r=1, g=0.5, marker_idx=0)
+        # self.visualize_arrow(arrow_pos.flatten(), (arrow_pos + self.roomba_dirvec_global*5).flatten(), r=1, g=0.5, marker_idx=0)
 
         if not self.current_goal_vp_global is None:
             # VISUALZIE GOAL
@@ -372,7 +380,7 @@ class LocalNavigatorModule:
                     future_pts, future_headings, relative_times = self.get_future_predicted_trajectory_global_frame()
                     if not future_pts is None:
                         future_pts_dists = np.linalg.norm(future_pts - pos_fcu_in_global_frame, axis=1)
-                        unsafe_idxs, odists = self.find_unsafe_pt_idxs_on_global_path(future_pts, future_headings, self.safety_replanning_trigger_odist, 0)
+                        unsafe_idxs, odists = self.find_unsafe_pt_idxs_on_global_path(future_pts, future_headings, self.safety_replanning_trigger_odist, -1)
                         if unsafe_idxs.size > 0:
 
                             time_to_unsafety = relative_times[unsafe_idxs[0]]
@@ -721,6 +729,7 @@ class LocalNavigatorModule:
         if mode == 'find_goals':
             acceptance_thresh = 0
             mode2 = 'frontiers'
+            mode3 = 'forward'
             if mode2 == 'frontiers':
                 infovals = np.full((1, heads_indices.size), 0).flatten()
                 # T_smap_orig_to_fcu = np.eye(4)
@@ -761,8 +770,9 @@ class LocalNavigatorModule:
                         n_visible = np.sum(visible_pts_mask)
                         print("N VISIBLE FRONTIERS: " + str(n_visible))
                         if n_visible > 0:
-                            # heads_values[i] = n_visible * 100
-                            heads_values[i] = startdist * 100
+                            # heads_values[i] = n_visible * 100 # VALUE OF FRONTIERS
+                            # heads_values[i] = startdist * 100 # VALUE OF DIST FROM CUR POS
+                            heads_values[i] = (tree_pos[idx] - start_vp.position)[0] * 30 # VALUE OF DIST IN FORWARD DIR!
             else:
                 toofar = np.logical_not(check_points_in_box(heads_global, self.roomba_bounds_global))
                 if np.all(toofar):
