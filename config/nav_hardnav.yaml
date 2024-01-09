@@ -17,7 +17,7 @@ local_mapping:
   surfel_resolution: 1
   frontier_resolution: 2
 
-  min_sphere_rad: 0.5
+  min_sphere_rad: 0.3
 
 local_nav:
   enabled: True
@@ -31,8 +31,8 @@ local_nav:
   max_heading_change_per_m: 0.314159 
   path_abandon_time: 2
 
-  clearing_dist: 3
-  reaching_dist: 3
+  clearing_dist: 4
+  reaching_dist: 4
   out_path_resolution: 0.5
 
 global_nav:

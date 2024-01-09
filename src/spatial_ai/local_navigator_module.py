@@ -438,12 +438,16 @@ class LocalNavigatorModule:
         best_path_pts = None
         best_path_headings = None
         save_last_pos_as_goal = False
+        trusted_submap_idxs = None
+        # if len(self.mapper.mchunk.submaps) > 0:
+        #     trusted_submap_idxs = [len(self.mapper.mchunk.submaps) - 1]
+
 
         if not self.current_goal_vp_global is None:
 
             # FIND PATH TO GOAL
             goal_vp_smap_pos, goal_vp_smap_heading = transformViewpoints(self.current_goal_vp_global.position.reshape((1,3)), np.array([self.current_goal_vp_global.heading]), np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin))
-            best_path_pts, best_path_headings = self.find_paths_rrt(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist, mode = 'to_goal', goal_vp_smap = Viewpoint(goal_vp_smap_pos, goal_vp_smap_heading), max_step_size = self.path_step_size)
+            best_path_pts, best_path_headings = self.find_paths_rrt(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist, mode = 'to_goal', goal_vp_smap = Viewpoint(goal_vp_smap_pos, goal_vp_smap_heading), max_step_size = self.path_step_size, other_submap_idxs = trusted_submap_idxs)
 
             if best_path_pts is None:
                 print("NO PATH FOUND TO GOAL VP! TRY: " + str(self.current_goal_vp_pathfinding_times) + "/" + str(self.max_goal_vp_pathfinding_times))
@@ -455,7 +459,7 @@ class LocalNavigatorModule:
 
         # elif not evading_obstacle:
         else:
-            best_path_pts, best_path_headings = self.find_paths_rrt(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist, max_step_size = self.path_step_size)
+            best_path_pts, best_path_headings = self.find_paths_rrt(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist, max_step_size = self.path_step_size, other_submap_idxs = trusted_submap_idxs)
 
             if best_path_pts is None:
                 print("NO OK VIABLE REACHABLE GOALS FOUND BY RRT!")
@@ -506,9 +510,19 @@ class LocalNavigatorModule:
         return
     # # #}
 
-    def find_paths_rrt(self, start_vp, visualize = True, max_comp_time=0.5, max_step_size = 0.5, max_spread_dist=10, min_odist = 0.1, max_odist = 0.5, max_iter = 700006969420, goal_vp_smap=None, p_greedy = 0.3, mode='find_goals'):# # #{
+    def find_paths_rrt(self, start_vp, visualize = True, max_comp_time=0.5, max_step_size = 0.5, max_spread_dist=10, min_odist = 0.1, max_odist = 0.5, max_iter = 700006969420, goal_vp_smap=None, p_greedy = 0.3, mode='find_goals', other_submap_idxs = None):# # #{
         # print("RRT: STARTING, FROM TO:")
         # print(start_vp)
+        
+        n_prev_smaps = 0
+        prev_smaps = []
+        prev_smaps_T = []
+        if not other_submap_idxs is None:
+            n_prev_smaps = len(other_submap_idxs)
+            prev_smaps = [self.mapper.mchunk.submaps[idx] for idx in other_submap_idxs]
+            prev_smaps_T = [np.linalg.inv(self.mapper.mchunk.submaps[idx].T_global_to_own_origin) @ self.mapper.spheremap.T_global_to_own_origin for idx in other_submap_idxs]
+
+            
 
         bounds = np.ones((1,3)) * max_spread_dist
         # bounds += 10
@@ -574,14 +588,39 @@ class LocalNavigatorModule:
             if new_node_fspace_dist < min_odist:
                 # IF AT LEAST IN SPHERE AND WITHIN CLEARING DIST -> IS OK
                 if new_node_fspace_dist < 0 or np.linalg.norm(new_node_pos - start_vp.position) > self.planning_clearing_dist:
-                    n_unsafe_fspace += 1
-                    continue
+                    # CHECK WHETHER NOT IN FSPACE OF OTHER MAPS
+                    is_unsafe_in_other_maps = True
+                    for omi in range(n_prev_smaps):
+                        pt_in_prev_smap = transformPoints(new_node_pos, prev_smaps_T[omi])
+                        new_node_fspace_dist = prev_smaps[omi].getMaxDistToFreespaceEdge(pt_in_prev_smap) * self.fspace_bonus_mod 
+                        if new_node_fspace_dist >= min_odist:
+                            is_unsafe_in_other_maps = False
+                            break
+                    if is_unsafe_in_other_maps :
+                        n_unsafe_fspace += 1
+                        continue
 
             # new_node_odist = self.mapper.spheremap.getMaxDistToFreespaceEdge(new_node_pos)
+
+            # CHECK IF NOT TOO CLOSE TO OBSTACLES
             new_node_odist = self.mapper.spheremap.getMinDistToSurfaces(new_node_pos)
             if new_node_odist < min_odist:
                 n_unsafe_obs += 1
                 continue
+
+            # CHECK ALSO OTHER SUBMAPS IF ANY SURFACES TOO CLOSE IN THEM
+            is_unsafe_in_other_maps = False
+            for omi in range(n_prev_smaps):
+                pt_in_prev_smap = transformPoints(new_node_pos, prev_smaps_T[omi])
+                new_node_fspace_dist = prev_smaps[omi].getMaxDistToFreespaceEdge(pt_in_prev_smap) * self.fspace_bonus_mod 
+                if new_node_fspace_dist >= min_odist:
+                    is_unsafe_in_other_maps = False
+                    break
+
+            if is_unsafe_in_other_maps:
+                n_unsafe_obs +=1
+                continue
+
             new_node_odist = min(new_node_odist, new_node_fspace_dist)
 
             # FIND ALL CONNECTABLE PTS
