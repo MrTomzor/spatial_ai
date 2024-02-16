@@ -303,7 +303,7 @@ class NavNode:
         if self.n_plan_iters_without_smap_update > 1:
             print("NOT LOCAL NAVING, GIVING SMAP BUILDER CHANCE TO UPDATE!")
             return
-        n_upd = 4
+        n_upd = 8
         if self.n_smap_iters_since_last_planning < n_upd :
             print("NOT LOCAL NAVING, GIVING SMAP BUILDER CHANCE TO DO " + str(n_upd) + "UPDATES!")
             return
@@ -367,9 +367,9 @@ class NavNode:
             # points_info = copy.deepcopy(self.submap_builder_input_point_ids)
             points_info = None
 
-        print("SMAP ITER")
+        # print("SMAP ITER")
         self.submap_builder_module.camera_update_iter(pcl_msg, points_info) 
-        print("SMAP ITER DONE")
+        # print("SMAP ITER DONE")
         self.n_plan_iters_without_smap_update = 0
         self.n_smap_iters_since_last_planning += 1
     # # #}

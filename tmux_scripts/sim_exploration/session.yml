@@ -25,7 +25,8 @@ windows:
   - navigation:
       layout: tiled
       panes:
-        - waitForOdometry; rosrun spatial_ai ov_extension.py
+        # - waitForOdometry; rosrun spatial_ai ov_extension.py
+        - waitForOdometry; roslaunch spatial_ai mrs_openvins_explore.launch
   - VINS:
       layout: tiled
       panes:

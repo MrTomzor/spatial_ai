@@ -206,15 +206,16 @@ class GlobalNavigatorModule:
                     # nums_matches[idx] += self.match_rankings[idx][2].size
                     for j in range(self.match_rankings[idx][3].size):
                         nums_matches[idx] += self.multimap_matches[self.match_rankings[idx][3][j]].n_tries
-            print(self.match_rankings)
-            print("MA")
-            print(nums_matches)
-            p_dist = np.reciprocal(np.power(nums_matches, 3)) 
-            print(p_dist)
-            p_dist = p_dist / np.sum(p_dist)
-            print(p_dist)
+            # print(self.match_rankings)
+            # print("MA")
+            # print(nums_matches)
+            # p_dist = np.reciprocal(np.power(nums_matches, 3)) 
+            # print(p_dist)
+            # p_dist = p_dist / np.sum(p_dist)
+            # print(p_dist)
 
-            start1 = np.random.choice(n_submaps1, 1, p=p_dist)[0] 
+            # start1 = np.random.choice(n_submaps1, 1, p=p_dist)[0] 
+            start1 = np.random.choice(n_submaps1, 1)[0] 
                     
 
         start1 = np.random.randint(0, len(mchunk1.submaps))
@@ -253,7 +254,7 @@ class GlobalNavigatorModule:
             return
 
         # COMPUTE PERCENTAGE OF INLIERS wrt THE SMALLER MAP
-        n_inliers = n_inliers / np.min(np.array([matching_data1.surfel_pts.shape[0], matching_data2.surfel_pts.shape[0]]))
+        # n_inliers = n_inliers / np.min(np.array([matching_data1.surfel_pts.shape[0], matching_data2.surfel_pts.shape[0]]))
 
         # VISUALIZE MATCH OVERLAP!!
         print("MATCHING DONE!!!")
@@ -356,8 +357,8 @@ class GlobalNavigatorModule:
         n_own_maps_after_match_update = len(self.match_rankings)
         self.visualize_matches()
 
-        if not self.match_rankings is None and len(self.mapper.mchunk.submaps) > 0:
-            n_submaps_for_alignment = 10
+        if not self.match_rankings is None and len(self.mapper.mchunk.submaps) > 2:
+            n_submaps_for_alignment = 100
 
             idxs1, transforms1 = getConnectedSubmapsWithTransforms(self.mapper.mchunk, len(self.mapper.mchunk.submaps) - 1, n_submaps_for_alignment)
             for idx in idxs1:
@@ -594,7 +595,7 @@ class GlobalNavigatorModule:
 
         return res# # #}
 
-    def local_map_alignment(self, idxs1, n_iters = 1000, nearest_neighbors = 6, inlier_dist_base = 15):# # #{
+    def local_map_alignment(self, idxs1, n_iters = 5000, nearest_neighbors = 3, inlier_dist_base = 20):# # #{
         mchunk1 = self.mapper.mchunk
         mchunk2 = self.test_mchunk
 
@@ -607,8 +608,10 @@ class GlobalNavigatorModule:
 
         for iter_idx in range(n_iters):
             corresp = np.full(n_maps1, -1)
+            match_choices = np.full(n_maps1, -1)
             inliers = np.full(n_maps1, -1)
             transforms = np.full(n_maps1, None)
+            choice_probs = []
             proj_poses = np.full(n_maps1, None)
             proj_points = np.full((n_maps1, 3), 0)
             # corres_abs_scores = np.full(n_maps1, -1)
@@ -640,10 +643,15 @@ class GlobalNavigatorModule:
                     norm_scores += 0.001
                     prob_distrib = norm_scores / np.sum(norm_scores)
 
+                    choice_probs.append(prob_distrib / np.max(prob_distrib))
+
                     # CHOOSE
-                    choice_match_idx = np.random.choice(n_potential_matches, 1, p=prob_distrib)[0]
+                    # choice_match_idx = np.random.choice(n_potential_matches, 1, p=prob_distrib)[0]
+                else:
+                    choice_probs.append(np.full(n_potential_matches, 1.0))
 
                 corresp[i] = potential_idxs[choice_match_idx]
+                match_choices[i] = choice_match_idx
                 # transforms[i] = potential_transforms[choice_match_idx]
                 transforms[i] = self.multimap_matches[potential_transforms_match_idxs[choice_match_idx]].trans
 
@@ -670,6 +678,9 @@ class GlobalNavigatorModule:
             # T_map1map2 = np.linalg.inv(T_odom1) @ T_odom2
             T_map1map2 =  T_odom2 @ np.linalg.inv(T_odom1)
 
+            # ALIGN IT WITH GRAVITY
+            T_map1map2 = alignTransformationMatrixWithGravity(T_map1map2)
+
             # PROJECT CORRESPONDING POINTS TO OTHER MAPS
             # DETERMINE INLIERS OUTLIERS
             n_inliers = 0
@@ -685,6 +696,8 @@ class GlobalNavigatorModule:
                 T_proj = T_map1map2 @ T_odom1
 
                 proj_pos_error = np.linalg.norm(T_proj[:3,3] - T_odom2[:3,3])
+                # proj_pos_error = np.linalg.norm(T_proj[:3,3] - T_odom2[:3,3]) / (choice_probs[i])[match_choices[i]]
+
                 # print("PROJ ERROR: " + str(proj_pos_error))
                 if proj_pos_error < inlier_dist_base:
                     inliers[i] = corresp[i]

@@ -81,7 +81,12 @@ class SubmapBuilderModule:
 
         self.spheremap = None
         # self.mchunk.submaps = []
+
         self.mchunk = CoherentSpatialMemoryChunk()
+
+        # self.testing_mchunk_filename = rospy.get_param("global_nav/testing_mchunk_filename")
+        # mchunk_filepath = rospkg.RosPack().get_path('spatial_ai') + "/memories/" + self.testing_mchunk_filename
+        # self.mchunk = CoherentSpatialMemoryChunk.load(mchunk_filepath)
 
         self.keyframes = []
         self.noprior_triangulation_points = None
@@ -885,9 +890,9 @@ class SubmapBuilderModule:
                 marker.scale.x = ms *1.2  # Adjust the size of the points
                 marker.scale.y = ms *1.2
                 marker.color.a = 0.7
-                marker.color.r = 1.0
+                marker.color.r = 0.7
                 marker.color.g = 0.0
-                marker.color.b = 1.0
+                marker.color.b = 0.7
 
                 marker.id = copy.deepcopy(marker_id)
                 marker_id += 1

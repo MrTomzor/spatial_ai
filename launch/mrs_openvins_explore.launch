@@ -1,10 +1,8 @@
 <launch>
     <!-- Load ROS parameters from the config file -->
-    <rosparam command="load" file="$(find spatial_ai)/config/tello.yaml"/>
+    <rosparam command="load" file="$(find spatial_ai)/config/mrs_sim.yaml"/>
 
     <!-- Run ov_extension.py node -->
     <node pkg="spatial_ai" type="ov_extension.py" name="ov_extension_node" output="screen"/>
 
-    <!-- Run traj.py node -->
-    <!-- <node pkg="spatial_ai" type="mrs_path_follower.py" name="traj_node" output="screen" /> -->
 </launch>

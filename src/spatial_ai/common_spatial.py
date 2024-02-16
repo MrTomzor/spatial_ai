@@ -94,6 +94,11 @@ def transformationMatrixToHeading(T):
 def headingToTransformationMatrix(h):
     return R.from_euler('z', h, degrees=False).as_matrix()
 
+def alignTransformationMatrixWithGravity(T):
+    h = transformationMatrixToHeading(T)
+    T[:3, :3] = headingToTransformationMatrix(h)
+    return T
+
 def posAndHeadingToMatrix(pos, h):
     res = np.eye(4)
     res[:3, 3] = pos
@@ -844,7 +849,7 @@ def matchMapGeomSimple(data1, data2, T_init = None):# # #{
     print("ESTIMATING NORMALS")
     normals_search_rad = 5
     normals_search_neighbors = 30
-    sigma = 0.5
+    sigma = 5
     max_corresp_dist = 5
     # voxel_size = 3
 
@@ -853,6 +858,7 @@ def matchMapGeomSimple(data1, data2, T_init = None):# # #{
 
     # DO ICP
 
+    # estimation = treg.TransformationEstimationPointToPoint()
     estimation = treg.TransformationEstimationPointToPlane()
     # estimation = treg.TransformationEstimationPointToPlane(
     #     treg.robust_kernel.RobustKernel(
@@ -864,7 +870,7 @@ def matchMapGeomSimple(data1, data2, T_init = None):# # #{
     #     open3d.pipelines.registration.TransformationEstimationPointToPoint())
     criteria = treg.ICPConvergenceCriteria(relative_fitness=0.000001,
                                        relative_rmse=0.000001,
-                                       max_iteration=8)
+                                       max_iteration=20)
 
     reg_p2p = None
     try:
@@ -997,6 +1003,10 @@ def getConnectedSubmapsWithTransforms(mchunk, start_idx, max_submaps, allow_zero
                 if (allow_zerosurfels or has_pts_and_fspace):
                     smap_idxs.append(j)
                     transforms.append(T_inv_start @ mchunk.submaps[j].T_global_to_own_origin)
+                if len(smap_idxs) >= max_submaps:
+                    break
+        if len(smap_idxs) >= max_submaps:
+            break
 
     return smap_idxs, transforms
 # # #}

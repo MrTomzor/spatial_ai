@@ -439,8 +439,8 @@ class LocalNavigatorModule:
         best_path_headings = None
         save_last_pos_as_goal = False
         trusted_submap_idxs = None
-        # if len(self.mapper.mchunk.submaps) > 0:
-        #     trusted_submap_idxs = [len(self.mapper.mchunk.submaps) - 1]
+        if len(self.mapper.mchunk.submaps) > 0:
+            trusted_submap_idxs = [len(self.mapper.mchunk.submaps) - 1]
 
 
         if not self.current_goal_vp_global is None:
@@ -510,7 +510,7 @@ class LocalNavigatorModule:
         return
     # # #}
 
-    def find_paths_rrt(self, start_vp, visualize = True, max_comp_time=0.5, max_step_size = 0.5, max_spread_dist=10, min_odist = 0.1, max_odist = 0.5, max_iter = 700006969420, goal_vp_smap=None, p_greedy = 0.3, mode='find_goals', other_submap_idxs = None):# # #{
+    def find_paths_rrt(self, start_vp, visualize = True, max_comp_time=0.5, max_step_size = 0.5, max_spread_dist=30, min_odist = 0.1, max_odist = 0.5, max_iter = 700006969420, goal_vp_smap=None, p_greedy = 0.3, mode='find_goals', other_submap_idxs = None):# # #{
         # print("RRT: STARTING, FROM TO:")
         # print(start_vp)
         
@@ -759,6 +759,8 @@ class LocalNavigatorModule:
         # T_global_to_imu = self.odom_msg_to_transformation_matrix(latest_odom_msg)
         # T_global_to_fcu = T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
         T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
+        print("CUR FCU IN GLOBAL:")
+        print(T_global_to_fcu[:3,3])
 
         heads_values = None
         acceptance_thresh = -1000
@@ -811,7 +813,16 @@ class LocalNavigatorModule:
                         if n_visible > 0:
                             # heads_values[i] = n_visible * 100 # VALUE OF FRONTIERS
                             # heads_values[i] = startdist * 100 # VALUE OF DIST FROM CUR POS
-                            heads_values[i] = (tree_pos[idx] - start_vp.position)[0] * 30 # VALUE OF DIST IN FORWARD DIR!
+                            current_fcu_in_global = T_global_to_fcu[:3, 3].reshape((1,3))
+                            global_pos = heads_global[i]
+
+                            # heads_values[i] = (global_pos - current_fcu_in_global).flatten()[0] * 5 # VALUE OF DIST IN FORWARD DIR!
+                            heads_values[i] = np.linalg.norm((global_pos - current_fcu_in_global).flatten()) * 5 # VALUE OF DIST IN ANY DIR!
+
+                            if heads_values[i] <= acceptance_thresh:
+                                heads_values[i] = acceptance_thresh + 1
+                        else:
+                            heads_values[i] = acceptance_thresh - 1
             else:
                 toofar = np.logical_not(check_points_in_box(heads_global, self.roomba_bounds_global))
                 if np.all(toofar):
