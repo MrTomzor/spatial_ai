@@ -57,8 +57,8 @@ windows:
       panes:
         # - waitForSimulation; roslaunch mrs_uav_general automatic_start.launch
         - waitForSimulation; roslaunch mrs_uav_autostart automatic_start.launch
-        - 'waitForHw;
-          sleep 8;
+        - 'waitForControlNoOdom;
+          sleep 2;
           rosservice call /$UAV_NAME/mavros/cmd/arming 1;
           sleep 2;
           rosservice call /$UAV_NAME/mavros/set_mode 0 offboard'
@@ -69,9 +69,12 @@ windows:
   - rviz:
       layout: tiled
       panes:
+        - waitForControlNoOdom; roslaunch mrs_uav_core rviz.launch
+        - waitForControlNoOdom; roslaunch mrs_rviz_plugins load_robot.launch
+        - waitForControlNoOdom; roslaunch mrs_rviz_plugins rviz_interface.launch
         # - waitForControl; roslaunch mrs_uav_testing rviz_ov_navigation.launch
-        - waitForControl; roslaunch mrs_uav_testing rviz_random_simulation.launch
-        - waitForControl; roslaunch mrs_rviz_plugins load_robot.launch
+        # - waitForControl; roslaunch mrs_uav_testing rviz_random_simulation.launch
+        # - waitForControl; roslaunch mrs_rviz_plugins load_robot.launch
   - easy_control:
       layout: tiled
       panes:
