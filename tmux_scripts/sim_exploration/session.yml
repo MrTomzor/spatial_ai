@@ -12,7 +12,7 @@ windows:
       panes:
         # - waitForRos; roslaunch mrs_simulation simulation.launch world_name:=forest2 gui:=true
         # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_name:=schoolworld gui:=true
-        - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_name:=grass_plane gui:=true
+        - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_name:=mrs_city gui:=true
         # - waitForRos; roslaunch mrs_simulation simulation.launch world_name:=mrs_city gui:=true
         - waitForOdometry; gz camera -c gzclient_camera -f uav1; history -s gz camera -c gzclient_camera -f uav1
 
@@ -41,7 +41,8 @@ windows:
   - change_odom_source:
       layout: tiled
       panes:
-        -  waitForOffboard; sleep 10; rosservice call /$UAV_NAME/odometry/change_odometry_source "VIO"
+        # -  waitForOffboard; sleep 10; rosservice call /$UAV_NAME/odometry/change_odometry_source "VIO"
+        -  waitForOffboard; sleep 10; rosservice call /$UAV_NAME/estimation_manager/change_estimator "open_vins"
   - spawn:
       layout: tiled
       panes:
@@ -56,7 +57,8 @@ windows:
       panes:
         # - waitForSimulation; roslaunch mrs_uav_general automatic_start.launch
         - waitForSimulation; roslaunch mrs_uav_autostart automatic_start.launch
-        - 'waitForControl;
+        - 'waitForHw;
+          sleep 8;
           rosservice call /$UAV_NAME/mavros/cmd/arming 1;
           sleep 2;
           rosservice call /$UAV_NAME/mavros/set_mode 0 offboard'
