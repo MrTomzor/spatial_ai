@@ -10,10 +10,8 @@ windows:
   - gazebo:
       layout: tiled
       panes:
-        # - waitForRos; roslaunch mrs_simulation simulation.launch world_name:=forest2 gui:=true
-        # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_name:=schoolworld gui:=true
-        - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_name:=mrs_city gui:=true
-        # - waitForRos; roslaunch mrs_simulation simulation.launch world_name:=mrs_city gui:=true
+        # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_name:=mrs_city gui:=true
+        - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/schoolworld.sdf gui:=true
         - waitForOdometry; gz camera -c gzclient_camera -f uav1; history -s gz camera -c gzclient_camera -f uav1
 
   - hw_api:
@@ -46,7 +44,7 @@ windows:
   - spawn:
       layout: tiled
       panes:
-        - waitForSimulation; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-vio"
+        - waitForSimulation; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-vio --pos 3 0 0 1.57"
   - control:
       layout: tiled
       panes:
@@ -65,13 +63,13 @@ windows:
   - goto:
       layout: tiled
       panes:
-        - 'history -s rosservice call /$UAV_NAME/control_manager/goto \"goal: \[0.0, 10.0, 1.5, 0.0\]\"'
+        - 'history -s rosservice call /$UAV_NAME/control_manager/goto \"goal: \[2.0, -0.3, 1.5, -0.27\]\"'
   - rviz:
       layout: tiled
       panes:
         - waitForControlNoOdom; roslaunch mrs_uav_core rviz.launch
-        - waitForControlNoOdom; roslaunch mrs_rviz_plugins load_robot.launch
-        - waitForControlNoOdom; roslaunch mrs_rviz_plugins rviz_interface.launch
+        # - waitForControlNoOdom; roslaunch mrs_rviz_plugins load_robot.launch
+        # - waitForControlNoOdom; roslaunch mrs_rviz_plugins rviz_interface.launch
         # - waitForControl; roslaunch mrs_uav_testing rviz_ov_navigation.launch
         # - waitForControl; roslaunch mrs_uav_testing rviz_random_simulation.launch
         # - waitForControl; roslaunch mrs_rviz_plugins load_robot.launch

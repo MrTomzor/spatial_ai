@@ -1,3 +1,11 @@
+mrs_uav_trackers:
+
+  landoff_tracker:
+
+    vertical_tracker:
+      vertical_speed: 5.0
+      vertical_acceleration: 10.0
+
 mrs_uav_managers:
 
   # estimation_manager:
@@ -13,6 +21,7 @@ mrs_uav_managers:
   uav_manager:
 
     takeoff:
+      takeoff_height: 2.5
 
       during_takeoff:
         controller: "MpcController"
@@ -226,8 +235,8 @@ mrs_uav_managers:
     # those gains will be used automatically when a localization mode switches
     # and the current gains are not in the allowed list (next paragraphs)
     default_constraints:
-      gps_baro: "slow"
-      open_vins: "slow"
+      gps_baro: "fast"
+      open_vins: "fast"
 
   gain_manager:
 
