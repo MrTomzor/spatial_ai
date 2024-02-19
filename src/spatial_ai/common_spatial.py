@@ -186,6 +186,7 @@ class MapToMapConnection:# # #{
 
 # #{ class SphereMap
 class SphereMap:
+
     def __init__(self, init_radius, min_radius):# # #{
         self.spheres_kdtree = None
         self.points = np.array([0,0,0]).reshape((1,3))
@@ -209,20 +210,22 @@ class SphereMap:
         self.min_radius = min_radius
         self.max_radius = init_radius# # #}
 
-    def computeStorageMetrics(self):
+    def computeStorageMetrics(self):# # #{
         self.centroid = np.mean(self.points, axis=0)
         self.freespace_bounding_radius = np.max(np.linalg.norm(self.points - self.centroid, axis = 1) + self.radii)
 
         # fspace_centroid = np.mean(self.points, axis=0)
         # visited_pts = np.array([kp.position for kp in visual_keyframes])
         # fspace_distmatrix = 
+    # # #}
 
-    def getPointOfConnectionToSubmap(self, idx):
+    def getPointOfConnectionToSubmap(self, idx):# # #{
         for conn in self.map2map_conns:
             print(conn.second_map_id)
             if conn.second_map_id == idx:
                 return conn.pt_in_first_map_frame
         return None
+    # # #}
 
     def updateFrontiers(self, fr_samples, filtering_radius):# # #{
         # SIMPLEST: 
@@ -505,7 +508,7 @@ class SphereMap:
         largest_inside_dist = np.max(-dists[inside_mask])
         return largest_inside_dist# # #}
 
-    def labelSpheresByConnectivity(self):
+    def labelSpheresByConnectivity(self):# # #{
         n_nodes = self.points.shape[0]
         self.connectivity_labels = np.full((n_nodes), -1)
         self.connectivity_segments_counts = []
@@ -535,6 +538,7 @@ class SphereMap:
         self.max_radius = np.max(self.radii)
 
         # print("DISCONNECTED REGIONS: " + str(seg_id))
+    # # #}
 
     def wouldPruningNodeMakeConnectedNodesNotFullGraph(self, idx):# # #{
         conns = self.connections[idx]
@@ -728,7 +732,8 @@ class SphereMap:
         # print("FOUND INTERSECTIONS: " + str(np.sum(intersecting)))
         return intersecting 
     # #}
-# #}
+
+# #}# #}
 
 class CoherentSpatialMemoryChunk:# # #{
     def __init__(self):

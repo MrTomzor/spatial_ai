@@ -1,4 +1,4 @@
-import copy
+import copy# # #{
 import rospy
 from std_srvs.srv import Empty as EmptySrv
 from std_srvs.srv import EmptyResponse as EmptySrvResponse
@@ -59,6 +59,7 @@ from mpl_toolkits.mplot3d import Axes3D  # pylint: disable=W0611
 
 import sys
 from termcolor import colored, cprint
+# # #}
 
 class SubmapBuilderModule:
     def __init__(self, w, h, K, camera_frame_id, odom_orig_frame_id, fcu_frame, tf_listener, T_imu_to_cam, T_fcu_to_imu ):# # #{
@@ -406,7 +407,8 @@ class SubmapBuilderModule:
                 transformed_old_points  = transformPoints(self.spheremap.points, np.linalg.inv(T_orig_to_current_cam))
 
                 # Filter out spheres with z below zero or above the max z of obstacle points
-                # TODO - use dist rather than z for checking
+                # TODO - use dist rather than z for checking?
+                # TODO - take into account the sphere radii!!! some sphere can be very big
                 max_vis_z = np.max(positive_z_points[2, :])
                 z_ok_idxs = np.logical_and(transformed_old_points[:, 2] > 0, transformed_old_points[:, 2] <= max_vis_z)
 
@@ -422,6 +424,7 @@ class SubmapBuilderModule:
 
                 if np.any(inhull):
                     # remove spheres not projecting to conv hull in 2D
+                    # TODO - remove this, very dumb i think
                     visible_old_points = z_ok_points[inhull]
                     worked_sphere_idxs = worked_sphere_idxs[inhull]
                     # print("IN HULL: " + str(worked_sphere_idxs.size))
