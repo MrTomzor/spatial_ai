@@ -26,7 +26,7 @@ windows:
       layout: tiled
       panes:
         # - waitForOdometry; rosrun spatial_ai ov_extension.py
-        - waitForOdometry; roslaunch spatial_ai mrs_openvins_explore.launch
+        - waitForOffboard; sleep 15; roslaunch spatial_ai mrs_openvins_explore.launch
   - VINS:
       layout: tiled
       panes:
@@ -40,8 +40,7 @@ windows:
   - change_odom_source:
       layout: tiled
       panes:
-        # -  waitForOffboard; sleep 10; rosservice call /$UAV_NAME/odometry/change_odometry_source "VIO"
-        -  waitForOffboard; sleep 10; rosservice call /$UAV_NAME/estimation_manager/change_estimator "open_vins"
+        -  waitForOffboard; sleep 15; rosservice call /$UAV_NAME/estimation_manager/change_estimator "open_vins"
   - spawn:
       layout: tiled
       panes:
@@ -61,14 +60,11 @@ windows:
           rosservice call /$UAV_NAME/mavros/cmd/arming 1;
           sleep 2;
           rosservice call /$UAV_NAME/mavros/set_mode 0 offboard'
-  - goto:
-      layout: tiled
-      panes:
-        - 'history -s rosservice call /$UAV_NAME/control_manager/goto \"goal: \[2.0, -0.3, 1.5, -0.27\]\"'
   - rviz:
       layout: tiled
       panes:
-        - waitForControlNoOdom; roslaunch mrs_uav_core rviz.launch
+        - waitForControlNoOdom; roslaunch spatial_ai rviz.launch
+        # - waitForControlNoOdom; roslaunch mrs_uav_core rviz.launch
         # - waitForControlNoOdom; roslaunch mrs_rviz_plugins load_robot.launch
         # - waitForControlNoOdom; roslaunch mrs_rviz_plugins rviz_interface.launch
         # - waitForControl; roslaunch mrs_uav_testing rviz_ov_navigation.launch

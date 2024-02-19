@@ -353,11 +353,12 @@ class SubmapBuilderModule:
             # hullmesh_pts = positive_z_points[:, np.unique(hull.simplices)]
             hullmesh_pts = positive_z_points
             orig_pts = np.zeros((3, 1))
-            hullmesh_pts = np.concatenate((hullmesh_pts, orig_pts), axis=1)
-            zero_pt_index = hullmesh_pts.shape[1] - 1
+            hullmesh_pts_with_orig = copy.deepcopy(hullmesh_pts)
+            hullmesh_pts_with_orig = np.concatenate((hullmesh_pts, orig_pts), axis=1)
+            zero_pt_index = hullmesh_pts_with_orig.shape[1] - 1
 
             # FUCK IT JUST DO CONV HULL OF THESE 3D PTS(just start and hull pts)
-            fov_hull = ConvexHull(hullmesh_pts.T)
+            fov_hull = ConvexHull(hullmesh_pts_with_orig .T)
             # print("HULLMESH PTS:")
             # print(hullmesh_pts.T)
             # print("CONVHULL PTS:")
@@ -431,7 +432,11 @@ class SubmapBuilderModule:
 
                     # get mesh distances for these updatable spheres
                     old_spheres_fov_dists = np.abs(fov_mesh_query.signed_distance(visible_old_points))
-                    old_spheres_obs_dists = np.abs(obstacle_mesh_query.signed_distance(visible_old_points))
+                    # old_spheres_obs_dists = np.abs(obstacle_mesh_query.signed_distance(visible_old_points))
+                    pt_distmatrix = scipy.spatial.distance_matrix(visible_old_points, hullmesh_pts.T)
+                    old_spheres_obs_dists = np.min(pt_distmatrix, axis = 1)
+
+
                     upperbound_combined = np.minimum(old_spheres_fov_dists, old_spheres_obs_dists)
 
                     should_decrease_radius = old_spheres_obs_dists < self.spheremap.radii[worked_sphere_idxs]
@@ -524,9 +529,14 @@ class SubmapBuilderModule:
 
             # TRY ADDING NEW SPHERES AT SAMPLED POSITIONS
             new_spheres_fov_dists = np.abs(fov_mesh_query.signed_distance(sampling_pts.T))
-            new_spheres_obs_dists = np.abs(obstacle_mesh_query.signed_distance(sampling_pts.T))
+            # new_spheres_obs_dists = np.abs(obstacle_mesh_query.signed_distance(sampling_pts.T))
+            # print(sampling_pts.T.shape)
+            # print(self.spheremap.surfel_points.shape)
+            # pt_distmatrix = scipy.spatial.distance_matrix(sampling_pts.T, self.spheremap.surfel_points)
+            # new_spheres_obs_dists = np.min(pt_distmatrix, axis = 1)
+            # mindists = np.minimum(new_spheres_obs_dists, new_spheres_fov_dists)
 
-            mindists = np.minimum(new_spheres_obs_dists, new_spheres_fov_dists)
+            mindists = new_spheres_fov_dists 
             new_sphere_idxs = mindists > min_rad
 
             n_spheres_before_adding = self.spheremap.points.shape[0]
