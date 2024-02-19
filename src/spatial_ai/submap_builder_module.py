@@ -343,11 +343,12 @@ class SubmapBuilderModule:
             obstacle_mesh = trimesh.Trimesh(vertices=positive_z_points.T, faces = tri.simplices)
 
             # CONSTRUCT POLYGON OF PIXPOSs OF VISIBLE SLAM PTS
-            hull = ConvexHull(pixpos)
+            hull2d = ConvexHull(pixpos)
 
             if self.verbose_submap_construction:
                 print("POLY")
-            img_polygon = geometry.Polygon(hull.points)
+            img_polygon = geometry.Polygon(hull2d.points)
+            hull2d_idxs = hull2d.vertices
 
             # CONSTRUCT HULL MESH FROM 3D POINTS OF CONVEX 2D HULL OF PROJECTED POINTS
             # hullmesh_pts = positive_z_points[:, np.unique(hull.simplices)]
@@ -357,8 +358,25 @@ class SubmapBuilderModule:
             hullmesh_pts_with_orig = np.concatenate((hullmesh_pts, orig_pts), axis=1)
             zero_pt_index = hullmesh_pts_with_orig.shape[1] - 1
 
+            # CONSTRUCT FULL MESH
+            fullmesh_pts = positive_z_points
+            fullmesh_pts = np.concatenate((fullmesh_pts, orig_pts), axis=1)
+            fullmesh_zero_pt_index = hullmesh_pts_with_orig.shape[1] - 1
+            new_simplices = [[hull2d_idxs[i], hull2d_idxs[i+1], fullmesh_zero_pt_index] for i in range(len(hull2d_idxs) - 1)]
+            new_simplices.append([hull2d_idxs[len(hull2d_idxs)-1], hull2d_idxs[0], fullmesh_zero_pt_index])
+            fullmesh_simplices = np.concatenate((tri.simplices, new_simplices), axis=0)
+
+            # print("FULL MESH")
+            # print(fullmesh_pts.T)
+            # print(hull2d_idxs)
+            # print(np.max(fullmesh_simplices))
+            # print(fullmesh_simplices)
+            full_mesh = trimesh.Trimesh(vertices=fullmesh_pts.T, faces = fullmesh_simplices)
+
+
+
             # FUCK IT JUST DO CONV HULL OF THESE 3D PTS(just start and hull pts)
-            fov_hull = ConvexHull(hullmesh_pts_with_orig .T)
+            fov_hull = ConvexHull(hullmesh_pts_with_orig.T)
             # print("HULLMESH PTS:")
             # print(hullmesh_pts.T)
             # print("CONVHULL PTS:")
@@ -369,8 +387,15 @@ class SubmapBuilderModule:
             # simplices_reindexed = [[simplices_reindexing[orig[0]], simplices_reindexing[orig[1]], simplices_reindexing[orig[2]]] for orig in fov_hull.simplices]
 
             # CONSTRUCT FOV MESH AND QUERY
-            # fov_mesh = trimesh.Trimesh(vertices=fov_hull.points, faces = simplices_reindexed)
-            fov_mesh = trimesh.Trimesh(vertices=fov_hull.points, faces = fov_hull.simplices)
+            # fov_mesh = trimesh.Trimesh(vertices=fov_hull.points, faces = fov_hull.simplices)
+            fov_mesh = full_mesh
+            # trimesh.repair.fix_inversion(fov_mesh)
+            # print(fov_mesh.faces.shape)
+            # trimesh.repair.fill_holes(fov_mesh)
+            # print(fov_mesh.faces.shape)
+            # print("IS WATERTIGHT?")
+            # print(fov_mesh.is_watertight)
+
             fov_mesh_query = trimesh.proximity.ProximityQuery(fov_mesh)
 
             # CONSTRUCT OBSTACLE POINT MESH AND QUERY
@@ -381,8 +406,9 @@ class SubmapBuilderModule:
             fr_samples = None
             if self.do_frontiers:
                 # print("FRONTIERS SAMPLING")
-                fr_samples, fr_face_indices = trimesh.sample.sample_surface_even(fov_mesh, 200)
-                fr_samples2, fr_face_indices2 = trimesh.sample.sample_surface_even(obstacle_mesh, 50)
+                fr_samples, fr_face_indices = trimesh.sample.sample_surface_even(fov_mesh, 300)
+                fr_samples2, fr_face_indices2 = trimesh.sample.sample_surface_even(fov_mesh, 3)
+                # fr_samples2, fr_face_indices2 = trimesh.sample.sample_surface_even(obstacle_mesh, 50)
                 fr_samples = np.concatenate((fr_samples, fr_samples2))
                 # print(fr_samples.shape)
                 # fr_sample_odists = obstacle_mesh_query.signed_distance(fr_samples)
@@ -419,9 +445,26 @@ class SubmapBuilderModule:
 
                 # check the ones that are projected into the 2D hull
                 old_pixpos = getPixelPositions(z_ok_points.T, self.K)
-                inhull = np.array([img_polygon.contains(geometry.Point(old_pixpos[i, 0], old_pixpos[i, 1])) for i in range(old_pixpos.shape[0])])
+                # inhull = np.array([img_polygon.contains(geometry.Point(old_pixpos[i, 0], old_pixpos[i, 1])) for i in range(old_pixpos.shape[0])])
+                inhull = np.array([True for i in range(old_pixpos.shape[0])])
                 
                 # print("OLD PTS IN HULL:" + str(np.sum(inhull)) + "/" + str(z_ok_points.shape[0]))
+
+
+                # CHECK OLD SURFEL PTS IF THEY FALL INTO CURRENT FULL MESH
+                # test_pts = np.array([[0, 0, 1 * i] for i in range(20)])
+                # # testdists = fov_mesh_query.signed_distance(test_pts)
+                # print("TESTDISTS:")
+                # # print(testdists)
+                # print(fov_mesh.contains(test_pts))
+                if not self.spheremap.surfel_points is None:
+                     contained_surfels = fov_mesh.contains(self.spheremap.surfel_points)
+                     surfel_deletion_mask = contained_surfels
+                     keep_mask = np.logical_not(surfel_deletion_mask)
+                     self.spheremap.surfel_points = self.spheremap.surfel_points[keep_mask]
+                     self.spheremap.surfel_normals = self.spheremap.surfel_normals[keep_mask]
+
+
 
                 if np.any(inhull):
                     # remove spheres not projecting to conv hull in 2D
@@ -478,7 +521,7 @@ class SubmapBuilderModule:
             sampling_pts = sampling_pts * [self.width, self.height]
 
             # CHECK THE SAMPLING DIRS ARE INSIDE THE 2D CONVEX HULL OF 3D POINTS
-            inhull = np.array([img_polygon .contains(geometry.Point(p[0], p[1])) for p in sampling_pts])
+            inhull = np.array([img_polygon.contains(geometry.Point(p[0], p[1])) for p in sampling_pts])
             # print(inhull)
             if not np.any(inhull):
                 if self.verbose_submap_construction:
@@ -525,7 +568,7 @@ class SubmapBuilderModule:
             # TODO - add max sampling dist
 
 
-            orig_3dpt_indices_in_hull = np.unique(hull.simplices)
+            orig_3dpt_indices_in_hull = np.unique(hull2d.simplices)
 
             # TRY ADDING NEW SPHERES AT SAMPLED POSITIONS
             new_spheres_fov_dists = np.abs(fov_mesh_query.signed_distance(sampling_pts.T))

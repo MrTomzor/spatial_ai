@@ -200,7 +200,6 @@ class SphereMap:
         self.surfels_kdtree = None
         self.surfel_points = None
         self.surfel_slam_ids = None
-        self.surfel_radii = None
         self.surfel_normals = None
         self.connectivity_labels = None
 
@@ -297,11 +296,11 @@ class SphereMap:
             found_radii = self.radii[found_sphere_indicies]
 
             # CHECK IF DELETED BY THE SPHERES
-            dists_from_spheres_edge = found_dists - found_radii
-            if np.any(np.logical_or(dists_from_spheres_edge < deleting_inside_dist, dists_from_spheres_edge > toofar_from_spheres_dist)):
-            # if np.any(dists_from_spheres_edge < deleting_inside_dist):
-                keep_frontiers_mask[i] = False
-                continue
+            # dists_from_spheres_edge = found_dists - found_radii
+            # if np.any(np.logical_or(dists_from_spheres_edge < deleting_inside_dist, dists_from_spheres_edge > toofar_from_spheres_dist)):
+            # # if np.any(dists_from_spheres_edge < deleting_inside_dist):
+            #     keep_frontiers_mask[i] = False
+            #     continue
 
             # CHECK IF NOT TOO CLOSE TO SURFELS
             # surf_min_dist = filtering_radius * 2
@@ -319,6 +318,8 @@ class SphereMap:
             if np.any((normals).dot(fr_normal)) <= 0:
                 keep_frontiers_mask[i] = False
                 continue
+
+            # CHECK IF GROUND
             if fr_normal[2, 0] < -0.2:
                 keep_frontiers_mask[i] = False
                 continue
