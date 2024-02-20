@@ -314,7 +314,7 @@ class NavNode:
     # # #}
 
     def global_nav_loop_iter(self, event):
-        print("GLOBAL PLANNING ITER")
+        # print("GLOBAL PLANNING ITER")
         if not self.node_initialized:
             return
         self.global_navigator_module.main_iter()

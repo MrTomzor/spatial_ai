@@ -20,7 +20,7 @@ local_mapping:
   min_sphere_rad: 0.3
 
 local_nav:
-  enabled: True
+  enabled: False
   uav_radius: 0.8
   safety_replanning_trigger_odist: 2
   min_planning_odist: 2

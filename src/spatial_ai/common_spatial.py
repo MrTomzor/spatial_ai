@@ -199,8 +199,8 @@ class SphereMap:
 
         self.surfels_kdtree = None
         self.surfel_points = None
+        self.surfel_minmeas_dists = None
         self.surfel_slam_ids = None
-        self.surfel_normals = None
         self.connectivity_labels = None
 
         self.frontier_points = None
@@ -338,135 +338,112 @@ class SphereMap:
 
     # # #}
 
-    def updateSurfels(self, visible_points, pixpos, simplices, filtering_radius, slam_ids=None):# # #{
+    def updateSurfels(self, T_orig_to_current_cam, visible_points, pixpos, simplices, filtering_radius, slam_ids=None):# # #{
         # Compute normals measurements for the visible points, all should be pointing towards the camera
-        # What frame are the points in?
-        # print("UPDATING SURFELS")
+        # Points are in spheremap frame
 
         n_test_new_pts = visible_points.shape[0]
-
-        # TODO do based on map scale!!!
-        # filtering_radius = self.surfels_filtering_radius
-
+        
+        meas_dists = np.linalg.norm(T_orig_to_current_cam[:3,3].T - visible_points, axis = 1)
 
         # FIRST CHECK WHICH INPUT PTS ALREADY EXIST IN THE MAP AND JUST UPDATE THEIR POSITIONS
-        if not self.surfel_slam_ids is None:
-            are_new_pts_mask = np.full(n_test_new_pts, True)
-            for i in range(n_test_new_pts):
-                input_slam_id = slam_ids[i]
-                findres = np.where(self.surfel_slam_ids == input_slam_id)[0]
-                if findres.size == 0:
-                    continue
-                elif findres.size > 1:
-                    print("ERROR! MORE SURFELS WITH SLAM ID " + str(input_slam_id))
-                pt_idx_in_map_surfels = findres[0]
+        # if not self.surfel_slam_ids is None:
+        #     are_new_pts_mask = np.full(n_test_new_pts, True)
+        #     for i in range(n_test_new_pts):
+        #         input_slam_id = slam_ids[i]
+        #         findres = np.where(self.surfel_slam_ids == input_slam_id)[0]
+        #         if findres.size == 0:
+        #             continue
+        #         elif findres.size > 1:
+        #             print("ERROR! MORE SURFELS WITH SLAM ID " + str(input_slam_id))
+        #         pt_idx_in_map_surfels = findres[0]
 
-                # MOVE THE POINT
-                self.surfel_points[pt_idx_in_map_surfels, :] = visible_points[i, :]
-                are_new_pts_mask[i] = False
-            n_are_new = np.sum(are_new_pts_mask)
-            # print("MOVED PTS: " + str(n_test_new_pts - n_are_new))
+        #         # MOVE THE POINT
+        #         self.surfel_points[pt_idx_in_map_surfels, :] = visible_points[i, :]
+        #         are_new_pts_mask[i] = False
+        #     n_are_new = np.sum(are_new_pts_mask)
+        #     # print("MOVED PTS: " + str(n_test_new_pts - n_are_new))
 
-            # REMOVE PTS FROM INPUT THAT WERE SEEN ALREADY
-            visible_points = visible_points[are_new_pts_mask, :]
-            if not slam_ids is None:
-                slam_ids = slam_ids[are_new_pts_mask]
-            n_test_new_pts = n_are_new
+        #     # REMOVE PTS FROM INPUT THAT WERE SEEN ALREADY
+        #     visible_points = visible_points[are_new_pts_mask, :]
+        #     if not slam_ids is None:
+        #         slam_ids = slam_ids[are_new_pts_mask]
+        #     n_test_new_pts = n_are_new
 
 
         # FILTER OUT THE NEW ONES TOO CLOSE TO PREVIOUS ONES
         pts_survived_first_mask = np.full((n_test_new_pts), True)
         if not self.surfel_points is None:
             n_existign_points = self.surfel_points.shape[0]
-            # print("N EXISTING SURFELS: " + str(n_existign_points))
+            print("N EXISTING SURFELS: " + str(n_existign_points))
+            print("N VISIBLE NEW SURFELS: " + str(n_test_new_pts))
             existing_points_distmatrix = scipy.spatial.distance_matrix(visible_points, self.surfel_points)
             # pts_survived_first_mask = np.all(existing_points_distmatrix > filtering_radius, axis = 1)
-            pts_survived_first_mask = np.sum(existing_points_distmatrix > filtering_radius, axis=1) == n_existign_points
-            # print(np.sum(existing_points_distmatrix > filtering_radius, axis=1))
+            # old_measdists_extended = np.full((n_test_new_pts, n_existign_points), self.surfel_minmeas_dists.flatten())
+            # new_measdists_extended = np.full((n_test_new_pts, n_existign_points), meas_dists.flatten())
 
-            # print("N SURVIVED FIRST MASK:" + str(np.sum(pts_survived_first_mask)))
+            old_measdists_extended = np.repeat(self.surfel_minmeas_dists[:, np.newaxis], n_test_new_pts, axis=1).T
+            new_measdists_extended = np.repeat(meas_dists[:, np.newaxis], n_existign_points, axis=1)
+            # print(old_measdists_extended.shape)
+
+            # print(existing_points_distmatrix.shape)
+            # print(old_measdists_extended.shape)
+            # print(new_measdists_extended.shape)
+
+
+            # we delete all old point sfor which at least 1 new pt is too close and measured from closer
+            old_replaced_by_new_mask = np.any(np.logical_and(existing_points_distmatrix < filtering_radius, old_measdists_extended > new_measdists_extended), axis = 0)
+
+            # we keep all new points for which all pts that are too close, are deleted (so they are measured from further)
+            # pts_survived_first_mask = np.sum(existing_points_distmatrix > filtering_radius, axis=1) == n_existign_points
+            pts_survived_first_mask = np.all(np.logical_or(existing_points_distmatrix > filtering_radius, old_measdists_extended > new_measdists_extended), axis=1)
+
+            # DELETE THE OLD PTS FOR DELETION
+            if np.sum(old_replaced_by_new_mask) == n_existign_points:
+                self.surfel_points = None
+            else:
+                print("AAAAA")
+                print(np.logical_not(old_replaced_by_new_mask).shape)
+                print(self.surfel_minmeas_dists.shape)
+                print(old_replaced_by_new_mask.shape)
+                self.surfel_points = self.surfel_points[np.logical_not(old_replaced_by_new_mask), :]
+                self.surfel_minmeas_dists = self.surfel_minmeas_dists[np.logical_not(old_replaced_by_new_mask)]
+
+            print("N SURVIVED FIRST MASK:" + str(np.sum(pts_survived_first_mask)))
 
         # pts_survived_filter_with_mappoints = visible_points[pts_survived_first_mask]
         pts_survived_filter_with_mappoints = visible_points[pts_survived_first_mask, :]
+        measdists_survived_filter_with_mappoints = meas_dists[pts_survived_first_mask]
         if not slam_ids is None:
             slam_ids = slam_ids[pts_survived_first_mask]
 
         n_survived_first_filter = pts_survived_filter_with_mappoints.shape[0]
-        # print("N SURVIVED FILTERING WITH OLD POINTS: " + str(n_survived_first_filter))
+        print("N SURVIVED FILTERING WITH OLD POINTS: " + str(n_survived_first_filter))
 
         pts_added_mask = np.full((n_survived_first_filter), False)
         self_distmatrix = scipy.spatial.distance_matrix(pts_survived_filter_with_mappoints, pts_survived_filter_with_mappoints)
 
+        # TODO - sort according to meas dist, so closest ones get added first
         # ADD NEW PTS IF NOT BAD AGAINST OTHERS OR AGAINST DISTMATRIX
         n_added = 0
         for i in range(n_survived_first_filter):
-            if n_added == 0 or np.all(np.sum(self_distmatrix[pts_added_mask, :] > filtering_radius, axis=1) == n_survived_first_filter - 1):
+            # if n_added == 0 or np.all(np.sum(self_distmatrix[pts_added_mask, :] > filtering_radius, axis=1) == n_survived_first_filter - 1):
+            if n_added == 0 or np.all(self_distmatrix[pts_added_mask, i] > filtering_radius):
                 n_added += 1
                 pts_added_mask[i] = True
+        print("N ADDED: " + str(n_added))
 
         if n_added > 0:
             if self.surfel_points is None:
                 self.surfel_points = pts_survived_filter_with_mappoints[pts_added_mask]
+                self.surfel_minmeas_dists = measdists_survived_filter_with_mappoints[pts_added_mask]
                 if not slam_ids is None:
                     self.surfel_slam_ids = slam_ids[pts_added_mask]
             else:
                 self.surfel_points = np.concatenate((self.surfel_points, pts_survived_filter_with_mappoints[pts_added_mask]))
+                self.surfel_minmeas_dists = np.concatenate((self.surfel_minmeas_dists, measdists_survived_filter_with_mappoints[pts_added_mask]))
                 if not slam_ids is None:
                     self.surfel_slam_ids = np.concatenate((self.surfel_slam_ids, slam_ids[pts_added_mask]))
-
-        # COMPUTE POINT NORMALS AND DELETE THEM IF OCCUPIED BY SPHERES
-        affection_distance = self.max_radius * 1.2
-        deleting_inside_dist = -0.1
-
-        max_n_affecting_spheres = 5
-        skdtree_query = self.spheres_kdtree.query(self.surfel_points, k=max_n_affecting_spheres, distance_upper_bound=affection_distance)
-        n_spheres = self.points.shape[0]
-        # print("N SPHERES: " + str(n_spheres))
-
-        self.surfels_that_have_normals = np.full((self.surfel_points.shape[0]), False)
-        keep_surfels_mask = np.full((self.surfel_points.shape[0]), True)
-        self.surfel_normals = np.zeros((self.surfel_points.shape[0], 3))
-
-        # CHECK IF NOT DELETED BY SPHERE AND COMPUTE NORMAL IF NOT
-        for i in range(self.surfel_points.shape[0]):
-            # found_neighbors = np.array([x for x in skdtree_query[1][i] if x != n_spheres])
-
-            found_neighbors = skdtree_query[1][i]
-            existing_mask = found_neighbors != n_spheres
-            # print("FOUND NEIGHBORS: " + str(found_neighbors.shape[0]))
-            # print(skdtree_query[1][i])
-            # print(skdtree_query[0][i])
-
-            n_considered = np.sum(existing_mask)
-            if n_considered == 0:
-                continue
-
-            found_dists = skdtree_query[0][i][existing_mask]
-            found_sphere_indicies = skdtree_query[1][i][existing_mask]
-            found_radii = self.radii[found_sphere_indicies]
-            # found_neighbors = np.array(found_neighbors)
-
-            # CHECK IF DELETED BY THE SPHERES
-            dists_from_spheres_edge = found_dists - found_radii
-            # print(dists_from_spheres_edge )
-
-            # TODO figure better way to trigger this
-            if slam_ids is None:
-                if np.any(dists_from_spheres_edge < deleting_inside_dist):
-                    keep_surfels_mask[i] = False
-                    continue
-
-            # COMPUTE NORMALS FROM NEAR SPHERES
-            normals = (self.points[found_sphere_indicies, :] - self.surfel_points[i].reshape(1,3)) / found_dists.reshape(n_considered, 1)
-            self.surfel_normals[i, :] = np.sum(normals, axis = 0) / n_considered
-
-        # SAVE NEW PTS AND THEIR NORMALS
-        n_keep = np.sum(keep_surfels_mask)
-        self.surfel_points = self.surfel_points[keep_surfels_mask, :]
-        # self.surfel_normals = self.surfel_normals[keep_surfels_mask, :] / n_considered
-        self.surfel_normals = self.surfel_normals[keep_surfels_mask, :] / np.linalg.norm(self.surfel_normals[keep_surfels_mask, :], axis=1).reshape(n_keep, 1)
-
-        # self.surfel_kdtree = 
 
         return True
     # # #}
@@ -760,11 +737,9 @@ class CoherentSpatialMemoryChunk:# # #{
 
             sphere_centers_t = transformPoints(map2.points, relative_T)
             surfel_centers_t = transformPoints(map2.surfel_points, relative_T)
-            normals_t = transformPoints(map2.surfel_normals, relative_rot_T)
 
             map1.points = np.concatenate((map1.points, sphere_centers_t))
             map1.surfel_points = np.concatenate((map1.surfel_points, surfel_centers_t))
-            map1.surfel_normals = np.concatenate((map1.surfel_normals, normals_t))
 
             # TODO - handle connections of spheres
 
@@ -835,22 +810,11 @@ def matchMapGeomSimple(data1, data2, T_init = None):# # #{
     print(n_pts_map1)
     print(n_pts_map2)
 
-    # pcd1 = open3d.geometry.PointCloud()
-    # pcd1.points = open3d.utility.Vector3dVector(data1.surfel_pts)
-    # pcd1.normals = open3d.utility.Vector3dVector(data1.surfel_normals)
-
-    # pcd2 = open3d.geometry.PointCloud()
-    # pcd2.points = open3d.utility.Vector3dVector(data2.surfel_pts)
-    # pcd1.normals = open3d.utility.Vector3dVector(data1.surfel_normals)
-
-
     pcd1 = open3d.t.geometry.PointCloud()
     pcd1.point.positions = open3d.core.Tensor(data1.surfel_pts)
-    # pcd1.point.normals = open3d.core.Tensor(data1.surfel_normals)
 
     pcd2 = open3d.t.geometry.PointCloud()
     pcd2.point.positions = open3d.core.Tensor(data2.surfel_pts)
-    # pcd2.point.normals = open3d.core.Tensor(data2.surfel_normals)
 
     print("ESTIMATING NORMALS")
     normals_search_rad = 5
@@ -952,7 +916,6 @@ class MapMatchingData:# # #{
             return
 
         _spts = submap.surfel_points
-        _snorm = submap.surfel_normals
         _fpts = submap.points
         _rad = submap.radii
 
@@ -968,12 +931,10 @@ class MapMatchingData:# # #{
         if self.surfel_pts is None:
             self.surfel_pts = _spts
             self.freespace_pts = _fpts
-            self.surfel_normals = _snorm
             self.freespace_radii = _rad
         else:
             self.surfel_pts = np.concatenate((self.surfel_pts, _spts))
             self.freespace_pts = np.concatenate((self.freespace_pts, _fpts))
-            self.surfel_normals = np.concatenate((self.surfel_normals, _snorm))
             self.freespace_radii = np.concatenate((self.freespace_radii, _rad))
 
         self.submap_surfel_idxs.append([self.n_surfels, self.n_surfels+n_surfels])

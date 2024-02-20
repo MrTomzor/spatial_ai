@@ -676,15 +676,6 @@ class LocalNavigatorModule:
             only_rotmatrix = np.eye(4)
             only_rotmatrix[:3,:3] = T_head_cam_to_smap_orig[:3,:3]
 
-            surfel_normals_in_camframe = transformPoints(self.mapper.spheremap.surfel_normals, only_rotmatrix)
-
-            # visible_pts_mask = getVisiblePoints(surfel_points_in_camframe, surfel_normals_in_camframe, np.pi/3, 100, w, h, K, check_normals=False)
-            # n_visible = np.sum(visible_pts_mask)
-            # print("VISIBLE:" +str(n_visible))
-            # if n_visible < 3:
-            #     n_odom_unsafe += 1
-            #     continue
-
 
             # ADD NODE TO TREE
             tree_pos = np.concatenate((tree_pos, new_node_pos))

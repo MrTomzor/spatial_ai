@@ -457,12 +457,18 @@ class SubmapBuilderModule:
                 # print("TESTDISTS:")
                 # # print(testdists)
                 # print(fov_mesh.contains(test_pts))
+                nondeleted_visible_surfels = None
                 if not self.spheremap.surfel_points is None:
-                     contained_surfels = fov_mesh.contains(self.spheremap.surfel_points)
-                     surfel_deletion_mask = contained_surfels
-                     keep_mask = np.logical_not(surfel_deletion_mask)
-                     self.spheremap.surfel_points = self.spheremap.surfel_points[keep_mask]
-                     self.spheremap.surfel_normals = self.spheremap.surfel_normals[keep_mask]
+                    surfel_points_in_camframe = transformPoints(self.spheremap.surfel_points, np.linalg.inv(T_orig_to_current_cam))
+                    
+                    contained_surfels = fov_mesh.contains(surfel_points_in_camframe)
+                    surfel_deletion_mask = contained_surfels
+                    print("DELETING SURFELS: " + str(np.sum(surfel_deletion_mask)))
+                    print(surfel_deletion_mask.shape)
+
+                    keep_mask = np.logical_not(surfel_deletion_mask)
+                    self.spheremap.surfel_points = self.spheremap.surfel_points[keep_mask]
+                    self.spheremap.surfel_minmeas_dists = self.spheremap.surfel_minmeas_dists[keep_mask]
 
 
 
@@ -638,7 +644,7 @@ class SubmapBuilderModule:
             # pts_for_surfel_addition = positive_z_points[positive_z_points[:, 2] < max_sphere_update_dist]
             pts_for_surfel_addition = positive_z_points[np.linalg.norm(positive_z_points, axis=1) < max_sphere_update_dist]
             visible_pts_in_spheremap_frame = transformPoints(pts_for_surfel_addition, T_orig_to_current_cam)
-            self.spheremap.updateSurfels(visible_pts_in_spheremap_frame , pixpos, tri.simplices, self.surfel_resolution, positive_z_slam_ids)
+            self.spheremap.updateSurfels(T_orig_to_current_cam, visible_pts_in_spheremap_frame , pixpos, tri.simplices, self.surfel_resolution, positive_z_slam_ids)
 
             if self.do_frontiers:
                 self.spheremap.updateFrontiers(transformPoints(fr_samples, T_orig_to_current_cam), self.frontier_resolution)
@@ -723,7 +729,7 @@ class SubmapBuilderModule:
             return
 
         marker_array = MarkerArray()
-        self.get_spheremap_marker_array(marker_array, self.spheremap, self.spheremap.T_global_to_own_origin, ms=self.marker_scale, do_spheres=False, do_surfels=True, do_frontiers=True)
+        self.get_spheremap_marker_array(marker_array, self.spheremap, self.spheremap.T_global_to_own_origin, ms=self.marker_scale, do_spheres=False, do_surfels=True, do_frontiers=False)
         self.spheremap_outline_pub.publish(marker_array)
 
         marker_array = MarkerArray()
