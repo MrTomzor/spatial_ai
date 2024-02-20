@@ -480,8 +480,8 @@ class SubmapBuilderModule:
                     # print("IN HULL: " + str(worked_sphere_idxs.size))
 
                     # get mesh distances for these updatable spheres
-                    old_spheres_fov_dists = np.abs(fov_mesh_query.signed_distance(visible_old_points))
-                    # old_spheres_obs_dists = np.abs(obstacle_mesh_query.signed_distance(visible_old_points))
+                    old_spheres_fov_dists = (fov_mesh_query.signed_distance(visible_old_points))
+                    # TODO - BIG SPHERES AT EDGE OF FOV - NEED TO KNOW SIGNED DIST!!! - CUz if they lie outsid,e they can grow wrongly!!!
                     pt_distmatrix = scipy.spatial.distance_matrix(visible_old_points, hullmesh_pts.T)
                     old_spheres_obs_dists = np.min(pt_distmatrix, axis = 1)
 
