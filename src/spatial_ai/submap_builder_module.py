@@ -495,7 +495,7 @@ class SubmapBuilderModule:
                     # print("IN HULL: " + str(worked_sphere_idxs.size))
 
                     # get mesh distances for these updatable spheres
-                    old_spheres_fov_dists = (fov_mesh_query.signed_distance(visible_old_points))
+                    old_spheres_fov_dists = np.abs(fov_mesh_query.signed_distance(visible_old_points))
                     # TODO - BIG SPHERES AT EDGE OF FOV - NEED TO KNOW SIGNED DIST!!! - CUz if they lie outsid,e they can grow wrongly!!!
                     pt_distmatrix = scipy.spatial.distance_matrix(visible_old_points, hullmesh_pts.T)
                     old_spheres_obs_dists = np.min(pt_distmatrix, axis = 1)
@@ -504,7 +504,8 @@ class SubmapBuilderModule:
                     upperbound_combined = np.minimum(old_spheres_fov_dists, old_spheres_obs_dists)
 
                     should_decrease_radius = old_spheres_obs_dists < self.spheremap.radii[worked_sphere_idxs]
-                    could_increase_radius = upperbound_combined > self.spheremap.radii[worked_sphere_idxs]
+                    spheres_in_visible_mesh = fov_mesh.contains(visible_old_points)
+                    could_increase_radius = np.logical_and(upperbound_combined > self.spheremap.radii[worked_sphere_idxs], spheres_in_visible_mesh)
 
                     for i in range(worked_sphere_idxs.size):
                         if should_decrease_radius[i]:
@@ -744,7 +745,7 @@ class SubmapBuilderModule:
             return
 
         marker_array = MarkerArray()
-        self.get_spheremap_marker_array(marker_array, self.spheremap, self.spheremap.T_global_to_own_origin, ms=self.marker_scale, do_spheres=False, do_surfels=True, do_frontiers=False)
+        self.get_spheremap_marker_array(marker_array, self.spheremap, self.spheremap.T_global_to_own_origin, ms=self.marker_scale, do_spheres=False, do_surfels=True, do_frontiers=True)
         self.spheremap_outline_pub.publish(marker_array)
 
         marker_array = MarkerArray()
