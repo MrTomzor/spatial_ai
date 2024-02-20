@@ -428,13 +428,9 @@ class SubmapBuilderModule:
                     if np.any(protected_contained_surfels_mask):
                         nondeleted_visible_surfels = surfel_points_in_camframe[contained_surfels_mask, :][protected_contained_surfels_mask, :]
 
-                    print("PROTECTED SURFELS: " + str(np.sum(protected_contained_surfels_mask)))
-
                     deleted_surfels_idxs = contained_surfels_idxs[np.logical_not(protected_contained_surfels_mask)]
                     surfel_deletion_mask = np.full(self.spheremap.surfel_points.shape[0], False)
                     surfel_deletion_mask[deleted_surfels_idxs] = True
-
-                    print("DELETING SURFELS: " + str(np.sum(surfel_deletion_mask)))
 
                     keep_mask = np.logical_not(surfel_deletion_mask)
                     self.spheremap.surfel_points = self.spheremap.surfel_points[keep_mask]
@@ -594,8 +590,9 @@ class SubmapBuilderModule:
             self.spheremap.labelSpheresByConnectivity()
 
             comp_time = time.time() - comp_start_time
+            print("SPHEREMAP integration time: " + str((comp_time) * 1000) +  " ms")
+
             if self.verbose_submap_construction:
-                print("SPHEREMAP integration time: " + str((comp_time) * 1000) +  " ms")
                 print("N SPHERES: " + str(self.spheremap.points.shape[0]))
 
             comp_start_time = time.time()

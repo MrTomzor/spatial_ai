@@ -111,9 +111,9 @@ class LocalNavigatorModule:
 
         self.local_nav_start_time = rospy.get_rostime()
         self.local_reaching_dist = 3
-        self.last_traj_send_time =  rospy.get_rostime()
         self.traj_min_duration = 10
 
+        self.last_path_send_time = rospy.Time.now()
         self.currently_navigating_pts = None
         self.current_goal_vp_global = None
         self.reaching_dist = rospy.get_param("local_nav/reaching_dist")
@@ -352,6 +352,7 @@ class LocalNavigatorModule:
 
 
         evading_obstacle = False
+        enhancing_path = False
 
         # IF NAVIGATING ALONG PATH, AND ALL IS OK, DO NOT REPLAN. IF NOT PROGRESSING OR REACHED END - CONTINUE FURTHER IN PLANNIGN NEW PATH!
         if not self.currently_navigating_pts is None:
@@ -401,6 +402,8 @@ class LocalNavigatorModule:
                                 print("TIME TO UNSAFETY: " + str(time_to_unsafety) +" / " + str(triggering_time))
 
                                 planning_time = time_to_unsafety * 0.5
+                                if planning_time <= 0.2:
+                                    planning_time = 0.2
                                 print("PLANNING TIME: " +str(planning_time))
 
                                 # VISUALIZE OFFENDING PT
@@ -427,11 +430,20 @@ class LocalNavigatorModule:
                                 evading_obstacle = True
                             # TODO - replaning to goal trigger. If failed -> replanning to any other goal. If failed -> evasive maneuvers n wait!
                             else:
-                                return
+                                # return
+                                # print("replanning for enhancing path")
+                                enhancing_path = True
                         else:
-                            return
+                            # return
+                            # print("replanning for enhancing path")
+                            enhancing_path = True
                     else:
-                        return
+                        # return
+                        # print("replanning for enhancing path")
+                        enhancing_path = True
+
+        if enhancing_path and (rospy.Time.now() - self.last_path_send_time).to_sec() < 4:
+            return
 
 
         # FIND PATHS WITH RRT
@@ -474,9 +486,6 @@ class LocalNavigatorModule:
             return
 
         # GET FCU TRANSFORM NOWW! AFTER 0.5s OF PLANNING
-        # latest_odom_msg = self.odom_buffer[-1]
-        # T_global_to_imu = self.odom_msg_to_transformation_matrix(latest_odom_msg)
-        # T_global_to_fcu = T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
         T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
 
         T_smap_origin_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
@@ -556,6 +565,8 @@ class LocalNavigatorModule:
         if odists < min_odist:
             odist = min_odist
 
+
+        # MAIN SPREAD LOOP# #{
         while True:
             time_left = max_comp_time - (rospy.get_rostime() - comp_start_time).to_sec()
             if time_left <= 0 or n_iters >= max_iter:
@@ -731,13 +742,13 @@ class LocalNavigatorModule:
                             total_costs[expnd] -= discount
                             openset = openset + child_indices[expnd]
 
-
+        # # #}
 
         print("SPREAD FINISHED, HAVE " + str(tree_pos.shape[0]) + " NODES. ITERS: " +str(n_iters) + " F-UNSAFE: " + str(n_unsafe_fspace) + " O-UNSAFE: " + str(n_unsafe_obs) + " ODOM_UNSAFE: " + str(n_odom_unsafe) + " REWIRINGS: " + str(n_rewirings))
         if visualize:
             self.visualize_rrt_tree(self.mapper.spheremap.T_global_to_own_origin, tree_pos, None, odists, parent_indices)
 
-        # FIND ALL HEADS, EVALUATE THEM
+        # FIND ALL LEAFS, EVALUATE THEM# #{
         comp_start_time = rospy.get_rostime()
         heads_indices = np.array([i for i in range(tree_pos.shape[0]) if len(child_indices[i]) == 0])
         print("N HEADS: " + str(heads_indices.size))
@@ -745,11 +756,8 @@ class LocalNavigatorModule:
         # GET GLOBAL AND FCU FRAME POINTS
         # heads_global, heads_headings_global = transformViewpoints(tree_pos[heads_indices, :], tree_headings[heads_indices], self.mapper.spheremap.T_global_to_own_origin)
         heads_global = transformPoints(tree_pos[heads_indices, :], self.mapper.spheremap.T_global_to_own_origin)
-
-        # latest_odom_msg = self.odom_buffer[-1] #TODO fix
-        # T_global_to_imu = self.odom_msg_to_transformation_matrix(latest_odom_msg)
-        # T_global_to_fcu = T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
         T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
+
         print("CUR FCU IN GLOBAL:")
         print(T_global_to_fcu[:3,3])
 
@@ -798,7 +806,7 @@ class LocalNavigatorModule:
 
                         # print(frontier_points_in_camframe)
 
-                        visible_pts_mask = getVisiblePoints(frontier_points_in_camframe, frontier_normals_in_camframe, np.pi/2, 15, w, h, K, verbose=True)
+                        visible_pts_mask = getVisiblePoints(frontier_points_in_camframe, frontier_normals_in_camframe, np.pi/2, 15, w, h, K, verbose=False)
                         n_visible = np.sum(visible_pts_mask)
                         print("N VISIBLE FRONTIERS: " + str(n_visible))
                         if n_visible > 0:
@@ -808,7 +816,8 @@ class LocalNavigatorModule:
                             global_pos = heads_global[i]
 
                             # heads_values[i] = (global_pos - current_fcu_in_global).flatten()[0] * 5 # VALUE OF DIST IN FORWARD DIR!
-                            heads_values[i] = np.linalg.norm((global_pos - current_fcu_in_global).flatten()) * 5 # VALUE OF DIST IN ANY DIR!
+                            # heads_values[i] = np.linalg.norm((global_pos - current_fcu_in_global).flatten()) * 5 # VALUE OF DIST IN ANY DIR!
+                            heads_values[i] = np.random.rand() * 50 # VALUE OF DIST IN ANY DIR!
 
                             if heads_values[i] <= acceptance_thresh:
                                 heads_values[i] = acceptance_thresh + 1
@@ -845,6 +854,7 @@ class LocalNavigatorModule:
 
             heads_values[reaching_goal] = acceptance_thresh + 1
             heads_scores[reaching_goal] = -total_costs[heads_indices[reaching_goal]]
+# # #}
 
         best_head = np.argmax(heads_scores)
         print("BEST HEAD: " + str(best_head))
@@ -922,6 +932,7 @@ class LocalNavigatorModule:
 
         self.path_for_trajectory_generator_pub.publish(msg)
         print("SENT PATH TO TRAJ GENERATOR, N PTS: " + str(n_pts))
+        self.last_path_send_time = rospy.Time.now()
 
         return None
 # # #}

@@ -375,8 +375,6 @@ class SphereMap:
         pts_survived_first_mask = np.full((n_test_new_pts), True)
         if not self.surfel_points is None:
             n_existign_points = self.surfel_points.shape[0]
-            print("N EXISTING SURFELS: " + str(n_existign_points))
-            print("N VISIBLE NEW SURFELS: " + str(n_test_new_pts))
             existing_points_distmatrix = scipy.spatial.distance_matrix(visible_points, self.surfel_points)
             # pts_survived_first_mask = np.all(existing_points_distmatrix > filtering_radius, axis = 1)
             # old_measdists_extended = np.full((n_test_new_pts, n_existign_points), self.surfel_minmeas_dists.flatten())
@@ -402,14 +400,8 @@ class SphereMap:
             if np.sum(old_replaced_by_new_mask) == n_existign_points:
                 self.surfel_points = None
             else:
-                print("AAAAA")
-                print(np.logical_not(old_replaced_by_new_mask).shape)
-                print(self.surfel_minmeas_dists.shape)
-                print(old_replaced_by_new_mask.shape)
                 self.surfel_points = self.surfel_points[np.logical_not(old_replaced_by_new_mask), :]
                 self.surfel_minmeas_dists = self.surfel_minmeas_dists[np.logical_not(old_replaced_by_new_mask)]
-
-            print("N SURVIVED FIRST MASK:" + str(np.sum(pts_survived_first_mask)))
 
         # pts_survived_filter_with_mappoints = visible_points[pts_survived_first_mask]
         pts_survived_filter_with_mappoints = visible_points[pts_survived_first_mask, :]
@@ -418,7 +410,6 @@ class SphereMap:
             slam_ids = slam_ids[pts_survived_first_mask]
 
         n_survived_first_filter = pts_survived_filter_with_mappoints.shape[0]
-        print("N SURVIVED FILTERING WITH OLD POINTS: " + str(n_survived_first_filter))
 
         pts_added_mask = np.full((n_survived_first_filter), False)
         self_distmatrix = scipy.spatial.distance_matrix(pts_survived_filter_with_mappoints, pts_survived_filter_with_mappoints)
@@ -431,7 +422,6 @@ class SphereMap:
             if n_added == 0 or np.all(self_distmatrix[pts_added_mask, i] > filtering_radius):
                 n_added += 1
                 pts_added_mask[i] = True
-        print("N ADDED: " + str(n_added))
 
         if n_added > 0:
             if self.surfel_points is None:
