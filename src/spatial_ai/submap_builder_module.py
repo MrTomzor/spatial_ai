@@ -140,6 +140,8 @@ class SubmapBuilderModule:
     # CORE
 
     def camera_update_iter(self, msg, slam_ids = None):# # #{
+
+        # Add new visual keyframe if enough distance has been traveled# # #{
         with ScopedLock(self.spheremap_mutex):
             if self.verbose_submap_construction:
                 print("PCL MSG")
@@ -173,6 +175,7 @@ class SubmapBuilderModule:
 
                 # print("KFS: adding new visual keyframe!")
                 self.spheremap.visual_keyframes.append(new_kf)
+        # # #}
 
             # Read Points from PCL msg# #{
             pc_data = pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)
@@ -194,7 +197,7 @@ class SubmapBuilderModule:
             point_cloud_array = point_cloud_array[nonzero_pts, :]
             # print("PCL ARRAY SHAPE:")
             # print(point_cloud_array.shape)
-# # #}
+            # # #}
 
             # DECIDE WHETHER TO UPDATE SPHEREMAP OR INIT NEW ONE# #{
             T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
@@ -303,8 +306,8 @@ class SubmapBuilderModule:
                     self.saveEpisodeFull(None)
             # # #}
 
+            # COMPUTE VISIBLE FREESPACE MESH # #{
             # TRANSFORM SLAM PTS TO -----CAMERA FRAME---- AND COMPUTE THEIR PIXPOSITIONS
-            # T_global_to_cam = T_global_to_imu @ self.T_imu_to_cam  #TODO fix this
             T_global_to_cam = T_global_to_fcu @ self.T_fcu_to_imu @ self.T_imu_to_cam
 
             transformed = transformPoints(point_cloud_array, np.linalg.inv(T_global_to_cam)).T
@@ -318,10 +321,6 @@ class SubmapBuilderModule:
             pixpos = getPixelPositions(positive_z_points, self.K)
 
             # COMPUTE DELAUNAY TRIANG OF VISIBLE SLAM POINTS
-            # print("POS Z SLAM PTS")
-            # print(positive_z_points.shape)
-            # print("PIXPOS SHAPE")
-            # print(pixpos.shape)
             if positive_z_points.shape[1] < 4:
                 if self.verbose_submap_construction:
                     print("NOT ENAUGH PTS FOR DELAUNAY!")
@@ -329,14 +328,6 @@ class SubmapBuilderModule:
             if self.verbose_submap_construction:
                 print("HAVE DELAUNAY:")
             tri = Delaunay(pixpos)
-
-            # print("INPUT: " )
-            # print(point_cloud_array)
-            # print("TRANSFORMED TO CAM FRAME: " )
-            # print(positive_z_points.T)
-
-            # vis = self.visualize_depth(pixpos, tri)
-            # self.depth_pub.publish(self.bridge.cv2_to_imgmsg(vis, "bgr8"))
 
             # CONSTRUCT OBSTACLE MESH
             comp_mesh = time.time()
@@ -350,59 +341,30 @@ class SubmapBuilderModule:
             img_polygon = geometry.Polygon(hull2d.points)
             hull2d_idxs = hull2d.vertices
 
-            # CONSTRUCT HULL MESH FROM 3D POINTS OF CONVEX 2D HULL OF PROJECTED POINTS
-            # hullmesh_pts = positive_z_points[:, np.unique(hull.simplices)]
-            hullmesh_pts = positive_z_points
+            fovmesh_pts = positive_z_points
             orig_pts = np.zeros((3, 1))
-            hullmesh_pts_with_orig = copy.deepcopy(hullmesh_pts)
-            hullmesh_pts_with_orig = np.concatenate((hullmesh_pts, orig_pts), axis=1)
-            zero_pt_index = hullmesh_pts_with_orig.shape[1] - 1
+            fovmesh_pts_with_orig = copy.deepcopy(fovmesh_pts)
+            fovmesh_pts_with_orig = np.concatenate((fovmesh_pts, orig_pts), axis=1)
+            zero_pt_index = fovmesh_pts_with_orig.shape[1] - 1
 
-            # CONSTRUCT FULL MESH
+            # CONSTRUCT FOV MESH (of visible pts and current cam origin)
             fullmesh_pts = positive_z_points
             fullmesh_pts = np.concatenate((fullmesh_pts, orig_pts), axis=1)
-            fullmesh_zero_pt_index = hullmesh_pts_with_orig.shape[1] - 1
+            fullmesh_zero_pt_index = fovmesh_pts_with_orig.shape[1] - 1
             new_simplices = [[hull2d_idxs[i], hull2d_idxs[i+1], fullmesh_zero_pt_index] for i in range(len(hull2d_idxs) - 1)]
             new_simplices.append([hull2d_idxs[len(hull2d_idxs)-1], hull2d_idxs[0], fullmesh_zero_pt_index])
             fullmesh_simplices = np.concatenate((tri.simplices, new_simplices), axis=0)
 
-            # print("FULL MESH")
-            # print(fullmesh_pts.T)
-            # print(hull2d_idxs)
-            # print(np.max(fullmesh_simplices))
-            # print(fullmesh_simplices)
-            full_mesh = trimesh.Trimesh(vertices=fullmesh_pts.T, faces = fullmesh_simplices)
-
-
-
-            # FUCK IT JUST DO CONV HULL OF THESE 3D PTS(just start and hull pts)
-            fov_hull = ConvexHull(hullmesh_pts_with_orig.T)
-            # print("HULLMESH PTS:")
-            # print(hullmesh_pts.T)
-            # print("CONVHULL PTS:")
-            # print(fov_hull.points)
-
-            # uniq_idxs_in_hull = np.unique(fov_hull.simplices)
-            # simplices_reindexing = {uniq_idxs_in_hull[i]:i for i in range(uniq_idxs_in_hull.size)}
-            # simplices_reindexed = [[simplices_reindexing[orig[0]], simplices_reindexing[orig[1]], simplices_reindexing[orig[2]]] for orig in fov_hull.simplices]
-
-            # CONSTRUCT FOV MESH AND QUERY
-            # fov_mesh = trimesh.Trimesh(vertices=fov_hull.points, faces = fov_hull.simplices)
-            fov_mesh = full_mesh
-            # trimesh.repair.fix_inversion(fov_mesh)
-            # print(fov_mesh.faces.shape)
-            # trimesh.repair.fill_holes(fov_mesh)
-            # print(fov_mesh.faces.shape)
-            # print("IS WATERTIGHT?")
-            # print(fov_mesh.is_watertight)
-
+            fov_mesh = trimesh.Trimesh(vertices=fullmesh_pts.T, faces = fullmesh_simplices)
             fov_mesh_query = trimesh.proximity.ProximityQuery(fov_mesh)
 
             # CONSTRUCT OBSTACLE POINT MESH AND QUERY
             obstacle_mesh_query = trimesh.proximity.ProximityQuery(obstacle_mesh)
-
             comp_time = time.time() - comp_mesh
 
+            # # #}
+
+            # SAMPLE NEW FRONTIERS ALONG THE VISIBLE FREESPACE MESH# #{
             fr_samples = None
             if self.do_frontiers:
                 # print("FRONTIERS SAMPLING")
@@ -417,9 +379,9 @@ class SubmapBuilderModule:
 
             if self.verbose_submap_construction:
                 print("MESHING time: " + str((comp_time) * 1000) +  " ms")
+            # # #}
 
-
-            # ---UPDATE AND PRUNING STEP
+            # UPDATE OLD SPHERES# #{
             T_orig_to_current_cam = np.eye(4)
             T_delta_odom  = np.eye(4)
             if not self.spheremap is None: # TODO remove
@@ -437,19 +399,13 @@ class SubmapBuilderModule:
                 # TODO - use dist rather than z for checking?
                 # TODO - take into account the sphere radii!!! some sphere can be very big
                 max_vis_z = np.max(positive_z_points[2, :])
-                z_ok_idxs = np.logical_and(transformed_old_points[:, 2] > 0, transformed_old_points[:, 2] <= max_vis_z)
+                z_ok_mask = np.logical_and(transformed_old_points[:, 2] > 0, transformed_old_points[:, 2] <= max_vis_z)
 
-                z_ok_points = transformed_old_points[z_ok_idxs , :] # remove spheres with negative z
-                worked_sphere_idxs = np.arange(n_spheres_old)[z_ok_idxs ]
-                # print("POSITIVE Z AND NOT BEHIND OBSTACLE MESH:" + str(np.sum(z_ok_idxs )) + "/" + str(n_spheres_old))
+                z_ok_points = transformed_old_points[z_ok_mask , :] # remove spheres with negative z
+                worked_sphere_idxs = np.arange(n_spheres_old)[z_ok_mask ]
 
                 # check the ones that are projected into the 2D hull
                 old_pixpos = getPixelPositions(z_ok_points.T, self.K)
-                # inhull = np.array([img_polygon.contains(geometry.Point(old_pixpos[i, 0], old_pixpos[i, 1])) for i in range(old_pixpos.shape[0])])
-                inhull = np.array([True for i in range(old_pixpos.shape[0])])
-                
-                # print("OLD PTS IN HULL:" + str(np.sum(inhull)) + "/" + str(z_ok_points.shape[0]))
-
 
                 # CHECK OLD SURFEL PTS IF THEY FALL INTO CURRENT FULL MESH
                 # test_pts = np.array([[0, 0, 1 * i] for i in range(20)])
@@ -484,23 +440,18 @@ class SubmapBuilderModule:
                     self.spheremap.surfel_points = self.spheremap.surfel_points[keep_mask]
                     self.spheremap.surfel_minmeas_dists = self.spheremap.surfel_minmeas_dists[keep_mask]
 
-                if np.any(inhull):
-                    # remove spheres not projecting to conv hull in 2D
-                    # TODO - remove this, very dumb i think
-                    visible_old_points = z_ok_points[inhull]
+                # GET THE SPHERES THAT COULD BE UPDATED BY CURRENTLY SEEN DATA
+                if np.any(z_ok_mask):
+                    visible_old_points = z_ok_points
                     if not nondeleted_visible_surfels is None:
                         print("ADDING NONDELTED PTS: " + str(nondeleted_visible_surfels.shape[0]))
                         visible_points = np.append(visible_old_points, nondeleted_visible_surfels, axis=0)
-                    worked_sphere_idxs = worked_sphere_idxs[inhull]
-                    # print("IN HULL: " + str(worked_sphere_idxs.size))
+                    worked_sphere_idxs = worked_sphere_idxs
 
-                    # get mesh distances for these updatable spheres
+                    # GET DISTANCES OF OLD SPHERE POINTS TO THE VISIBLE MESH AND TO CONSIDERED OBSTACLE POINTS (visible and old ones that are far, but measured from close)
                     old_spheres_fov_dists = np.abs(fov_mesh_query.signed_distance(visible_old_points))
-                    # TODO - BIG SPHERES AT EDGE OF FOV - NEED TO KNOW SIGNED DIST!!! - CUz if they lie outsid,e they can grow wrongly!!!
-                    pt_distmatrix = scipy.spatial.distance_matrix(visible_old_points, hullmesh_pts.T)
+                    pt_distmatrix = scipy.spatial.distance_matrix(visible_old_points, fovmesh_pts.T)
                     old_spheres_obs_dists = np.min(pt_distmatrix, axis = 1)
-
-
                     upperbound_combined = np.minimum(old_spheres_fov_dists, old_spheres_obs_dists)
 
                     should_decrease_radius = old_spheres_obs_dists < self.spheremap.radii[worked_sphere_idxs]
@@ -520,9 +471,6 @@ class SubmapBuilderModule:
                     shouldkeep[toosmall_idxs] = False
                     shouldkeep = shouldkeep .flatten()
 
-                    # print("SHOULDKEEP:")
-                    # print(shouldkeep)
-
                     worked_sphere_idxs = worked_sphere_idxs[np.logical_not(idx_picker)].flatten()
 
                     # self.spheremap.consistencyCheck()
@@ -534,8 +482,11 @@ class SubmapBuilderModule:
                     self.spheremap.removeSpheresIfRedundant(worked_sphere_idxs)
 
                     # self.spheremap.removeNodes(np.where(idx_picker)[0])
-
+            # # #}
+            
+            # TRY ADDING NEW SPHERES# #{
             # TODO fix - by raycasting!!!
+            # TODO - better sampling to sample near UAV prioritized
             max_sphere_update_dist = self.max_sphere_update_dist
 
             n_sampled = self.n_sphere_samples_per_update
@@ -544,7 +495,6 @@ class SubmapBuilderModule:
 
             # CHECK THE SAMPLING DIRS ARE INSIDE THE 2D CONVEX HULL OF 3D POINTS
             inhull = np.array([img_polygon.contains(geometry.Point(p[0], p[1])) for p in sampling_pts])
-            # print(inhull)
             if not np.any(inhull):
                 if self.verbose_submap_construction:
                     print("NONE IN HULL")
@@ -627,13 +577,15 @@ class SubmapBuilderModule:
             self.spheremap.points = np.concatenate((self.spheremap.points, new_sphere_locations_in_spheremap_origin))
             self.spheremap.radii = np.concatenate((self.spheremap.radii.flatten(), mindists[new_sphere_idxs].flatten()))
             self.spheremap.connections = np.concatenate((self.spheremap.connections.flatten(), np.array([None for i in range(n_spheres_to_add)], dtype=object).flatten()))
-
-            # ADD SPHERE AT CURRENT POSITION!
+            # # #}
+            
+            # ADD SPHERE AT CURRENT POSITION!# #{
             pos_in_smap_frame = T_delta_odom[:3, 3].reshape((1,3)) 
             self.spheremap.points = np.concatenate((self.spheremap.points, pos_in_smap_frame))
             self.spheremap.radii = np.concatenate((self.spheremap.radii.flatten(), np.array([self.uav_radius]) ))
             self.spheremap.connections = np.concatenate((self.spheremap.connections.flatten(), np.array([None], dtype=object).flatten()))
             n_spheres_to_add += 1
+            # # #}
 
             self.spheremap.updateConnections(np.arange(n_spheres_before_adding, n_spheres_before_adding+n_spheres_to_add))
             new_idxs = np.arange(self.spheremap.radii.size)[self.spheremap.radii.size - n_spheres_to_add : self.spheremap.radii.size]
