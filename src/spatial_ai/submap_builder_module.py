@@ -458,24 +458,39 @@ class SubmapBuilderModule:
                 # # print(testdists)
                 # print(fov_mesh.contains(test_pts))
                 nondeleted_visible_surfels = None
+
                 if not self.spheremap.surfel_points is None:
                     surfel_points_in_camframe = transformPoints(self.spheremap.surfel_points, np.linalg.inv(T_orig_to_current_cam))
                     
-                    contained_surfels = fov_mesh.contains(surfel_points_in_camframe)
-                    surfel_deletion_mask = contained_surfels
+                    contained_surfels_mask = fov_mesh.contains(surfel_points_in_camframe)
+                    contained_surfels_idxs = np.where(contained_surfels_mask)[0]
+                    contained_surfels_dists = np.linalg.norm(surfel_points_in_camframe[contained_surfels_mask, :], axis = 1)
+                    
+                    # DETERMINE PTS THAT HAVE BEEN MEASURED FROM UP CLOSE AND NOW FALL INTO FOV
+                    contained_surfels_minmeas_dists = self.spheremap.surfel_minmeas_dists[contained_surfels_mask]
+                    protected_contained_surfels_mask = contained_surfels_dists > 1.5 * contained_surfels_minmeas_dists 
+                    if np.any(protected_contained_surfels_mask):
+                        nondeleted_visible_surfels = surfel_points_in_camframe[contained_surfels_mask, :][protected_contained_surfels_mask, :]
+
+                    print("PROTECTED SURFELS: " + str(np.sum(protected_contained_surfels_mask)))
+
+                    deleted_surfels_idxs = contained_surfels_idxs[np.logical_not(protected_contained_surfels_mask)]
+                    surfel_deletion_mask = np.full(self.spheremap.surfel_points.shape[0], False)
+                    surfel_deletion_mask[deleted_surfels_idxs] = True
+
                     print("DELETING SURFELS: " + str(np.sum(surfel_deletion_mask)))
-                    print(surfel_deletion_mask.shape)
 
                     keep_mask = np.logical_not(surfel_deletion_mask)
                     self.spheremap.surfel_points = self.spheremap.surfel_points[keep_mask]
                     self.spheremap.surfel_minmeas_dists = self.spheremap.surfel_minmeas_dists[keep_mask]
 
-
-
                 if np.any(inhull):
                     # remove spheres not projecting to conv hull in 2D
                     # TODO - remove this, very dumb i think
                     visible_old_points = z_ok_points[inhull]
+                    if not nondeleted_visible_surfels is None:
+                        print("ADDING NONDELTED PTS: " + str(nondeleted_visible_surfels.shape[0]))
+                        visible_points = np.append(visible_old_points, nondeleted_visible_surfels, axis=0)
                     worked_sphere_idxs = worked_sphere_idxs[inhull]
                     # print("IN HULL: " + str(worked_sphere_idxs.size))
 
