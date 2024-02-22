@@ -153,10 +153,16 @@ def check_points_in_box(points, bounds):
     return points_within_box
 
 class Viewpoint(object):
-    def __init__(self, position, heading=None):
+    def __init__(self, position, heading):
         self.position = position
         self.heading = heading
         self.use_heading = not (heading is None)
+        self.num_observations = 0
+
+    def __init__(self, T):
+        self.position = T[:3, 3]
+        self.heading = transformationMatrixToHeading(T)
+        self.num_observations = 0
 # # #}
 
 

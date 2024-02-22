@@ -67,6 +67,12 @@ from scipy.spatial.transform import Rotation as R
 
 # #}
 
+
+class NavRoadmap:
+    def __init__(self, points, headings):
+        self.points = points
+        self.headings = headings
+
 class LocalNavigatorModule:
     def __init__(self, mapper, ptraj_topic, output_path_topic):# # #{
 
@@ -136,393 +142,13 @@ class LocalNavigatorModule:
         self.roomba_progress_max_time_per_step = 50
         self.roomba_doubletime = False
         self.roomba_bounds_global = [-20, 20, -30, 30, -10, 20]
+
+        # EXPLO PARAMS
+        self.exploration_state = "local"
         
         # # #}
 
-    def predicted_trajectory_callback(self, msg):# # #{
-        with ScopedLock(self.predicted_traj_mutex):
-            # PARSE THE MSG
-            pts = np.array([[pt.x, pt.y, pt.z] for pt in msg.position])
-            headings = np.array([h for h in msg.heading])
-            msg_frame = msg.header.frame_id
-
-            # GET CURRENT ODOM MSG
-            T_msg_to_fcu = lookupTransformAsMatrix(msg_frame, self.fcu_frame, self.tf_listener)
-            # T_fcu_to_global = lookupTransformAsMatrix(self.fcu_frame, 'global', self.tf_listener)
-            T_fcu_to_global = lookupTransformAsMatrix(self.fcu_frame, self.odom_frame, self.tf_listener)
-
-            T_msg_to_global = T_msg_to_fcu @ T_fcu_to_global
-
-            pts_global, headings_global = transformViewpoints(pts, headings, np.linalg.inv(T_msg_to_global))
-            # print("PTS GLOBAL: ")
-            # print(pts_global)
-
-            # print("PTS FCU: ")
-            pts_fcu, headings_fcu = transformViewpoints(pts_global, headings_global, T_fcu_to_global)
-            # print(pts_fcu)
-            # print(headings_fcu)
-
-            self.predicted_trajectory_stamps = msg.stamps
-            self.predicted_trajectory_pts_global = pts_global
-            self.predicted_trajectory_headings_global = headings_global
-
-    # # #}
-
-    # --PLANNING PIPELINE
-
-    def get_future_predicted_trajectory_global_frame(self):# # #{
-        now = rospy.get_rostime()
-
-        stamps = None
-        pts = None
-        headings = None
-
-        if self.predicted_trajectory_pts_global is None:
-            # return None, None, None
-
-            T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
-            pos = T_global_to_fcu[:3, 3].reshape((1,3))
-            # pos[0] += 0.001
-            heading = transformationMatrixToHeading(T_global_to_fcu)
-
-            return pos, heading.reshape((1,1)), np.array([0])
-
-        with ScopedLock(self.predicted_traj_mutex):
-            stamps = self.predicted_trajectory_stamps
-            pts = self.predicted_trajectory_pts_global
-            headings = self.predicted_trajectory_headings_global
-
-        n_pred_pts = pts.shape[0]
-
-        first_future_index = -1
-        for i in range(n_pred_pts):
-            if (stamps[i] - now).to_sec() > 0:
-                first_future_index = i
-                break
-        if first_future_index == -1:
-            print("WARN! - predicted trajectory is pretty old!")
-            return None, None, None
-
-        pts_global = pts[first_future_index:, :]
-        headings_global = headings[first_future_index:]
-        relative_times = np.array([(stamps[i] - now).to_sec() for i in range(first_future_index, n_pred_pts)])
-
-        return pts_global, headings_global, relative_times
-
-    # # #}
-
-    def find_unsafe_pt_idxs_on_global_path(self, pts_global, headings_global, min_odist, clearing_dist = -1, other_submap_idxs = None):# # #{
-        n_pts = pts_global.shape[0]
-        res = []
-
-        pts_in_smap_frame = transformPoints(pts_global, np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin))
-        dists_from_start = np.linalg.norm(pts_global - pts_global[0, :], axis=1)
-
-        odists = []
-        for i in range(n_pts):
-            odist_fs = self.mapper.spheremap.getMaxDistToFreespaceEdge(pts_in_smap_frame[i, :]) * self.fspace_bonus_mod
-            odist_surf = self.mapper.spheremap.getMinDistToSurfaces(pts_in_smap_frame[i, :])
-            odist = min(odist_fs, odist_surf)
-            print("CHECKING ODIST: " + str(odist))
-
-            odists.append(odist)
-            if odist < min_odist and dists_from_start[i] > clearing_dist:
-                res.append(i)
-        odists = np.array(odists)
-        # print("ODISTS RANKED:")
-        # print("ODISTS:")
-        # # odists = np.sort(odists)
-        # print(odists)
-        return np.array(res), odists# # #}
-        
-    def planning_loop_iter(self):# # #{
-        if not self.planning_enabled:
-            return
-        with ScopedLock(self.mapper.spheremap_mutex):
-            self.dumb_forward_flight_rrt_iter()
-    # # #}
-
-    def postproc_path(self, pos_in_smap_frame, headings_in_smap_frame):# # #{
-        # MAKE IT SO THAT NOT TOO MANY PTS CLOSE TOGETHER!!! unless close to obstacles!
-        # TODO ALLOW NO HEADING CHANGE IF STILL MOVING IN FOV!
-        keep_idxs = []
-        n_pts = pos_in_smap_frame.shape[0]
-
-        # prev_pos = start_vp.positon
-        # prev_heading = start_vp.heading
-
-        prev_pos = pos_in_smap_frame[0, :]
-
-        min_travers_dist = self.output_path_resolution
-
-        for i in range(n_pts):
-            dist = np.linalg.norm(prev_pos - pos_in_smap_frame[i,:])
-            if dist > min_travers_dist:
-                keep_idxs.append(i)
-                prev_pos = pos_in_smap_frame[i,:]
-
-        print("postprocessed path to " + str(len(keep_idxs)) + " / " + str(n_pts))
-        if len(keep_idxs) == 0:
-            return None, None
-
-        keep_idxs = np.array(keep_idxs)
-        return pos_in_smap_frame[keep_idxs, :], headings_in_smap_frame[keep_idxs]
-
-
-    # # #}
-
-    def dumb_forward_flight_rrt_iter(self):# # #{
-        # print("--DUMB FORWARD FLIGHT RRT ITER")
-        if self.mapper.spheremap is None:
-            return
-
-        # GET CURRENT POS IN ODOM FRAME
-        # latest_odom_msg = self.odom_buffer[-1]
-        # T_global_to_imu = self.odom_msg_to_transformation_matrix(latest_odom_msg)
-        # T_global_to_fcu = T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
-        T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
-        T_smap_origin_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
-
-        pos_fcu_in_global_frame = T_global_to_fcu[:3, 3]
-
-
-        # RANDOM HOME PLANNING
-        self.findPathAstarInSubmap(self.mapper.spheremap, np.zeros((3,1)).T, T_smap_origin_to_fcu[:3, 3].T, maxdist_to_graph=10, min_safe_dist=self.min_planning_odist, max_safe_dist=self.max_planning_odist,safety_weight = self.safety_weight)  
-
-        # GET START VP IN SMAP FRAME
-        # T_smap_frame_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
-        T_smap_frame_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
-        heading_in_smap_frame = transformationMatrixToHeading(T_smap_frame_to_fcu)
-        planning_start_vp = Viewpoint(T_smap_frame_to_fcu[:3, 3], heading_in_smap_frame)
-
-        planning_time = 1.0
-        current_maxodist = self.max_planning_odist
-        current_minodist = self.min_planning_odist
-
-        # CHECK ROOMBA DIR
-        roombatime =  self.roomba_progress_max_time_per_step*2 if self.roomba_doubletime else self.roomba_progress_max_time_per_step
-        if self.roomba_progress_lasttime is None or (rospy.get_rostime() - self.roomba_progress_lasttime).to_sec() > roombatime:
-            print("--RRR------CHANGING ROOMBA DIR!")
-            theta = np.random.rand(1) * 2 * np.pi
-            dirvec2 = np.array([np.cos(theta), np.sin(theta)]).reshape((1,2))
-
-            if not self.roomba_dirvec_global is None:
-                # FIND VERY DIFFERENT DIR!
-                while dirvec2.dot(self.roomba_dirvec_global[0,:2]) > 0.1:
-                    print("RAND")
-                    theta = np.random.rand(1) * 2 * np.pi
-                    dirvec2 = np.array([np.cos(theta), np.sin(theta)]).reshape((1,2))
-
-            self.roomba_dirvec_global = np.zeros((1,3))
-            self.roomba_dirvec_global[0, :2] = dirvec2 
-            print(self.roomba_dirvec_global)
-
-            self.roomba_progress_lasttime = rospy.get_rostime()
-            self.roomba_motion_start_global = pos_fcu_in_global_frame
-
-            # if self.roomba_progress_index == 0:
-            #     print("didnt reach far, giving this dir 2x the time!")
-            #     self.roomba_doubletime = True
-            # else:
-            #     self.roomba_doubletime = False
-            self.roomba_progress_index = 0
-        else:
-            # Update roomba progress
-            current_progress = np.linalg.norm(pos_fcu_in_global_frame - self.roomba_motion_start_global)
-            current_index = current_progress // self.roomba_progress_step
-            if current_index > self.roomba_progress_index:
-                print("--RRR------ROOMBA PROGRESS TO INDEX " + str(current_index))
-                self.roomba_progress_index = current_index 
-                self.roomba_progress_lasttime = rospy.get_rostime()
-            # TODO - replanning totally trigger
-
-        arrow_pos = copy.deepcopy(pos_fcu_in_global_frame)
-        arrow_pos[2] += 10
-        # self.visualize_arrow(arrow_pos.flatten(), (arrow_pos + self.roomba_dirvec_global*5).flatten(), r=1, g=0.5, marker_idx=0)
-
-        if not self.current_goal_vp_global is None:
-            # VISUALZIE GOAL
-            arrow_pos = self.current_goal_vp_global.position.flatten()
-            ghd = self.current_goal_vp_global.heading
-            arrow_pos2 = arrow_pos + np.array([np.cos(ghd), np.sin(ghd), 0]) * 2
-            self.visualize_arrow(arrow_pos, arrow_pos2, r=0.7, g=0.7, marker_idx=2)
-
-            # CHECK IF REACHED
-            dist_to_goal = np.linalg.norm(pos_fcu_in_global_frame - self.current_goal_vp_global.position)
-            # print("DIST FROM GOAL:")
-            # print(dist_to_goal)
-            if dist_to_goal < self.reaching_dist:
-                print("-------- GOAL REACHED! ----------------")
-                self.current_goal_vp_global = None
-
-
-        evading_obstacle = False
-        enhancing_path = False
-
-        # IF NAVIGATING ALONG PATH, AND ALL IS OK, DO NOT REPLAN. IF NOT PROGRESSING OR REACHED END - CONTINUE FURTHER IN PLANNIGN NEW PATH!
-        if not self.currently_navigating_pts is None:
-            path_reaching_dist = self.reaching_dist
-            dists_from_path_pts = np.linalg.norm(self.currently_navigating_pts - pos_fcu_in_global_frame, axis = 1)
-            # print("DISTS FROM PATH")
-            # print(dists_from_path_pts)
-            closest_path_pt_idx = np.argmin(dists_from_path_pts)
-            if closest_path_pt_idx > self.currently_navigating_reached_node_idx:
-                print("MOVED BY PTS: " + str(closest_path_pt_idx - self.currently_navigating_reached_node_idx))
-                self.currently_navigating_reached_node_idx = closest_path_pt_idx 
-                self.trajectory_following_moved_time = rospy.get_rostime()
-            if closest_path_pt_idx == self.currently_navigating_pts.shape[0] - 1:
-                print("REACHED GOAL OF CURRENTLY SENT PATH!")
-                self.currently_navigating_pts = None
-            else:
-                if (rospy.get_rostime() - self.trajectory_following_moved_time).to_sec() > self.path_abandon_time:
-                    print("NOT PROGRESSING ON PATH FOR LONG TIME! THROWING AWAY PATH!")
-                    self.currently_navigating_pts = None
-                    return
-                else:
-                    print("PROGRESSING ALONG PATH - PROGRESS: "+ str(self.currently_navigating_reached_node_idx) + "/" + str(self.currently_navigating_pts.shape[0]) )
-
-                    # CHECK SAFETY OF TRAJECTORY!
-                    # GET RELEVANT PTS IN PREDICTED TRAJ!
-                    future_pts, future_headings, relative_times = self.get_future_predicted_trajectory_global_frame()
-                    if not future_pts is None:
-                        future_pts_dists = np.linalg.norm(future_pts - pos_fcu_in_global_frame, axis=1)
-                        unsafe_idxs, odists = self.find_unsafe_pt_idxs_on_global_path(future_pts, future_headings, self.safety_replanning_trigger_odist, -1)
-                        if unsafe_idxs.size > 0:
-
-                            time_to_unsafety = relative_times[unsafe_idxs[0]]
-                            triggering_time = 2
-
-                            if time_to_unsafety < triggering_time:
-                                print("-----TRIGGERING UNSAFETY REPLANNING!!!")
-
-                                print("FOUND UNSAFE PT IN PREDICTED TRAJECTORY AT INDEX:" + str(unsafe_idxs[0]) + " DIST: " + str(future_pts_dists[unsafe_idxs[0]]))
-                                print("ODISTS UP TO PT:")
-                                print(odists[:unsafe_idxs[0]+1])
-                                print("DISTS UP TO PT:")
-                                print(future_pts_dists[:unsafe_idxs[0]+1])
-                                print("FUTURE PTS:")
-                                print(future_pts)
-                                print("FCU POS:")
-                                print(pos_fcu_in_global_frame)
-                                print("TIME TO UNSAFETY: " + str(time_to_unsafety) +" / " + str(triggering_time))
-
-                                planning_time = time_to_unsafety * 0.5
-                                if planning_time <= 0.2:
-                                    planning_time = 0.2
-                                print("PLANNING TIME: " +str(planning_time))
-
-                                # VISUALIZE OFFENDING PT
-                                arrow_pos2 = future_pts[unsafe_idxs[0], :]
-                                arrow_pos = copy.deepcopy(arrow_pos2)
-                                arrow_pos[2] -= 10
-                                self.visualize_arrow(arrow_pos.flatten(), arrow_pos2.flatten(), r=0.5, scale=0.5, marker_idx=1)
-
-                                # if time_to_unsafety < planning_time
-
-                                # print("SOME PT IS UNSAFE! DISCARDING PLAN AND PLANNING FROM CURRENT VP!")
-                                # self.currently_navigating_pts = None
-
-                                after_planning_time = relative_times > planning_time + 0.2
-                                if not np.any(after_planning_time):
-                                    print("PLANNING TIME IS LONGER THAN PREDICTED TRAJ! SHORTENING IT AND PLANNING FROM CURRENT POS IN SMAP FRAME!")
-                                    planning_time *= 0.5
-                                else:
-                                    start_idx = np.where(after_planning_time)[0][0]
-                                    print("PLANNING FROM VP OF INDEX " + str(start_idx) + " AT DIST " + str(future_pts_dists[start_idx]))
-                                    startpos_smap_frame, startheading_smap_frame = transformViewpoints(future_pts[start_idx, :].reshape((1,3)), np.array([future_headings[start_idx]]), np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin))
-                                    planning_start_vp = Viewpoint(startpos_smap_frame, startheading_smap_frame[0])
-                                    self.currently_navigating_pts = None
-                                evading_obstacle = True
-                            # TODO - replaning to goal trigger. If failed -> replanning to any other goal. If failed -> evasive maneuvers n wait!
-                            else:
-                                # return
-                                # print("replanning for enhancing path")
-                                enhancing_path = True
-                        else:
-                            # return
-                            # print("replanning for enhancing path")
-                            enhancing_path = True
-                    else:
-                        # return
-                        # print("replanning for enhancing path")
-                        enhancing_path = True
-
-        if enhancing_path and (rospy.Time.now() - self.last_path_send_time).to_sec() < 4:
-            return
-
-
-        # FIND PATHS WITH RRT
-        best_path_pts = None
-        best_path_headings = None
-        save_last_pos_as_goal = False
-        trusted_submap_idxs = None
-        if len(self.mapper.mchunk.submaps) > 0:
-            trusted_submap_idxs = [len(self.mapper.mchunk.submaps) - 1]
-
-
-        if not self.current_goal_vp_global is None:
-
-            # FIND PATH TO GOAL
-            goal_vp_smap_pos, goal_vp_smap_heading = transformViewpoints(self.current_goal_vp_global.position.reshape((1,3)), np.array([self.current_goal_vp_global.heading]), np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin))
-            best_path_pts, best_path_headings = self.find_paths_rrt(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist, mode = 'to_goal', goal_vp_smap = Viewpoint(goal_vp_smap_pos, goal_vp_smap_heading), max_step_size = self.path_step_size, other_submap_idxs = trusted_submap_idxs)
-
-            if best_path_pts is None:
-                print("NO PATH FOUND TO GOAL VP! TRY: " + str(self.current_goal_vp_pathfinding_times) + "/" + str(self.max_goal_vp_pathfinding_times))
-                self.current_goal_vp_pathfinding_times += 1
-                if self.current_goal_vp_pathfinding_times > self.max_goal_vp_pathfinding_times:
-                    print("GOAL VP UNREACHABLE TOO MANY TIMES, DISCARDING IT!")
-                    self.current_goal_vp_global = None
-                return
-
-        # elif not evading_obstacle:
-        else:
-            best_path_pts, best_path_headings = self.find_paths_rrt(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist, max_step_size = self.path_step_size, other_submap_idxs = trusted_submap_idxs)
-
-            if best_path_pts is None:
-                print("NO OK VIABLE REACHABLE GOALS FOUND BY RRT!")
-                return
-
-            print("FOUND SOME REACHABLE GOAL, SETTING IT AS GOAL AND SENDING PATH TO IT!")
-            save_last_pos_as_goal = True
-
-        min_path_len = 1
-        if np.linalg.norm(best_path_pts[-1, :] - planning_start_vp.position) < min_path_len:
-            print("FOUND BEST PATH TOO SHORT!")
-            return
-
-        # GET FCU TRANSFORM NOWW! AFTER 0.5s OF PLANNING
-        T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
-
-        T_smap_origin_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
-
-        pts_fcu, headings_fcu = transformViewpoints(best_path_pts, best_path_headings, np.linalg.inv(T_smap_origin_to_fcu))
-        pts_global, headings_global = transformViewpoints(best_path_pts, best_path_headings, self.mapper.spheremap.T_global_to_own_origin)
-
-        if save_last_pos_as_goal:
-            self.current_goal_vp_global = Viewpoint(pts_global[-1, :], headings_global[-1])
-            self.current_goal_vp_pathfinding_times = 0
-
-        print("PTS IN FCU FRAME (SHOULD START NEAR ZERO!):")
-        print(pts_fcu)
-        print("HEADINGS IN GLOBAL FRAME (SHOULD START NEAR ZERO!):") # GLOBAL IS ROTATED BY 180 DEG FROM VIO ORIGIN!
-        print(headings_fcu)
-
-        # SEND IT AND SET FLAGS
-        # if headings_fcu.size > 1:
-        #     self.send_path_to_trajectory_generator(pts_fcu[1:, :], headings_fcu[1:])
-        # else:
-        #     self.send_path_to_trajectory_generator(pts_fcu, headings_fcu)
-        self.send_path_to_trajectory_generator(pts_fcu, headings_fcu)
-
-        self.currently_navigating_pts = pts_global
-        self.currently_navigating_headings = headings_global
-        self.trajectory_following_moved_time = rospy.get_rostime()
-        self.currently_navigating_reached_node_idx = -1
-
-        self.visualize_trajectory(pts_global, np.eye(4), headings_global, do_line = False, frame_id = self.odom_frame, pub = self.path_planning_vis_pub)
-
-        return
-    # # #}
+    # --PLANNING CORE
 
     def find_paths_rrt(self, start_vp, visualize = True, max_comp_time=0.5, max_step_size = 0.5, max_spread_dist=30, min_odist = 0.1, max_odist = 0.5, max_iter = 700006969420, goal_vp_smap=None, p_greedy = 0.3, mode='find_goals', other_submap_idxs = None):# # #{
         # print("RRT: STARTING, FROM TO:")
@@ -981,11 +607,387 @@ class LocalNavigatorModule:
         return smap.points[np.array(path), :]
 # # #}
 
-    def set_global_roadmap(rm):# # #{
-        self.global_roadmap = rm
-        self.global_roadmap_index = 0
-        self.global_roadmap_len = rm.shape[0]
-        self.roadmap_start_time = rospy.Time.now()
+    def dumb_forward_flight_rrt_iter(self):# # #{
+        # print("--DUMB FORWARD FLIGHT RRT ITER")
+        if self.mapper.spheremap is None:
+            return
+
+        # GET CURRENT POS IN ODOM FRAME
+        # latest_odom_msg = self.odom_buffer[-1]
+        # T_global_to_imu = self.odom_msg_to_transformation_matrix(latest_odom_msg)
+        # T_global_to_fcu = T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
+        T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
+        T_smap_origin_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
+
+        pos_fcu_in_global_frame = T_global_to_fcu[:3, 3]
+
+
+        # RANDOM HOME PLANNING
+        self.findPathAstarInSubmap(self.mapper.spheremap, np.zeros((3,1)).T, T_smap_origin_to_fcu[:3, 3].T, maxdist_to_graph=10, min_safe_dist=self.min_planning_odist, max_safe_dist=self.max_planning_odist,safety_weight = self.safety_weight)  
+
+        # GET START VP IN SMAP FRAME
+        # T_smap_frame_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
+        T_smap_frame_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
+        heading_in_smap_frame = transformationMatrixToHeading(T_smap_frame_to_fcu)
+        planning_start_vp = Viewpoint(T_smap_frame_to_fcu[:3, 3], heading_in_smap_frame)
+
+        planning_time = 1.0
+        current_maxodist = self.max_planning_odist
+        current_minodist = self.min_planning_odist
+
+        # CHECK ROOMBA DIR
+        roombatime =  self.roomba_progress_max_time_per_step*2 if self.roomba_doubletime else self.roomba_progress_max_time_per_step
+        if self.roomba_progress_lasttime is None or (rospy.get_rostime() - self.roomba_progress_lasttime).to_sec() > roombatime:
+            print("--RRR------CHANGING ROOMBA DIR!")
+            theta = np.random.rand(1) * 2 * np.pi
+            dirvec2 = np.array([np.cos(theta), np.sin(theta)]).reshape((1,2))
+
+            if not self.roomba_dirvec_global is None:
+                # FIND VERY DIFFERENT DIR!
+                while dirvec2.dot(self.roomba_dirvec_global[0,:2]) > 0.1:
+                    print("RAND")
+                    theta = np.random.rand(1) * 2 * np.pi
+                    dirvec2 = np.array([np.cos(theta), np.sin(theta)]).reshape((1,2))
+
+            self.roomba_dirvec_global = np.zeros((1,3))
+            self.roomba_dirvec_global[0, :2] = dirvec2 
+            print(self.roomba_dirvec_global)
+
+            self.roomba_progress_lasttime = rospy.get_rostime()
+            self.roomba_motion_start_global = pos_fcu_in_global_frame
+
+            self.roomba_progress_index = 0
+        else:
+            # Update roomba progress
+            current_progress = np.linalg.norm(pos_fcu_in_global_frame - self.roomba_motion_start_global)
+            current_index = current_progress // self.roomba_progress_step
+            if current_index > self.roomba_progress_index:
+                print("--RRR------ROOMBA PROGRESS TO INDEX " + str(current_index))
+                self.roomba_progress_index = current_index 
+                self.roomba_progress_lasttime = rospy.get_rostime()
+            # TODO - replanning totally trigger
+
+        arrow_pos = copy.deepcopy(pos_fcu_in_global_frame)
+        arrow_pos[2] += 10
+        # self.visualize_arrow(arrow_pos.flatten(), (arrow_pos + self.roomba_dirvec_global*5).flatten(), r=1, g=0.5, marker_idx=0)
+
+        if not self.current_goal_vp_global is None:
+            # VISUALZIE GOAL
+            arrow_pos = self.current_goal_vp_global.position.flatten()
+            ghd = self.current_goal_vp_global.heading
+            arrow_pos2 = arrow_pos + np.array([np.cos(ghd), np.sin(ghd), 0]) * 2
+            self.visualize_arrow(arrow_pos, arrow_pos2, r=0.7, g=0.7, marker_idx=2)
+
+            # CHECK IF REACHED
+            dist_to_goal = np.linalg.norm(pos_fcu_in_global_frame - self.current_goal_vp_global.position)
+            # print("DIST FROM GOAL:")
+            # print(dist_to_goal)
+            if dist_to_goal < self.reaching_dist:
+                print("-------- GOAL REACHED! ----------------")
+                self.current_goal_vp_global = None
+
+
+        evading_obstacle = False
+        enhancing_path = False
+
+        # IF NAVIGATING ALONG PATH, AND ALL IS OK, DO NOT REPLAN. IF NOT PROGRESSING OR REACHED END - CONTINUE FURTHER IN PLANNIGN NEW PATH!
+        # if not self.currently_navigating_pts is None:
+        #     path_reaching_dist = self.reaching_dist
+        #     dists_from_path_pts = np.linalg.norm(self.currently_navigating_pts - pos_fcu_in_global_frame, axis = 1)
+        #     # print("DISTS FROM PATH")
+        #     # print(dists_from_path_pts)
+        #     closest_path_pt_idx = np.argmin(dists_from_path_pts)
+        #     if closest_path_pt_idx > self.currently_navigating_reached_node_idx:
+        #         print("MOVED BY PTS: " + str(closest_path_pt_idx - self.currently_navigating_reached_node_idx))
+        #         self.currently_navigating_reached_node_idx = closest_path_pt_idx 
+        #         self.trajectory_following_moved_time = rospy.get_rostime()
+        #     if closest_path_pt_idx == self.currently_navigating_pts.shape[0] - 1:
+        #         print("REACHED GOAL OF CURRENTLY SENT PATH!")
+        #         self.currently_navigating_pts = None
+        #     else:
+        #         if (rospy.get_rostime() - self.trajectory_following_moved_time).to_sec() > self.path_abandon_time:
+        #             print("NOT PROGRESSING ON PATH FOR LONG TIME! THROWING AWAY PATH!")
+        #             self.currently_navigating_pts = None
+        #             return
+        #         else:
+        #             print("PROGRESSING ALONG PATH - PROGRESS: "+ str(self.currently_navigating_reached_node_idx) + "/" + str(self.currently_navigating_pts.shape[0]) )
+
+
+        # CHECK SAFETY OF TRAJECTORY!
+        # GET RELEVANT PTS IN PREDICTED TRAJ!
+        future_pts, future_headings, relative_times = self.get_future_predicted_trajectory_global_frame()
+        if not future_pts is None:
+            future_pts_dists = np.linalg.norm(future_pts - pos_fcu_in_global_frame, axis=1)
+            unsafe_idxs, odists = self.find_unsafe_pt_idxs_on_global_path(future_pts, future_headings, self.safety_replanning_trigger_odist, -1)
+            if unsafe_idxs.size > 0:
+
+                time_to_unsafety = relative_times[unsafe_idxs[0]]
+                triggering_time = 2
+
+                if time_to_unsafety < triggering_time:
+                    print("-----TRIGGERING UNSAFETY REPLANNING!!!")
+
+                    print("FOUND UNSAFE PT IN PREDICTED TRAJECTORY AT INDEX:" + str(unsafe_idxs[0]) + " DIST: " + str(future_pts_dists[unsafe_idxs[0]]))
+                    print("ODISTS UP TO PT:")
+                    print(odists[:unsafe_idxs[0]+1])
+                    print("DISTS UP TO PT:")
+                    print(future_pts_dists[:unsafe_idxs[0]+1])
+                    print("FUTURE PTS:")
+                    print(future_pts)
+                    print("FCU POS:")
+                    print(pos_fcu_in_global_frame)
+                    print("TIME TO UNSAFETY: " + str(time_to_unsafety) +" / " + str(triggering_time))
+
+                    planning_time = time_to_unsafety * 0.5
+                    if planning_time <= 0.2:
+                        planning_time = 0.2
+                    print("PLANNING TIME: " +str(planning_time))
+
+                    # VISUALIZE OFFENDING PT
+                    arrow_pos2 = future_pts[unsafe_idxs[0], :]
+                    arrow_pos = copy.deepcopy(arrow_pos2)
+                    arrow_pos[2] -= 10
+                    self.visualize_arrow(arrow_pos.flatten(), arrow_pos2.flatten(), r=0.5, scale=0.5, marker_idx=1)
+
+                    # if time_to_unsafety < planning_time
+
+                    # print("SOME PT IS UNSAFE! DISCARDING PLAN AND PLANNING FROM CURRENT VP!")
+                    # self.currently_navigating_pts = None
+
+                    after_planning_time = relative_times > planning_time + 0.2
+                    if not np.any(after_planning_time):
+                        print("PLANNING TIME IS LONGER THAN PREDICTED TRAJ! SHORTENING IT AND PLANNING FROM CURRENT POS IN SMAP FRAME!")
+                        planning_time *= 0.5
+                    else:
+                        start_idx = np.where(after_planning_time)[0][0]
+                        print("PLANNING FROM VP OF INDEX " + str(start_idx) + " AT DIST " + str(future_pts_dists[start_idx]))
+                        startpos_smap_frame, startheading_smap_frame = transformViewpoints(future_pts[start_idx, :].reshape((1,3)), np.array([future_headings[start_idx]]), np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin))
+                        planning_start_vp = Viewpoint(startpos_smap_frame, startheading_smap_frame[0])
+                        self.currently_navigating_pts = None
+                    evading_obstacle = True
+                # TODO - replaning to goal trigger. If failed -> replanning to any other goal. If failed -> evasive maneuvers n wait!
+                else:
+                    # return
+                    # print("replanning for enhancing path")
+                    enhancing_path = True
+            else:
+                # return
+                # print("replanning for enhancing path")
+                enhancing_path = True
+        else:
+            # return
+            # print("replanning for enhancing path")
+            enhancing_path = True
+
+        if enhancing_path and (rospy.Time.now() - self.last_path_send_time).to_sec() < 4:
+            return
+
+
+        # FIND PATHS WITH RRT
+        best_path_pts = None
+        best_path_headings = None
+        save_last_pos_as_goal = False
+        trusted_submap_idxs = None
+        if len(self.mapper.mchunk.submaps) > 0:
+            trusted_submap_idxs = [len(self.mapper.mchunk.submaps) - 1]
+
+
+        if not self.current_goal_vp_global is None:
+
+            # FIND PATH TO GOAL
+            goal_vp_smap_pos, goal_vp_smap_heading = transformViewpoints(self.current_goal_vp_global.position.reshape((1,3)), np.array([self.current_goal_vp_global.heading]), np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin))
+            best_path_pts, best_path_headings = self.find_paths_rrt(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist, mode = 'to_goal', goal_vp_smap = Viewpoint(goal_vp_smap_pos, goal_vp_smap_heading), max_step_size = self.path_step_size, other_submap_idxs = trusted_submap_idxs)
+
+            if best_path_pts is None:
+                print("NO PATH FOUND TO GOAL VP! TRY: " + str(self.current_goal_vp_pathfinding_times) + "/" + str(self.max_goal_vp_pathfinding_times))
+                self.current_goal_vp_pathfinding_times += 1
+                if self.current_goal_vp_pathfinding_times > self.max_goal_vp_pathfinding_times:
+                    print("GOAL VP UNREACHABLE TOO MANY TIMES, DISCARDING IT!")
+                    self.current_goal_vp_global = None
+                return
+
+        # elif not evading_obstacle:
+        else:
+            best_path_pts, best_path_headings = self.find_paths_rrt(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist, max_step_size = self.path_step_size, other_submap_idxs = trusted_submap_idxs)
+
+            if best_path_pts is None:
+                print("NO OK VIABLE REACHABLE GOALS FOUND BY RRT!")
+                return
+
+            print("FOUND SOME REACHABLE GOAL, SETTING IT AS GOAL AND SENDING PATH TO IT!")
+            save_last_pos_as_goal = True
+
+        min_path_len = 1
+        if np.linalg.norm(best_path_pts[-1, :] - planning_start_vp.position) < min_path_len:
+            print("FOUND BEST PATH TOO SHORT!")
+            return
+
+        # GET FCU TRANSFORM NOWW! AFTER 0.5s OF PLANNING
+        T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
+
+        T_smap_origin_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
+
+        pts_fcu, headings_fcu = transformViewpoints(best_path_pts, best_path_headings, np.linalg.inv(T_smap_origin_to_fcu))
+        pts_global, headings_global = transformViewpoints(best_path_pts, best_path_headings, self.mapper.spheremap.T_global_to_own_origin)
+
+        if save_last_pos_as_goal:
+            self.current_goal_vp_global = Viewpoint(pts_global[-1, :], headings_global[-1])
+            self.current_goal_vp_pathfinding_times = 0
+
+        print("PTS IN FCU FRAME (SHOULD START NEAR ZERO!):")
+        print(pts_fcu)
+        print("HEADINGS IN GLOBAL FRAME (SHOULD START NEAR ZERO!):") # GLOBAL IS ROTATED BY 180 DEG FROM VIO ORIGIN!
+        print(headings_fcu)
+
+        # SEND IT AND SET FLAGS
+        # if headings_fcu.size > 1:
+        #     self.send_path_to_trajectory_generator(pts_fcu[1:, :], headings_fcu[1:])
+        # else:
+        #     self.send_path_to_trajectory_generator(pts_fcu, headings_fcu)
+        self.send_path_to_trajectory_generator(pts_fcu, headings_fcu)
+
+        self.currently_navigating_pts = pts_global
+        self.currently_navigating_headings = headings_global
+        self.trajectory_following_moved_time = rospy.get_rostime()
+        self.currently_navigating_reached_node_idx = -1
+
+        self.visualize_trajectory(pts_global, np.eye(4), headings_global, do_line = False, frame_id = self.odom_frame, pub = self.path_planning_vis_pub)
+
+        return
+    # # #}
+
+    # def homing_logic(self):
+
+    # --MRS SYSTEM ATTACHMENTS
+
+    def predicted_trajectory_callback(self, msg):# # #{
+        with ScopedLock(self.predicted_traj_mutex):
+            # PARSE THE MSG
+            pts = np.array([[pt.x, pt.y, pt.z] for pt in msg.position])
+            headings = np.array([h for h in msg.heading])
+            msg_frame = msg.header.frame_id
+
+            # GET CURRENT ODOM MSG
+            T_msg_to_fcu = lookupTransformAsMatrix(msg_frame, self.fcu_frame, self.tf_listener)
+            # T_fcu_to_global = lookupTransformAsMatrix(self.fcu_frame, 'global', self.tf_listener)
+            T_fcu_to_global = lookupTransformAsMatrix(self.fcu_frame, self.odom_frame, self.tf_listener)
+
+            T_msg_to_global = T_msg_to_fcu @ T_fcu_to_global
+
+            pts_global, headings_global = transformViewpoints(pts, headings, np.linalg.inv(T_msg_to_global))
+            # print("PTS GLOBAL: ")
+            # print(pts_global)
+
+            # print("PTS FCU: ")
+            pts_fcu, headings_fcu = transformViewpoints(pts_global, headings_global, T_fcu_to_global)
+            # print(pts_fcu)
+            # print(headings_fcu)
+
+            self.predicted_trajectory_stamps = msg.stamps
+            self.predicted_trajectory_pts_global = pts_global
+            self.predicted_trajectory_headings_global = headings_global
+
+    # # #}
+
+    def get_future_predicted_trajectory_global_frame(self):# # #{
+        now = rospy.get_rostime()
+
+        stamps = None
+        pts = None
+        headings = None
+
+        if self.predicted_trajectory_pts_global is None:
+            # return None, None, None
+
+            T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
+            pos = T_global_to_fcu[:3, 3].reshape((1,3))
+            # pos[0] += 0.001
+            heading = transformationMatrixToHeading(T_global_to_fcu)
+
+            return pos, heading.reshape((1,1)), np.array([0])
+
+        with ScopedLock(self.predicted_traj_mutex):
+            stamps = self.predicted_trajectory_stamps
+            pts = self.predicted_trajectory_pts_global
+            headings = self.predicted_trajectory_headings_global
+
+        n_pred_pts = pts.shape[0]
+
+        first_future_index = -1
+        for i in range(n_pred_pts):
+            if (stamps[i] - now).to_sec() > 0:
+                first_future_index = i
+                break
+        if first_future_index == -1:
+            print("WARN! - predicted trajectory is pretty old!")
+            return None, None, None
+
+        pts_global = pts[first_future_index:, :]
+        headings_global = headings[first_future_index:]
+        relative_times = np.array([(stamps[i] - now).to_sec() for i in range(first_future_index, n_pred_pts)])
+
+        return pts_global, headings_global, relative_times
+
+    # # #}
+
+    def find_unsafe_pt_idxs_on_global_path(self, pts_global, headings_global, min_odist, clearing_dist = -1, other_submap_idxs = None):# # #{
+        n_pts = pts_global.shape[0]
+        res = []
+
+        pts_in_smap_frame = transformPoints(pts_global, np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin))
+        dists_from_start = np.linalg.norm(pts_global - pts_global[0, :], axis=1)
+
+        odists = []
+        for i in range(n_pts):
+            odist_fs = self.mapper.spheremap.getMaxDistToFreespaceEdge(pts_in_smap_frame[i, :]) * self.fspace_bonus_mod
+            odist_surf = self.mapper.spheremap.getMinDistToSurfaces(pts_in_smap_frame[i, :])
+            odist = min(odist_fs, odist_surf)
+            print("CHECKING ODIST: " + str(odist))
+
+            odists.append(odist)
+            if odist < min_odist and dists_from_start[i] > clearing_dist:
+                res.append(i)
+        odists = np.array(odists)
+        # print("ODISTS RANKED:")
+        # print("ODISTS:")
+        # # odists = np.sort(odists)
+        # print(odists)
+        return np.array(res), odists# # #}
+        
+    def planning_loop_iter(self):# # #{
+        if not self.planning_enabled:
+            return
+        with ScopedLock(self.mapper.spheremap_mutex):
+            self.dumb_forward_flight_rrt_iter()
+    # # #}
+
+    def postproc_path(self, pos_in_smap_frame, headings_in_smap_frame):# # #{
+        # MAKE IT SO THAT NOT TOO MANY PTS CLOSE TOGETHER!!! unless close to obstacles!
+        # TODO ALLOW NO HEADING CHANGE IF STILL MOVING IN FOV!
+        keep_idxs = []
+        n_pts = pos_in_smap_frame.shape[0]
+
+        # prev_pos = start_vp.positon
+        # prev_heading = start_vp.heading
+
+        prev_pos = pos_in_smap_frame[0, :]
+
+        min_travers_dist = self.output_path_resolution
+
+        for i in range(n_pts):
+            dist = np.linalg.norm(prev_pos - pos_in_smap_frame[i,:])
+            if dist > min_travers_dist:
+                keep_idxs.append(i)
+                prev_pos = pos_in_smap_frame[i,:]
+
+        print("postprocessed path to " + str(len(keep_idxs)) + " / " + str(n_pts))
+        if len(keep_idxs) == 0:
+            return None, None
+
+        keep_idxs = np.array(keep_idxs)
+        return pos_in_smap_frame[keep_idxs, :], headings_in_smap_frame[keep_idxs]
+
+
     # # #}
 
     def send_path_to_trajectory_generator(self, path, headings=None):# # #{
@@ -1029,6 +1031,136 @@ class LocalNavigatorModule:
         return None
 # # #}
 
+
+    # --ROADMAP STUFF
+
+    def roadmap_following_iter(self):# # #{
+        if self.mapper.spheremap is None:
+            return
+
+        # GET CURRENT POS IN ODOM FRAME
+        T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
+        T_smap_origin_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
+        pos_fcu_in_global_frame = T_global_to_fcu[:3, 3]
+
+        # GET START VP IN SMAP FRAME
+        # T_smap_frame_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
+        T_smap_frame_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
+        heading_in_smap_frame = transformationMatrixToHeading(T_smap_frame_to_fcu)
+        planning_start_vp = Viewpoint(T_smap_frame_to_fcu[:3, 3], heading_in_smap_frame)
+
+        planning_time = 1.0
+        current_maxodist = self.max_planning_odist
+        current_minodist = self.min_planning_odist
+
+        if self.roadmap is None:
+            return
+
+        # UPDATE CARROT GOAL, SET FLAGS IF REACHED END
+
+        # IF TIME TO PERIODICALLY REPLAN / PREDICTED TRAJ UNSAFE / CARROT GOAL MOVED A LOT, COMPUTE NEW PATH TO CURRENT CARROT AND SEND IT
+    # # #}
+
+    def set_roadmap(self, roadmap):# # #{
+        print("NAV: SETTING ROADMAP OF LEN " + str(roadmap.points.shape[0]))
+        self.roadmap = roadmap
+        self.roadmap_index = 0
+    # # #}
+
+    def stop_following_roadmap_and_stop(self):# # #{
+        # RESET ROADMAP STUFF
+        self.roadmap = None
+        self.roadmap_index = 0
+
+        # SEND CURRENT POSE AS REFERENCE
+        T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
+        self.send_path_to_trajectory_generator(T_global_to_fcu[:3,3].T, [transformationMatrixToHeading(T_global_to_fcu)])
+    # # #}
+
+
+    # --EXPLORATION STUFF
+
+    def findBestGlobalGoal(self):
+        pass
+
+    def getEquivalentGlobalViewpoints(self, vp):
+        return []
+
+    def findLocalExplorationViewpoints(self):
+        pass
+
+    def exploration_logic(self):# # #{
+
+        T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
+        current_vp = Viewpoint(T_global_to_fcu) 
+
+        # IF CURRENT VP BECAME UNREACHABLE, TRIGGER RE-SELECTION
+        if self.exploration_state == 'global':
+            if self.roadmap is None:
+                # FIND A* PATHS TO ALL KNOWN GOALS
+                global_goal_roadmap, dist = self.findBestGlobalGoal()
+
+                # IF NONE FOUND, SWITCH TO LOCAL SEARCH AND TRY SEARCHING HERE (todo -increase counter)
+                if global_goal_roadmap is None:
+                    self.exploration_state == 'local'
+                    # TODO - add counter
+                    return
+
+                # IF SOME IS GOOD, SET IT AS NAVGOAL AND FUCKING GO TO IT
+                self.set_roadmap(global_goal_roadmap)
+
+            elif self.roadmap_navigation_failed:
+                print("ROADMAP NAV TO EXPLORATION GLOBAL GOAL FAILED, SWITCHING TO LOCAL EXPLO")
+                self.stop_following_roadmap_and_stop()
+                self.exploration_state == 'local'
+                return
+
+        elif self.exploration_state == 'local':
+            # IF NAVIGATING TO SOME GOAL AND DONE, WILL SELECT NEW ONE. OTHERWISE CONTINUE
+            if not self.roadmap is None:
+                if self.roadmap_navigation_failed:
+                    print("EXPLO LOCAL - NAV FAILED, STOPPING AND SEARCHING")
+                    self.stop_following_roadmap_and_stop()
+                    # TODO - add counter
+
+                elif self.roadmap_navigation_success:
+                    # WHEN REACHED SOME LOCAL VIEWING POSE - ADD OBSERVATION COUNTER TO THE GOAL VPS!!
+                    print("EXPLO LOCAL - NAV SUCCESS, ADDING OBSVS")
+                    thus_observed_global_vps = self.getEquivalentGlobalViewpoints(current_vp)
+                    for vp in thus_observed_global_vps:
+                        vp.num_observations += 1
+                else:
+                    return
+
+            # SEARCH FOR LOCAL GOALS NOT BLOCKED BY ALREADY SAVED GOALS
+            print("EXPLO LOCAL - SEARCHING FOR GOALS")
+            local_vps, values, path_costs, tree = self.findLocalExplorationViewpoints()
+
+            # IF NONE FOUND, GOTO GLOBAL TO SEARCH FOR GLOBAL ONES TOO
+            if viewpoints is None:
+                print("EXPLO LOCAL - NONE OK FOUND")
+                self.exploration_state == 'global'
+                return
+
+            # SELECT BEST ONE
+            print("EXPLO LOCAL - FOUND OK VPS: " + str(len(local_vps)))
+            best_vp_index = np.argmin(values - path_costs)
+            best_vp = local_vps[best_vp_index]
+
+            # SAVE ALL
+            self.saveGlobalExplorationViewpoints(local_vps)
+
+            # SET THE BEST ONE AS CURRENT NAVGOAL
+            print("EXPLO LOCAL - SETTING BEST VP AS GOAL")
+            localgoal_roadmap = NavRoadmap(best_vp.position, best_vp.heading)
+            self.set_roadmap(localgoal_roadmap)
+
+        else:
+            print("ERROR - UNKNOWN EXPLORATION STATE!!!!!!!!!!!!!!!!!")
+    # # #}
+
+    # --UTILS
+
     def odom_msg_to_transformation_matrix(self, closest_time_odom_msg):# # #{
         odom_p = np.array([closest_time_odom_msg.pose.pose.position.x, closest_time_odom_msg.pose.pose.position.y, closest_time_odom_msg.pose.pose.position.z])
         odom_q = np.array([closest_time_odom_msg.pose.pose.orientation.x, closest_time_odom_msg.pose.pose.orientation.y,
@@ -1057,6 +1189,7 @@ class LocalNavigatorModule:
         saf = (node2_radius - minodist) / (maxodist  - minodist)
         return saf * saf
     # # #}
+
 
     # --VISUALIZATIONS
 
