@@ -82,6 +82,7 @@ class LocalNavigatorModule:
 
         # VIS PUB
         self.path_planning_vis_pub = rospy.Publisher('path_planning_vis', MarkerArray, queue_size=10)
+        self.global_path_planning_vis_pub = rospy.Publisher('path_planning_vis_global', MarkerArray, queue_size=10)
         self.unsorted_vis_pub = rospy.Publisher('unsorted_markers', MarkerArray, queue_size=10)
 
         # PARAMS
@@ -283,6 +284,10 @@ class LocalNavigatorModule:
         T_smap_origin_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
 
         pos_fcu_in_global_frame = T_global_to_fcu[:3, 3]
+
+
+        # RANDOM HOME PLANNING
+        self.findPathAstarInSubmap(self.mapper.spheremap, np.zeros((3,1)).T, T_smap_origin_to_fcu[:3, 3].T, maxdist_to_graph=10, min_safe_dist=self.min_planning_odist, max_safe_dist=self.max_planning_odist,safety_weight = self.safety_weight)  
 
         # GET START VP IN SMAP FRAME
         # T_smap_frame_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
@@ -514,7 +519,7 @@ class LocalNavigatorModule:
         self.trajectory_following_moved_time = rospy.get_rostime()
         self.currently_navigating_reached_node_idx = -1
 
-        self.visualize_trajectory(pts_global, np.eye(4), headings_global, do_line = False, frame_id = self.odom_frame)
+        self.visualize_trajectory(pts_global, np.eye(4), headings_global, do_line = False, frame_id = self.odom_frame, pub = self.path_planning_vis_pub)
 
         return
     # # #}
@@ -889,6 +894,93 @@ class LocalNavigatorModule:
 
     # # #}
 
+    def findPathAstarInSubmap(self, smap, startpoint, endpoint, maxdist_to_graph=10, min_safe_dist=0.5, max_safe_dist=3, safety_weight=1):# # #{
+        print("PATHFIND: STARTING, FROM TO:")
+        print(startpoint)
+        print(endpoint)
+
+        if smap.points is None: 
+            print("PATHFIND: MAP IS EMPTY!!!")
+            return None
+
+        # FIND NEAREST NODES TO START AND END
+        dist_from_startpoint = np.linalg.norm((smap.points - startpoint), axis=1) - smap.radii
+        start_node_index = np.argmin(dist_from_startpoint)
+
+        # ONLY CONSIDER GOAL POINTS IN THE SAME CONNECTIVITY REGION
+        dist_from_endpoint = np.linalg.norm((smap.points - endpoint), axis=1) - smap.radii
+        end_node_index = np.argmin(dist_from_endpoint)
+
+        if(dist_from_startpoint[start_node_index] > maxdist_to_graph or dist_from_endpoint[end_node_index] > maxdist_to_graph):
+            print("PATHFIND: start or end too far form graph!")
+            print(dist_from_startpoint[start_node_index])
+            print(dist_from_endpoint[end_node_index])
+            print("N SPHERES:")
+            print(smap.points.shape[0])
+            return None
+        print("PATHFIND: node indices:")
+        print(start_node_index)
+        print(end_node_index)
+
+        goal_node_pt = smap.points[end_node_index]
+        open_set = []
+        # closed_set = set()
+        closed_set = {start_node_index: None}
+
+        # Priority queue for efficient retrieval of the node with the lowest total cost
+        heapq.heappush(open_set, (0, start_node_index, None))
+
+        # Dictionary to store the cost of reaching each node from the start
+        g_score = {start_node_index: 0}
+
+        # Dictionary to store the estimated total cost from start to goal passing through the node
+        startned_dist = np.linalg.norm(smap.points[start_node_index] - goal_node_pt)
+        print("PATHFIND: startnend dist:" + str(startned_dist))
+        f_score = {start_node_index: startned_dist }
+
+        path = []
+        while open_set:
+            current_f, current_index, parent = heapq.heappop(open_set)
+            # print("POPPED: " + str(current_index) + " F: " + str(current_f))
+
+            if current_index == end_node_index:
+                path = [current_index]
+                while not parent is None:
+                    path.append(parent)
+                    current_index = parent
+                    parent = closed_set[current_index]
+                break
+
+            # closed_set.add(current_index)
+
+            conns = smap.connections[current_index]
+            # print("CONNS:")
+            # print(conns)
+            if conns is None:
+                continue
+
+            for neighbor_index in conns:
+                euclid_dist = np.linalg.norm(smap.points[current_index] - smap.points[neighbor_index])
+                tentative_g = g_score[current_index] + euclid_dist
+
+                if neighbor_index not in g_score or tentative_g < g_score[neighbor_index]:
+                    g_score[neighbor_index] = tentative_g
+                    f_score[neighbor_index] = tentative_g + np.linalg.norm(smap.points[neighbor_index] - goal_node_pt)
+                    heapq.heappush(open_set, (f_score[neighbor_index], neighbor_index, current_index))
+                    closed_set[neighbor_index] = current_index
+
+        path.reverse()
+        print("PATHFIND: RES PATH: ")
+        print(path)
+        print("N CLOSED NODES: " + str(len(closed_set.keys())))
+
+        self.visualize_trajectory(smap.points[np.array(path), :], smap.T_global_to_own_origin, headings=None, do_line=True, start=startpoint, goal=endpoint, pub=self.global_path_planning_vis_pub)
+
+        if len(path) == 0:
+            return None
+        return smap.points[np.array(path), :]
+# # #}
+
     def set_global_roadmap(rm):# # #{
         self.global_roadmap = rm
         self.global_roadmap_index = 0
@@ -1035,7 +1127,7 @@ class LocalNavigatorModule:
                 line_marker.points.append(point2)
             marker_array.markers.append(line_marker)
 
-        self.path_planning_vis_pub .publish(marker_array)
+        self.path_planning_vis_pub.publish(marker_array)
     # # #}
 
     def visualize_roadmap(self,pts, start=None, goal=None, reached_idx = None):# # #{
@@ -1121,7 +1213,7 @@ class LocalNavigatorModule:
         self.path_planning_vis_pub .publish(marker_array)
 # # #}
 
-    def visualize_trajectory(self,points_untransformed, T_vis, headings=None,do_line=True, start=None, goal=None, frame_id=None):# # #{
+    def visualize_trajectory(self,points_untransformed, T_vis, headings=None,do_line=True, start=None, goal=None, frame_id=None, pub=None):# # #{
         if frame_id is None:
             frame_id = self.odom_frame
         marker_array = MarkerArray()
@@ -1233,7 +1325,7 @@ class LocalNavigatorModule:
                 marker.points = points_msg
                 marker_array.markers.append(marker)
 
-        self.path_planning_vis_pub .publish(marker_array)
+        pub.publish(marker_array)
 # # #}
 
 
