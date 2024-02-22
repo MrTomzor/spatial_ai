@@ -73,6 +73,10 @@ class NavRoadmap:
         self.points = points
         self.headings = headings
 
+    def __init__(self, points):
+        self.points = points
+        self.headings = np.full((points.shape[0]), None).flatten()
+
 class LocalNavigatorModule:
     def __init__(self, mapper, ptraj_topic, output_path_topic):# # #{
 
@@ -125,11 +129,11 @@ class LocalNavigatorModule:
         self.reaching_dist = rospy.get_param("local_nav/reaching_dist")
         self.reaching_angle = np.pi/2
 
-        self.max_goal_vp_pathfinding_times = 2
+        self.max_goal_vp_pathfinding_times = 3
         self.current_goal_vp_pathfinding_times = 0
 
         self.fspace_bonus_mod = 2
-        self.safety_weight = rospy.get_param("local_nav/reaching_dist")
+        self.safety_weight = 3
 
         # ROOMBA PARAMS
         self.roomba_progress_lasttime = None
@@ -150,6 +154,12 @@ class LocalNavigatorModule:
     # --PLANNING CORE
 
     def find_paths_rrt(self, start_vp, visualize = True, max_comp_time=0.5, max_step_size = 0.5, max_spread_dist=30, min_odist = 0.1, max_odist = 0.5, max_iter = 700006969420, goal_vp_smap=None, p_greedy = 0.3, mode='find_goals', other_submap_idxs = None):# # #{
+        print("RRT START:")
+        print(start_vp.position)
+        print(start_vp.heading)
+        print(start_vp.position.shape)
+        print(start_vp.heading.shape)
+        # start_vp.heading = start_vp.heading[0]
         # print("RRT: STARTING, FROM TO:")
         # print(start_vp)
         
@@ -180,7 +190,7 @@ class LocalNavigatorModule:
         # INIT TREE
         n_nodes = 1
         tree_pos = start_vp.position.reshape((1, 3))
-        tree_headings = np.array([start_vp.heading])
+        tree_headings = np.array([start_vp.heading]).flatten()
         odists = np.array([self.mapper.spheremap.getMaxDistToFreespaceEdge(start_vp.position)])
         parent_indices = np.array([-1])
         # child_indices = np.array([-1])
@@ -275,7 +285,15 @@ class LocalNavigatorModule:
             # COMPUTE COST TO MOVE FROM NEAREST NODE TO THIS
             # travelcosts = dists[connectable_mask]
             dirvecs = (new_node_pos - tree_pos[connectable_mask, :])
+            # print("KURVA")
+            # print(tree_pos.shape)
+            # print(tree_headings.shape)
+            # print(new_node_pos.shape)
+            # print(tree_pos[connectable_mask, :].shape)
+            # print(np.sum(connectable_mask))
             potential_headings = np.arctan2(dirvecs[:, 1], dirvecs[:,0])
+            # print("DVECS:")
+            # print(dirvecs.shape)
             # potential_headings = np.arctan2(-dirvecs[:, 0], dirvecs[:,2])
 
             # for i in range(dirvecs.shape[0]):
@@ -283,14 +301,32 @@ class LocalNavigatorModule:
             #     print(dirvecs[i,:])
             #     print("HEADING: " + str(potential_headings[i]))
 
-            heading_difs = (np.unwrap(potential_headings - tree_headings[connectable_mask]))
+            # print("POT HEADINGS:")
+            # print(potential_headings)
+            # print(potential_headings.shape)
+
+            # print("TREE HEADINGS (masked)")
+            # print(tree_headings[connectable_mask])
+            # print(tree_headings[connectable_mask].shape)
+
+            heading_difs = (np.unwrap(potential_headings.flatten() - tree_headings[connectable_mask].flatten()))
+            # print("HEADING DIFS 1st")
+            # print(heading_difs)
+            # print(heading_difs.shape)
 
             # CLAMP HEADING DIFS!
             heading_overshoot_ratios = (np.abs(heading_difs) / dists[connectable_mask]) / self.max_heading_change_per_m 
             overshoot_mask = heading_overshoot_ratios > 1.0
             # print("OVERSHOOT MASK: " + str(np.sum(overshoot_mask)) + "/" + str(np.size(overshoot_mask)))
             heading_difs[overshoot_mask] = heading_difs[overshoot_mask] / heading_overshoot_ratios[overshoot_mask]
-            potential_headings = np.unwrap(tree_headings[connectable_mask] + heading_difs) 
+            potential_headings = np.unwrap(tree_headings[connectable_mask].flatten() + heading_difs) 
+
+            # print("HEADING DIFS")
+            # print(heading_difs)
+            # print(heading_difs.shape)
+            # print("UNWRAP:")
+            # print(potential_headings)
+            # print(potential_headings.shape)
 
             # safety_costs = np.array([self.compute_safety_cost(odists, dists[idx]) for idx in connectable_indices]).flatten() * self.safety_weight
             safety_costs = self.compute_safety_cost(new_node_odist, min_odist, max_odist) * dists[connectable_mask] * self.safety_weight
@@ -304,6 +340,9 @@ class LocalNavigatorModule:
             new_node_parent_idx = connectable_indices[new_node_parent_idx2]
 
             # CHECK IF ODOM PTS VISIBLE
+            # print("AAA")
+            # print(new_node_pos.shape)
+            # print(newnode_heading.shape)
             T_smap_orig_to_head_fcu = posAndHeadingToMatrix(new_node_pos, newnode_heading)
             T_smap_orig_to_head_cam = T_smap_orig_to_head_fcu @ T_fcu_to_cam 
             T_head_cam_to_smap_orig = np.linalg.inv(T_smap_orig_to_head_cam)
@@ -481,6 +520,8 @@ class LocalNavigatorModule:
             print(heads_scores.shape)
             print(reaching_goal.shape)
             print(heads_indices.shape)
+            print("CLOSEST NODE:")
+            print(np.min(dists_from_goal))
 
             heads_values[reaching_goal] = acceptance_thresh + 1
             heads_scores[reaching_goal] = -total_costs[heads_indices[reaching_goal]]
@@ -611,7 +652,19 @@ class LocalNavigatorModule:
             return
         with ScopedLock(self.mapper.spheremap_mutex):
             # self.dumb_forward_flight_rrt_iter()
-            self.exploration_logic()
+
+            # self.exploration_logic()
+
+            if self.roadmap is None or self.roadmap_navigation_failed:
+                print("TMP - pathfinding home")
+                T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
+                T_smap_origin_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
+                pos_fcu_in_global_frame = T_global_to_fcu[:3, 3]
+
+                path_home_pts = self.findPathAstarInSubmap(self.mapper.spheremap, T_smap_origin_to_fcu[:3, 3].T, np.zeros((3,1)).T, maxdist_to_graph=10, min_safe_dist=self.min_planning_odist, max_safe_dist=self.max_planning_odist, safety_weight = self.safety_weight)  
+                rm = NavRoadmap(path_home_pts)
+                self.set_roadmap(rm)
+
             self.roadmap_following_iter()
 
     # # #}
@@ -786,91 +839,6 @@ class LocalNavigatorModule:
 
     # --ROADMAP STUFF
 
-    def dumb_forward_flight_rrt_iter(self):# # #{
-        # print("--DUMB FORWARD FLIGHT RRT ITER")
-        if self.mapper.spheremap is None:
-            return
-
-        # GET CURRENT POS IN ODOM FRAME
-        # latest_odom_msg = self.odom_buffer[-1]
-        # T_global_to_imu = self.odom_msg_to_transformation_matrix(latest_odom_msg)
-        # T_global_to_fcu = T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
-        T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
-        T_smap_origin_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
-
-        pos_fcu_in_global_frame = T_global_to_fcu[:3, 3]
-
-
-        # RANDOM HOME PLANNING
-        self.findPathAstarInSubmap(self.mapper.spheremap, np.zeros((3,1)).T, T_smap_origin_to_fcu[:3, 3].T, maxdist_to_graph=10, min_safe_dist=self.min_planning_odist, max_safe_dist=self.max_planning_odist,safety_weight = self.safety_weight)  
-
-        # GET START VP IN SMAP FRAME
-        # T_smap_frame_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
-        T_smap_frame_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
-        heading_in_smap_frame = transformationMatrixToHeading(T_smap_frame_to_fcu)
-        planning_start_vp = Viewpoint(T_smap_frame_to_fcu[:3, 3], heading_in_smap_frame)
-
-        planning_time = 1.0
-        current_maxodist = self.max_planning_odist
-        current_minodist = self.min_planning_odist
-
-        # CHECK ROOMBA DIR
-        roombatime =  self.roomba_progress_max_time_per_step*2 if self.roomba_doubletime else self.roomba_progress_max_time_per_step
-        if self.roomba_progress_lasttime is None or (rospy.get_rostime() - self.roomba_progress_lasttime).to_sec() > roombatime:
-            print("--RRR------CHANGING ROOMBA DIR!")
-            theta = np.random.rand(1) * 2 * np.pi
-            dirvec2 = np.array([np.cos(theta), np.sin(theta)]).reshape((1,2))
-
-            if not self.roomba_dirvec_global is None:
-                # FIND VERY DIFFERENT DIR!
-                while dirvec2.dot(self.roomba_dirvec_global[0,:2]) > 0.1:
-                    print("RAND")
-                    theta = np.random.rand(1) * 2 * np.pi
-                    dirvec2 = np.array([np.cos(theta), np.sin(theta)]).reshape((1,2))
-
-            self.roomba_dirvec_global = np.zeros((1,3))
-            self.roomba_dirvec_global[0, :2] = dirvec2 
-            print(self.roomba_dirvec_global)
-
-            self.roomba_progress_lasttime = rospy.get_rostime()
-            self.roomba_motion_start_global = pos_fcu_in_global_frame
-
-            self.roomba_progress_index = 0
-        else:
-            # Update roomba progress
-            current_progress = np.linalg.norm(pos_fcu_in_global_frame - self.roomba_motion_start_global)
-            current_index = current_progress // self.roomba_progress_step
-            if current_index > self.roomba_progress_index:
-                print("--RRR------ROOMBA PROGRESS TO INDEX " + str(current_index))
-                self.roomba_progress_index = current_index 
-                self.roomba_progress_lasttime = rospy.get_rostime()
-            # TODO - replanning totally trigger
-
-        arrow_pos = copy.deepcopy(pos_fcu_in_global_frame)
-        arrow_pos[2] += 10
-        # self.visualize_arrow(arrow_pos.flatten(), (arrow_pos + self.roomba_dirvec_global*5).flatten(), r=1, g=0.5, marker_idx=0)
-
-        if not self.current_goal_vp_global is None:
-            # VISUALZIE GOAL
-            arrow_pos = self.current_goal_vp_global.position.flatten()
-            ghd = self.current_goal_vp_global.heading
-            arrow_pos2 = arrow_pos + np.array([np.cos(ghd), np.sin(ghd), 0]) * 2
-            self.visualize_arrow(arrow_pos, arrow_pos2, r=0.7, g=0.7, marker_idx=2)
-
-            # CHECK IF REACHED
-            dist_to_goal = np.linalg.norm(pos_fcu_in_global_frame - self.current_goal_vp_global.position)
-            # print("DIST FROM GOAL:")
-            # print(dist_to_goal)
-            if dist_to_goal < self.reaching_dist:
-                print("-------- GOAL REACHED! ----------------")
-                self.current_goal_vp_global = None
-
-
-        evading_obstacle = False
-        enhancing_path = False
-        return
-    # # #}
-
     def roadmap_following_iter(self):# # #{
         if self.mapper.spheremap is None:
             return
@@ -900,7 +868,7 @@ class LocalNavigatorModule:
 
         roadmap_len = self.roadmap.points.shape[0]
         i = self.roadmap_index + 1
-        while i < self.roadmap_len:
+        while i < roadmap_len:
             pos = self.roadmap.points[i, :]
             dist = np.linalg.norm(current_pos - pos)
             if dist < carrot_dist:
@@ -908,10 +876,11 @@ class LocalNavigatorModule:
                 print("ROADMAP - increased carrot index to " + str(i))
                 # TODO - if intermittent goals have some vp req, you must pass it too
                 self.last_carrot_update = rospy.Time.now()
+            i += 1
         # # #}
 
         # CHECK IF END REACHED AND CAN RAISE SUCCESS FLAG# #{
-        goal_pos = self.roadmap.points[roadmap_len-1, :]
+        goal_pos = self.roadmap.points[roadmap_len-1, :].reshape((1,3))
         goal_heading = self.roadmap.headings[roadmap_len-1]
 
         goal_dist = np.linalg.norm(current_pos - goal_pos)
@@ -921,6 +890,8 @@ class LocalNavigatorModule:
             heading_dif = np.abs(np.unwrap(goal_heading - current_heading))
             if heading_dif > self.reaching_angle:
                 heading_reached = False
+        else:
+            goal_heading = np.array([current_heading])
 
         if goal_dist < self.reaching_dist and heading_reached:
             self.roadmap_navigation_success = True
@@ -938,9 +909,10 @@ class LocalNavigatorModule:
         planning_time = 1
         planning_start_vp = Viewpoint(current_pos, current_heading)
         future_pts, future_headings, relative_times = self.get_future_predicted_trajectory_global_frame()
+        enhancing_path = True
 
         if not future_pts is None:
-            future_pts_dists = np.linalg.norm(future_pts - pos_fcu_in_global_frame, axis=1)
+            future_pts_dists = np.linalg.norm(future_pts - current_pos, axis=1)
             unsafe_idxs, odists = self.find_unsafe_pt_idxs_on_global_path(future_pts, future_headings, self.safety_replanning_trigger_odist, -1)
             if unsafe_idxs.size > 0:
 
@@ -958,7 +930,7 @@ class LocalNavigatorModule:
                     print("FUTURE PTS:")
                     print(future_pts)
                     print("FCU POS:")
-                    print(pos_fcu_in_global_frame)
+                    print(current_pos)
                     print("TIME TO UNSAFETY: " + str(time_to_unsafety) +" / " + str(triggering_time))
 
                     planning_time = time_to_unsafety * 0.5
@@ -1023,6 +995,8 @@ class LocalNavigatorModule:
             trusted_submap_idxs = [len(self.mapper.mchunk.submaps) - 1]
 
         # TRANSFORM GOAL VP TO SPHEREMAP COORDS
+        print("SHAPEZ")
+        print(goal_pos.shape)
         goal_vp_smap_pos, goal_vp_smap_heading = transformViewpoints(goal_pos, goal_heading, np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin))
 
         # COMPUTE THE RRT PATH
@@ -1103,7 +1077,7 @@ class LocalNavigatorModule:
     def exploration_logic(self):# # #{
 
         T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
-        current_vp = Viewpoint(T_global_to_fcu) 
+        current_vp = Viewpoint(T=T_global_to_fcu) 
 
         # IF CURRENT VP BECAME UNREACHABLE, TRIGGER RE-SELECTION
         if self.exploration_state == 'global':

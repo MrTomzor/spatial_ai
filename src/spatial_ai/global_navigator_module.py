@@ -151,7 +151,7 @@ class GlobalNavigatorModule:
         self.planning_enabled = rospy.get_param("global_nav/enabled")
         self.testing_mchunk_filename = rospy.get_param("global_nav/testing_mchunk_filename")
         mchunk_filepath = rospkg.RosPack().get_path('spatial_ai') + "/memories/" + self.testing_mchunk_filename
-        self.test_mchunk = CoherentSpatialMemoryChunk.load(mchunk_filepath)
+        # self.test_mchunk = CoherentSpatialMemoryChunk.load(mchunk_filepath)
 
         # PLANNING PARAMS
 
