@@ -111,10 +111,10 @@ class LocalNavigatorModule:
         self.predicted_trajectory_pts_global = None
 
         # PLANNING PARAMS
-        self.global_roadmap = None
-        self.global_roadmap_index = None
-        self.global_roadmap_len = None
+        self.roadmap = None
+        self.roadmap_index = None
         self.roadmap_start_time = None
+        self.roadmap_failing_time = 10
 
         self.local_nav_start_time = rospy.get_rostime()
         self.local_reaching_dist = 3
@@ -874,16 +874,18 @@ class LocalNavigatorModule:
     def roadmap_following_iter(self):# # #{
         if self.mapper.spheremap is None:
             return
+        if self.roadmap is None:
+            return
+        if self.roadmap_navigation_failed:
+            return
 
-        # GET CURRENT POS IN ODOM FRAME
+        # GET CURRENT POS IN ODOM FRAME, GET PLANNING TIME# #{
         T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
         T_smap_origin_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
 
         current_pos = T_global_to_fcu[:3, 3].T
         current_heading = transformationMatrixToHeading(T_global_to_fcu)
 
-        # GET START VP IN SMAP FRAME
-        # T_smap_frame_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_imu @ np.linalg.inv(self.T_fcu_to_imu)
         T_smap_frame_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
         heading_in_smap_frame = transformationMatrixToHeading(T_smap_frame_to_fcu)
         planning_start_vp = Viewpoint(T_smap_frame_to_fcu[:3, 3], heading_in_smap_frame)
@@ -891,12 +893,9 @@ class LocalNavigatorModule:
         planning_time = 1.0
         current_maxodist = self.max_planning_odist
         current_minodist = self.min_planning_odist
+        # # #}
 
-        if self.roadmap is None:
-            return
-
-
-        # UPDATE CARROT GOAL
+        # UPDATE CARROT GOAL# #{
         carrot_dist = 10
 
         roadmap_len = self.roadmap.points.shape[0]
@@ -908,9 +907,10 @@ class LocalNavigatorModule:
                 self.roadmap_index = i
                 print("ROADMAP - increased carrot index to " + str(i))
                 # TODO - if intermittent goals have some vp req, you must pass it too
+                self.last_carrot_update = rospy.Time.now()
+        # # #}
 
-
-        # CHECK IF END REACHED AND CAN RAISE SUCCESS FLAG
+        # CHECK IF END REACHED AND CAN RAISE SUCCESS FLAG# #{
         goal_pos = self.roadmap.points[roadmap_len-1, :]
         goal_heading = self.roadmap.headings[roadmap_len-1]
 
@@ -924,14 +924,16 @@ class LocalNavigatorModule:
 
         if goal_dist < self.reaching_dist and heading_reached:
             self.roadmap_navigation_success = True
+        # # #}
 
+        # CHECK IF NOT PROGRESSING FOR A LONG TIME# #{
+        if (rospy.Time.now() - self.last_carrot_update).to_sec() > self.roadmap_failing_time:
+            print("ROADMAP - not progressing for a long time, setting as failed!")
+            self.roadmap_navigation_failed = True
+            return
+        # # #}
 
-        # CHECK IF NOT PROGRESSING FOR A LONG TIME (TODO)
-        # TODO
-
-
-
-        # CHECK SAFETY OF TRAJECTORY!# #{
+        # CHECK SAFETY OF TRAJECTORY! AND IF UNSAFE, SELECT NEW PLANNING TIME# #{
         # GET RELEVANT PTS IN PREDICTED TRAJ!
         planning_time = 1
         planning_start_vp = Viewpoint(current_pos, current_heading)
@@ -974,11 +976,11 @@ class LocalNavigatorModule:
                     if not np.any(after_planning_time):
                         print("PLANNING TIME IS LONGER THAN PREDICTED TRAJ! SHORTENING IT AND PLANNING FROM CURRENT POS IN SMAP FRAME!")
                         planning_time *= 0.5
-                    else:
-                        start_idx = np.where(after_planning_time)[0][0]
-                        print("PLANNING FROM VP OF INDEX " + str(start_idx) + " AT DIST " + str(future_pts_dists[start_idx]))
-                        startpos_smap_frame, startheading_smap_frame = transformViewpoints(future_pts[start_idx, :].reshape((1,3)), np.array([future_headings[start_idx]]), np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin))
-                        planning_start_vp = Viewpoint(startpos_smap_frame, startheading_smap_frame[0])
+                    # else:
+                    #     start_idx = np.where(after_planning_time)[0][0]
+                    #     print("PLANNING FROM VP OF INDEX " + str(start_idx) + " AT DIST " + str(future_pts_dists[start_idx]))
+                    #     startpos_smap_frame, startheading_smap_frame = transformViewpoints(future_pts[start_idx, :].reshape((1,3)), np.array([future_headings[start_idx]]), np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin))
+                    #     planning_start_vp = Viewpoint(startpos_smap_frame, startheading_smap_frame[0])
                     evading_obstacle = True
                 # TODO - replaning to goal trigger. If failed -> replanning to any other goal. If failed -> evasive maneuvers n wait!
                 else:
@@ -994,11 +996,23 @@ class LocalNavigatorModule:
             # print("replanning for enhancing path")
             enhancing_path = True
         # # #}
-        
 
         # IF TIME TO PERIODICALLY REPLAN / PREDICTED TRAJ UNSAFE / CARROT GOAL MOVED A LOT, COMPUTE NEW PATH TO CURRENT CARROT AND SEND IT
         if enhancing_path and (rospy.Time.now() - self.last_path_send_time).to_sec() < 4:
             return
+
+        # GET THE START POSE ALONG PREDICTED TRAJECTORY UP TO planning_time IN THE FUTURE
+        if not future_pts is None:
+            after_planning_time = relative_times > planning_time + 0.2
+            start_idx = None
+            if not np.any(after_planning_time):
+                start_idx = relative_times.size - 1
+                pass
+            else:
+                start_idx = np.where(after_planning_time)[0][0]
+            print("ROADMAP - HAVE FUTURE PTS, PLANNING FROM VP OF INDEX " + str(start_idx) + " AT DIST " + str(future_pts_dists[start_idx]))
+            startpos_smap_frame, startheading_smap_frame = transformViewpoints(future_pts[start_idx, :].reshape((1,3)), np.array([future_headings[start_idx]]), np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin))
+            planning_start_vp = Viewpoint(startpos_smap_frame, startheading_smap_frame[0])
 
         # FIND PATH TO GOAL
         best_path_pts = None
@@ -1060,6 +1074,7 @@ class LocalNavigatorModule:
         self.roadmap_navigation_success = False
         self.roadmap_index = 0
         self.roadmap = roadmap
+        self.last_carrot_update = rospy.Time.now()
     # # #}
 
     def stop_following_roadmap_and_stop(self):# # #{
