@@ -662,6 +662,8 @@ class LocalNavigatorModule:
                 pos_fcu_in_global_frame = T_global_to_fcu[:3, 3]
 
                 path_home_pts = self.findPathAstarInSubmap(self.mapper.spheremap, T_smap_origin_to_fcu[:3, 3].T, np.zeros((3,1)).T, maxdist_to_graph=10, min_safe_dist=self.min_planning_odist, max_safe_dist=self.max_planning_odist, safety_weight = self.safety_weight)  
+                path_home_pts = transformPoints(path_home_pts, self.mapper.spheremap.T_global_to_own_origin)
+
                 rm = NavRoadmap(path_home_pts)
                 self.set_roadmap(rm)
 
@@ -864,7 +866,7 @@ class LocalNavigatorModule:
         # # #}
 
         # UPDATE CARROT GOAL# #{
-        carrot_dist = 10
+        carrot_dist = 15
 
         roadmap_len = self.roadmap.points.shape[0]
         i = self.roadmap_index + 1
@@ -877,11 +879,15 @@ class LocalNavigatorModule:
                 # TODO - if intermittent goals have some vp req, you must pass it too
                 self.last_carrot_update = rospy.Time.now()
             i += 1
+
+        arrow_pos = self.roadmap.points[self.roadmap_index, :].flatten() - np.array([0,0,10]).flatten()
+        arrow_pos2 = self.roadmap.points[self.roadmap_index, :].flatten()
+        self.visualize_arrow(arrow_pos, arrow_pos2, r=0.5,g=0.5, scale=0.5, marker_idx=42)
         # # #}
 
         # CHECK IF END REACHED AND CAN RAISE SUCCESS FLAG# #{
-        goal_pos = self.roadmap.points[roadmap_len-1, :].reshape((1,3))
-        goal_heading = self.roadmap.headings[roadmap_len-1]
+        goal_pos = self.roadmap.points[self.roadmap_index, :].reshape((1,3))
+        goal_heading = self.roadmap.headings[self.roadmap_index]
 
         goal_dist = np.linalg.norm(current_pos - goal_pos)
         heading_reached = True
@@ -998,6 +1004,10 @@ class LocalNavigatorModule:
         print("SHAPEZ")
         print(goal_pos.shape)
         goal_vp_smap_pos, goal_vp_smap_heading = transformViewpoints(goal_pos, goal_heading, np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin))
+        print("GOAL IN SMAP FRAME:")
+        print(goal_vp_smap_pos)
+        print("GOAL IN ODOM FRAME:")
+        print(goal_pos)
 
         # COMPUTE THE RRT PATH
         best_path_pts, best_path_headings = self.find_paths_rrt(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist, mode = 'to_goal', goal_vp_smap = Viewpoint(goal_vp_smap_pos, goal_vp_smap_heading), max_step_size = self.path_step_size, other_submap_idxs = trusted_submap_idxs)
