@@ -133,7 +133,7 @@ class LocalNavigatorModule:
         self.current_goal_vp_pathfinding_times = 0
 
         self.fspace_bonus_mod = 2
-        self.safety_weight = 3
+        self.safety_weight = rospy.get_param("local_nav/safety_weight")
 
         # ROOMBA PARAMS
         self.roomba_progress_lasttime = None
@@ -283,36 +283,10 @@ class LocalNavigatorModule:
             connectable_indices = np.where(connectable_mask)[0]
 
             # COMPUTE COST TO MOVE FROM NEAREST NODE TO THIS
-            # travelcosts = dists[connectable_mask]
             dirvecs = (new_node_pos - tree_pos[connectable_mask, :])
-            # print("KURVA")
-            # print(tree_pos.shape)
-            # print(tree_headings.shape)
-            # print(new_node_pos.shape)
-            # print(tree_pos[connectable_mask, :].shape)
-            # print(np.sum(connectable_mask))
             potential_headings = np.arctan2(dirvecs[:, 1], dirvecs[:,0])
-            # print("DVECS:")
-            # print(dirvecs.shape)
-            # potential_headings = np.arctan2(-dirvecs[:, 0], dirvecs[:,2])
-
-            # for i in range(dirvecs.shape[0]):
-            #     print("dirvec:")
-            #     print(dirvecs[i,:])
-            #     print("HEADING: " + str(potential_headings[i]))
-
-            # print("POT HEADINGS:")
-            # print(potential_headings)
-            # print(potential_headings.shape)
-
-            # print("TREE HEADINGS (masked)")
-            # print(tree_headings[connectable_mask])
-            # print(tree_headings[connectable_mask].shape)
 
             heading_difs = (np.unwrap(potential_headings.flatten() - tree_headings[connectable_mask].flatten()))
-            # print("HEADING DIFS 1st")
-            # print(heading_difs)
-            # print(heading_difs.shape)
 
             # CLAMP HEADING DIFS!
             heading_overshoot_ratios = (np.abs(heading_difs) / dists[connectable_mask]) / self.max_heading_change_per_m 
@@ -320,13 +294,6 @@ class LocalNavigatorModule:
             # print("OVERSHOOT MASK: " + str(np.sum(overshoot_mask)) + "/" + str(np.size(overshoot_mask)))
             heading_difs[overshoot_mask] = heading_difs[overshoot_mask] / heading_overshoot_ratios[overshoot_mask]
             potential_headings = np.unwrap(tree_headings[connectable_mask].flatten() + heading_difs) 
-
-            # print("HEADING DIFS")
-            # print(heading_difs)
-            # print(heading_difs.shape)
-            # print("UNWRAP:")
-            # print(potential_headings)
-            # print(potential_headings.shape)
 
             # safety_costs = np.array([self.compute_safety_cost(odists, dists[idx]) for idx in connectable_indices]).flatten() * self.safety_weight
             safety_costs = self.compute_safety_cost(new_node_odist, min_odist, max_odist) * dists[connectable_mask] * self.safety_weight
