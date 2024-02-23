@@ -153,7 +153,7 @@ class LocalNavigatorModule:
 
     # --PLANNING CORE
 
-    def find_paths_rrt(self, start_vp, visualize = True, max_comp_time=0.5, max_step_size = 0.5, max_spread_dist=30, min_odist = 0.1, max_odist = 0.5, max_iter = 700006969420, goal_vp_smap=None, p_greedy = 0.3, mode='find_goals', other_submap_idxs = None):# # #{
+    def find_paths_rrt(self, start_vp, visualize = True, max_comp_time=0.5, max_step_size = 0.5, max_spread_dist=15, min_odist = 0.1, max_odist = 0.5, max_iter = 700006969420, goal_vp_smap=None, p_greedy = 0.3, mode='find_goals', other_submap_idxs = None):# # #{
         print("RRT START:")
         print(start_vp.position)
         print(start_vp.heading)
@@ -173,7 +173,7 @@ class LocalNavigatorModule:
 
             
 
-        bounds = np.ones((1,3)) * max_spread_dist
+        bounds = np.ones((1,3)) * max_spread_dist * 2
         # bounds += 10
 
         epicenter = start_vp.position 
@@ -214,7 +214,7 @@ class LocalNavigatorModule:
             n_iters += 1
 
             # SAMPLE PT IN SPACE
-            sampling_goal_pt = (np.random.rand(1, 3)*2 - np.ones((1,3))) * bounds * 0.6  + epicenter
+            sampling_goal_pt = (np.random.rand(1, 3)*2 - np.ones((1,3))) * bounds * 0.5  + epicenter
             if not (goal_vp_smap is None) and np.random.rand() < p_greedy:
                 sampling_goal_pt = goal_vp_smap.position
 
@@ -307,9 +307,6 @@ class LocalNavigatorModule:
             new_node_parent_idx = connectable_indices[new_node_parent_idx2]
 
             # CHECK IF ODOM PTS VISIBLE
-            # print("AAA")
-            # print(new_node_pos.shape)
-            # print(newnode_heading.shape)
             T_smap_orig_to_head_fcu = posAndHeadingToMatrix(new_node_pos, newnode_heading)
             T_smap_orig_to_head_cam = T_smap_orig_to_head_fcu @ T_fcu_to_cam 
             T_head_cam_to_smap_orig = np.linalg.inv(T_smap_orig_to_head_cam)
@@ -339,11 +336,6 @@ class LocalNavigatorModule:
             # CHECK IF CAN REWIRE
             do_rewiring = False
             if do_rewiring and n_connectable > 1:
-                # connectable_mask[new_node_parent_idx] = False
-                # connectable_indices = np.where(connectable_mask)
-                # print("N CONNECT: " + str(n_connectable))
-                # print(travelcosts.shape)
-
                 new_total_costs = newnode_total_cost + travelcosts
                 difs_from_old_cost = new_total_costs - (total_costs[:(n_nodes-1)])[connectable_mask] 
 
@@ -594,7 +586,8 @@ class LocalNavigatorModule:
 
             for neighbor_index in conns:
                 euclid_dist = np.linalg.norm(smap.points[current_index] - smap.points[neighbor_index])
-                tentative_g = g_score[current_index] + euclid_dist
+                safety_cost = self.compute_safety_cost(smap.radii[neighbor_index], min_safe_dist, max_safe_dist) * euclid_dist * self.safety_weight
+                tentative_g = g_score[current_index] + euclid_dist + safety_cost
 
                 if neighbor_index not in g_score or tentative_g < g_score[neighbor_index]:
                     g_score[neighbor_index] = tentative_g
@@ -977,7 +970,8 @@ class LocalNavigatorModule:
         print(goal_pos)
 
         # COMPUTE THE RRT PATH
-        best_path_pts, best_path_headings = self.find_paths_rrt(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist, mode = 'to_goal', goal_vp_smap = Viewpoint(goal_vp_smap_pos, goal_vp_smap_heading), max_step_size = self.path_step_size, other_submap_idxs = trusted_submap_idxs)
+        max_spread_dist = np.linalg.norm(planning_start_vp.position - goal_vp_smap_pos) * 1.2
+        best_path_pts, best_path_headings = self.find_paths_rrt(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist, mode = 'to_goal', goal_vp_smap = Viewpoint(goal_vp_smap_pos, goal_vp_smap_heading), max_step_size = self.path_step_size, other_submap_idxs = trusted_submap_idxs, max_spread_dist=max_spread_dist)
 
         if best_path_pts is None:
             print("NO PATH FOUND TO GOAL VP! TRY: " + str(self.current_goal_vp_pathfinding_times) + "/" + str(self.max_goal_vp_pathfinding_times))
@@ -1195,7 +1189,7 @@ class LocalNavigatorModule:
             line_marker.type = Marker.LINE_LIST
             line_marker.action = Marker.ADD
             # line_marker.scale.x = 0.04 * self.marker_scale  # Line width
-            line_marker.scale.x = 0.4 * self.marker_scale  # Line width
+            line_marker.scale.x = 0.2 * self.marker_scale  # Line width
             line_marker.color.a = 1.0  # Alpha
             line_marker.color.r = 0.5  
             line_marker.color.b = 1.0  
