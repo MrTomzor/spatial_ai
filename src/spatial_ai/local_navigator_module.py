@@ -189,7 +189,7 @@ class LocalNavigatorModule:
         # IF NO ALIGNING AT END NEEDED, JUST FLY
         if not goal_vp_smap.use_heading:
             final_pts = np.concatenate((raw_pts, goal_vp_smap.position), axis = 0)
-            final_headings = np.concatenate((front_flight_headings, front_flight_headings[-1]), axis = 0)
+            final_headings = np.concatenate((front_flight_headings.flatten(), np.array([front_flight_headings[-1]]).flatten()))
             return final_pts, final_headings
 
         # ITERATIVELY CHECK HOW CLOSE TO THE GOAL YOU SHOULD ROTATE TO GOAL HEADING
@@ -207,6 +207,7 @@ class LocalNavigatorModule:
             heading_dif_to_goal = np.unwrap(goal_heading - front_flight_headings[start_idx])
             if np.abs(heading_dif_to_goal) < summed_dist * self.max_heading_change_per_m:
                 turning_start_idx = start_idx
+                break
 
         if turning_start_idx is None:
             print("ASTAR SENDABLE PATH PLANNING -- cant find good index to start turning!!!")
@@ -1056,7 +1057,7 @@ class LocalNavigatorModule:
         print("SHAPEZ")
         print(goal_pos.shape)
         goal_vp_smap_pos, goal_vp_smap_heading = transformViewpoints(goal_pos, goal_heading, np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin))
-        goal_vp_smap_heading = np.array([0]).flatten() # TODO - remove
+        goal_vp_smap_heading = None # TODO - remove
         print("GOAL IN SMAP FRAME:")
         print(goal_vp_smap_pos)
         print("GOAL IN ODOM FRAME:")
