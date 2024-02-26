@@ -68,7 +68,7 @@ from scipy.spatial.transform import Rotation as R
 # #}
 
 
-class NavRoadmap:
+class NavRoadmap:# # #{
     def __init__(self, points, headings):
         self.points = points
         self.headings = headings
@@ -76,6 +76,7 @@ class NavRoadmap:
     def __init__(self, points):
         self.points = points
         self.headings = np.full((points.shape[0]), None).flatten()
+# # #}
 
 class LocalNavigatorModule:
     def __init__(self, mapper, ptraj_topic, output_path_topic):# # #{
@@ -153,7 +154,97 @@ class LocalNavigatorModule:
 
     # --PLANNING CORE
 
-    def find_paths_rrt(self, start_vp, visualize = True, max_comp_time=0.5, max_step_size = 0.5, max_spread_dist=15, min_odist = 0.1, max_odist = 0.5, max_iter = 700006969420, goal_vp_smap=None, p_greedy = 0.3, mode='find_goals', other_submap_idxs = None):# # #{
+    def find_headingpath_astar_smap_frame(self, planning_start_vp, max_comp_time, min_odist, max_odist, goal_vp_smap, constant_heading_states_end = 0):# # #{
+        # FIND PATH WITHOUT HEADINGS USING ASTAR ON SMAP
+        # TODO
+        raw_pts = self.findPathAstarInSubmap(self.mapper.spheremap, planning_start_vp.position, goal_vp_smap.position, maxdist_to_graph=10, min_safe_dist=self.min_planning_odist, max_safe_dist=self.max_planning_odist, safety_weight = self.safety_weight)
+        if raw_pts is None:
+            return None, None
+        n_pts = raw_pts.shape[0]
+
+        # FIND HEADINGS FOR THE PATH THAT WOULD SUFFICE ALL CONSTRAINTS
+
+        # SIMPLEST APPROACH - COMPUTE FRONT-FLYING HEADINGS, AND THEN GO FROM THE END AND ITERATIVELY TRY SHORTER TIMES WHEN TO START TURNING
+        # COMPUTE FRONT FLYING HEADINGS
+        front_flight_headings = np.full((n_pts), planning_start_vp.heading).flatten()
+        prev_pt = planning_start_vp.position
+        prev_heading = planning_start_vp.heading
+
+        for i in range(n_pts):
+            dirvec = (raw_pts[i] - prev_pt).flatten()
+            dist = np.linalg.norm(dirvec)
+
+            # CLAMP
+            front_heading = np.arctan2(dirvec[1], dirvec[0])
+            heading_dif = np.unwrap(np.array(front_heading).flatten() - np.array(prev_heading).flatten()) 
+
+            max_allowed_heading_change = self.max_heading_change_per_m * dist
+            if np.abs(heading_dif) > max_allowed_heading_change:
+                front_flight_headings[i] = np.unwrap(prev_heading + max_allowed_heading_change * np.sign(heading_dif))
+
+
+            prev_pt = raw_pts[i]
+            prev_heading = front_flight_headings[i]
+
+        # IF NO ALIGNING AT END NEEDED, JUST FLY
+        if not goal_vp_smap.use_heading:
+            final_pts = np.concatenate((raw_pts, goal_vp_smap.position), axis = 0)
+            final_headings = np.concatenate((front_flight_headings, front_flight_headings[-1]), axis = 0)
+            return final_pts, final_headings
+
+        # ITERATIVELY CHECK HOW CLOSE TO THE GOAL YOU SHOULD ROTATE TO GOAL HEADING
+        # TODO - is goal vp in path? NO!! ONLY THRUS SPHERES!!! n_pts-1 is idx of last sphere before goal!!!
+        turning_start_idx = None
+        goal_heading = goal_vp_smap.heading
+        prev_pt = goal_vp_smap.position
+        summed_dist = 0
+
+        for i in range(n_pts):
+            start_idx = n_pts - 1 - i
+            dist = np.linalg.norm(raw_pts[start_idx] - prev_pt)
+            summed_dist += dist
+
+            heading_dif_to_goal = np.unwrap(goal_heading - front_flight_headings[start_idx])
+            if np.abs(heading_dif_to_goal) < summed_dist * self.max_heading_change_per_m:
+                turning_start_idx = start_idx
+
+        if turning_start_idx is None:
+            print("ASTAR SENDABLE PATH PLANNING -- cant find good index to start turning!!!")
+            return None, None
+
+        print("ASTAR SENDABLE PATH PLANNING -- TURNING START IDX: " + str(turning_start_idx) + "/" + str(n_pts+1))
+
+        # NOW MODIFY THE HEADING CHANGES FROM TURNING START (if too soon, just stay at end heading!)
+        prev_pt = raw_pts[turning_start_idx]
+        prev_heading = front_flight_headings[turning_start_idx]
+        aligning_headings = front_flight_headings
+
+        for i in range(turning_start_idx+1, n_pts):
+            heading_dif_to_goal = np.unwrap(goal_heading - prev_heading)
+            dist = np.linalg.norm(raw_pts[i] - prev_pt)
+
+            # CLOSE ENOUGH
+            max_allowed_heading_change = self.max_heading_change_per_m * dist
+            if np.abs(heading_dif_to_goal) < max_allowed_heading_change:
+                aligning_headings[i:] = goal_heading
+                break
+
+            # ELSE, MOVE AS MUCH AS POSSIBLE TO THE GOAL HEADING
+            new_heading = np.unwrap(prev_heading + max_allowed_heading_change * np.sign(heading_dif_to_goal))
+            aligning_headings[i] = new_heading
+
+            prev_pt = raw_pts[i]
+            prev_heading = aligning_headings[i]
+
+        # ATTACH END VP
+        # TODO
+        final_pts = np.concatenate((raw_pts, goal_vp_smap.position), axis = 0)
+        final_headings = np.concatenate((aligning_headings, goal_vp_smap.heading), axis = 0)
+
+        return final_pts, final_headings
+    # # #}
+
+    def find_paths_rrt_smap_frame(self, start_vp, visualize = True, max_comp_time=0.5, max_step_size = 0.5, max_spread_dist=15, min_odist = 0.1, max_odist = 0.5, max_iter = 700006969420, goal_vp_smap=None, p_greedy = 0.3, mode='find_goals', other_submap_idxs = None):# # #{
         print("RRT START:")
         print(start_vp.position)
         print(start_vp.heading)
@@ -801,7 +892,7 @@ class LocalNavigatorModule:
 
     # --ROADMAP STUFF
 
-    def roadmap_following_iter(self):# # #{
+    def roadmap_following_iter(self, mode="astar"):# # #{
         if self.mapper.spheremap is None:
             return
         if self.roadmap is None:
@@ -875,7 +966,7 @@ class LocalNavigatorModule:
         planning_time = 1
         planning_start_vp = Viewpoint(current_pos, current_heading)
         future_pts, future_headings, relative_times = self.get_future_predicted_trajectory_global_frame()
-        enhancing_path = True
+        enhancing_path = False
 
         if not future_pts is None:
             future_pts_dists = np.linalg.norm(future_pts - current_pos, axis=1)
@@ -937,6 +1028,7 @@ class LocalNavigatorModule:
 
         # IF TIME TO PERIODICALLY REPLAN / PREDICTED TRAJ UNSAFE / CARROT GOAL MOVED A LOT, COMPUTE NEW PATH TO CURRENT CARROT AND SEND IT
         if enhancing_path and (rospy.Time.now() - self.last_path_send_time).to_sec() < 4:
+        # if enhancing_path:
             return
 
         # GET THE START POSE ALONG PREDICTED TRAJECTORY UP TO planning_time IN THE FUTURE
@@ -964,15 +1056,23 @@ class LocalNavigatorModule:
         print("SHAPEZ")
         print(goal_pos.shape)
         goal_vp_smap_pos, goal_vp_smap_heading = transformViewpoints(goal_pos, goal_heading, np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin))
+        goal_vp_smap_heading = np.array([0]).flatten() # TODO - remove
         print("GOAL IN SMAP FRAME:")
         print(goal_vp_smap_pos)
         print("GOAL IN ODOM FRAME:")
         print(goal_pos)
 
-        # COMPUTE THE RRT PATH
-        max_spread_dist = np.linalg.norm(planning_start_vp.position - goal_vp_smap_pos) * 1.2
-        best_path_pts, best_path_headings = self.find_paths_rrt(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist, mode = 'to_goal', goal_vp_smap = Viewpoint(goal_vp_smap_pos, goal_vp_smap_heading), max_step_size = self.path_step_size, other_submap_idxs = trusted_submap_idxs, max_spread_dist=max_spread_dist)
+        # COMPUTE THE PATH
+        best_path_pts = None 
+        best_path_headings = None
 
+        if mode == "rrt":
+            max_spread_dist = np.linalg.norm(planning_start_vp.position - goal_vp_smap_pos) * 1.2
+            best_path_pts, best_path_headings = self.find_paths_rrt_smap_frame(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist, mode = 'to_goal', goal_vp_smap = Viewpoint(goal_vp_smap_pos, goal_vp_smap_heading), max_step_size = self.path_step_size, other_submap_idxs = trusted_submap_idxs, max_spread_dist=max_spread_dist)
+        elif mode == "astar":
+            best_path_pts, best_path_headings = self.find_headingpath_astar_smap_frame(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist, goal_vp_smap = Viewpoint(goal_vp_smap_pos, goal_vp_smap_heading))
+
+    
         if best_path_pts is None:
             print("NO PATH FOUND TO GOAL VP! TRY: " + str(self.current_goal_vp_pathfinding_times) + "/" + str(self.max_goal_vp_pathfinding_times))
             self.current_goal_vp_pathfinding_times += 1
@@ -1035,15 +1135,18 @@ class LocalNavigatorModule:
 
     # --EXPLORATION STUFF
 
-    def findBestGlobalGoal(self):
+    def findBestGlobalGoal(self):# # #{
         pass
+    # # #}
 
-    def getEquivalentGlobalViewpoints(self, vp):
+    def getEquivalentGlobalViewpoints(self, vp):# # #{
         return []
+    # # #}
 
-    def findLocalExplorationViewpoints(self):
-        # best_path_pts, best_path_headings = self.find_paths_rrt(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist, max_step_size = self.path_step_size, other_submap_idxs = trusted_submap_idxs)
+    def findLocalExplorationViewpoints(self):# # #{
+        best_path_pts, best_path_headings = self.find_paths_rrt_smap_frame(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist, max_step_size = self.path_step_size, other_submap_idxs = trusted_submap_idxs)
         pass
+    # # #}
 
     def exploration_logic(self):# # #{
 
