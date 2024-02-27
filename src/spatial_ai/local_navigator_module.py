@@ -979,17 +979,18 @@ class LocalNavigatorModule:
         goal_heading = self.roadmap.headings[self.roadmap_index]
 
         # TODO - fix better, just wanna align at end!
-        # if self.roadmap_index != roadmap_len-1:
-        #     goal_heading = None
-        goal_heading = None
+        if self.roadmap_index != roadmap_len-1:
+            goal_heading = None
 
         goal_dist = np.linalg.norm(current_pos - goal_pos)
         heading_reached = True
 
         if not goal_heading is None:
-            heading_dif = np.abs(np.unwrap(goal_heading - current_heading))
+            # heading_dif = np.abs(np.unwrap(np.array(goal_heading).flatten() - current_heading))
+            heading_dif = hdif(goal_heading - current_heading)
             if heading_dif > self.reaching_angle:
                 heading_reached = False
+            goal_heading = np.array([goal_heading]).flatten()
         else:
             goal_heading = np.array([current_heading])
 
@@ -1169,6 +1170,8 @@ class LocalNavigatorModule:
     def stop_following_roadmap_and_stop(self):# # #{
         # RESET ROADMAP STUFF
         self.roadmap = None
+        self.roadmap_navigation_failed = False
+        self.roadmap_navigation_success = False
         self.roadmap_index = 0
 
         # SEND CURRENT POSE AS REFERENCE
@@ -1284,16 +1287,24 @@ class LocalNavigatorModule:
         T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
         T_smap_origin_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
         current_vp_smap_frame = Viewpoint(T=T_smap_origin_to_fcu) 
+        current_vp_global_frame = Viewpoint(T=T_global_to_fcu) 
 
         if self.roadmap_navigation_failed:
-            print("ROADMAP NAV TO EXPLORATION GLOBAL GOAL FAILED, SWITCHING TO LOCAL EXPLO")
+            print("ROADMAP NAV TO EXPLORATION GLOBAL GOAL FAILED")
             self.stop_following_roadmap_and_stop()
             self.exploration_state == 'local'
             return
 
         elif self.roadmap_navigation_success:
             # TODO - MARK NEARBY VPS AS VISITED
-            pass
+            is_blocked, by_who = self.isViewpointBlockedByExplorationGoals(current_vp_global_frame)
+            if not is_blocked:
+                print("WARN!!! SUCCESSFUL NAV BUT NO EXPLO GOALS HERE!!")
+            else:
+                for i in range(by_who.size):
+                    by_who[i].num_observations += 1
+            self.roadmap = None
+
 
         if self.roadmap is None:
             # FIND A* PATHS TO ALL KNOWN GOALS
@@ -1301,8 +1312,8 @@ class LocalNavigatorModule:
 
             # IF NONE FOUND, SWITCH TO LOCAL SEARCH AND TRY SEARCHING HERE (todo -increase counter)
             if global_goal_roadmap is None:
-                self.tryAddingGoalsNearby()
-                self.visualize_exploration_goals()
+                # self.tryAddingGoalsNearby()
+                # self.visualize_exploration_goals()
                 # TODO - search for nearby goals, N times
                 # TODO - counter++
                 return
@@ -1634,10 +1645,12 @@ class LocalNavigatorModule:
             marker.scale.y = scale *2.0
             marker.scale.z = scale *1.0
 
+            mod = (self.exploration_goals[i].num_observations * 1.0) / self.goal_max_obsvs
             marker.color.a = 1
-            marker.color.r = 1
-            marker.color.g = 1
+            marker.color.r = 1.0 - mod * 0.9
+            marker.color.g = 1.0 - mod * 0.9
             marker.color.b = 0
+
 
             map_heading = self.exploration_goals[i].viewpoint.heading
             pt = self.exploration_goals[i].viewpoint.position
