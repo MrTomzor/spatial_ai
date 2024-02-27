@@ -32,7 +32,7 @@ local_nav:
   path_abandon_time: 8
 
   clearing_dist: 4
-  reaching_dist: 4
+  reaching_dist: 2
   out_path_resolution: 0.5
 
 global_nav:

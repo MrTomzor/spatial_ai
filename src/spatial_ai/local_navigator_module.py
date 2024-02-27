@@ -994,11 +994,12 @@ class LocalNavigatorModule:
             goal_heading = np.array([current_heading])
 
         if goal_dist < self.reaching_dist and heading_reached:
+            print("-----------------------ROADMAP NAVIGATION SUCCESS----------------------")
             self.roadmap_navigation_success = True
         # # #}
 
         # CHECK IF NOT PROGRESSING FOR A LONG TIME# #{
-        if (rospy.Time.now() - self.last_carrot_update).to_sec() > self.roadmap_failing_time:
+        if (rospy.Time.now() - self.last_carrot_update).to_sec() > self.roadmap_failing_time and not self.roadmap_navigation_success:
             print("ROADMAP - not progressing for a long time, setting as failed!")
             self.roadmap_navigation_failed = True
             return
@@ -1172,7 +1173,8 @@ class LocalNavigatorModule:
 
         # SEND CURRENT POSE AS REFERENCE
         T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
-        self.send_path_to_trajectory_generator(T_global_to_fcu[:3,3].T, [transformationMatrixToHeading(T_global_to_fcu)])
+        # self.send_path_to_trajectory_generator(T_global_to_fcu[:3,3].T.reshape((1,3)), [transformationMatrixToHeading(T_global_to_fcu)])
+        print(" KINDA STOPPING ")
     # # #}
 
 
