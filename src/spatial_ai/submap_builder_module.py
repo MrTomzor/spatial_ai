@@ -598,10 +598,12 @@ class SubmapBuilderModule:
             if self.verbose_submap_construction:
                 print("NEW SPHERE UPDATE time: " + str((new_update_dt ) * 1000) +  " ms")
 
+            # CONNECTIONS UPDATE AND SPARSIFICATION# #{
             self.spheremap.updateConnections(np.arange(n_spheres_before_adding, n_spheres_before_adding+n_spheres_to_add))
             new_idxs = np.arange(self.spheremap.radii.size)[self.spheremap.radii.size - n_spheres_to_add : self.spheremap.radii.size]
             self.spheremap.removeSpheresIfRedundant(new_idxs)
             self.spheremap.labelSpheresByConnectivity()
+# # #}
 
             connectivity_final_dt = time.time() - interm_time
             interm_time = time.time()

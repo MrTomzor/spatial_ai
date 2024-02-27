@@ -78,6 +78,12 @@ class NavRoadmap:# # #{
         self.headings = np.full((points.shape[0]), None).flatten()
 # # #}
 
+class ExplorationGoal:
+    def __init__(self, vp):
+        self.viewpoint = vp
+        self.num_observations = 0
+
+
 class LocalNavigatorModule:
     def __init__(self, mapper, ptraj_topic, output_path_topic):# # #{
 
@@ -95,6 +101,7 @@ class LocalNavigatorModule:
         self.path_planning_vis_pub = rospy.Publisher('path_planning_vis', MarkerArray, queue_size=10)
         self.global_path_planning_vis_pub = rospy.Publisher('path_planning_vis_global', MarkerArray, queue_size=10)
         self.unsorted_vis_pub = rospy.Publisher('unsorted_markers', MarkerArray, queue_size=10)
+        self.exploration_goals_vis_pub = rospy.Publisher('exploration_goals', MarkerArray, queue_size=10)
 
         # PARAMS
         self.planning_enabled = rospy.get_param("local_nav/enabled")
@@ -120,6 +127,8 @@ class LocalNavigatorModule:
         self.roadmap_index = None
         self.roadmap_start_time = None
         self.roadmap_failing_time = 10
+        self.roadmap_navigation_failed  = False
+        self.roadmap_navigation_success = False
 
         self.local_nav_start_time = rospy.get_rostime()
         self.local_reaching_dist = 3
@@ -149,6 +158,9 @@ class LocalNavigatorModule:
 
         # EXPLO PARAMS
         self.exploration_state = "local"
+        self.exploration_goals = None
+        self.goal_blocking_dist = 10
+        self.goal_blocking_angle = np.pi/2
         
         # # #}
 
@@ -474,8 +486,8 @@ class LocalNavigatorModule:
         print("N HEADS: " + str(heads_indices.size))
 
         # GET GLOBAL AND FCU FRAME POINTS
-        # heads_global, heads_headings_global = transformViewpoints(tree_pos[heads_indices, :], tree_headings[heads_indices], self.mapper.spheremap.T_global_to_own_origin)
-        heads_global = transformPoints(tree_pos[heads_indices, :], self.mapper.spheremap.T_global_to_own_origin)
+        heads_global, heads_headings_global = transformViewpoints(tree_pos[heads_indices, :], tree_headings[heads_indices], self.mapper.spheremap.T_global_to_own_origin)
+        # heads_global = transformPoints(tree_pos[heads_indices, :], self.mapper.spheremap.T_global_to_own_origin)
         T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
 
         print("CUR FCU IN GLOBAL:")
@@ -577,6 +589,20 @@ class LocalNavigatorModule:
             heads_values[reaching_goal] = acceptance_thresh + 1
             heads_scores[reaching_goal] = -total_costs[heads_indices[reaching_goal]]
 # # #}
+
+        # IF MODE IS TO FIND GOALS, RETURN ALL END VPS THAT ARE ACCEPTABLE, AND NOT BLOCKED
+        if mode == 'find_goals':
+            acceptable_goals = []
+            for i in range(heads_values.size):
+                if heads_values[i] < acceptance_thresh:
+                    continue
+                # CHECK IF NOT BLOCKED BY ANY
+                potential_vp = Viewpoint(heads_global[i, :], heads_headings_global[i])
+
+                # ADD TO RES
+                acceptable_goals.append(potential_vp)
+            print("RRT FOUND " + str(len(acceptable_goals)) + " ACCEPTABLE NEW GOALS")
+            return acceptable_goals
 
         best_head = np.argmax(heads_scores)
         print("BEST HEAD: " + str(best_head))
@@ -704,8 +730,14 @@ class LocalNavigatorModule:
             return
         with ScopedLock(self.mapper.spheremap_mutex):
             # self.dumb_forward_flight_rrt_iter()
+            T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
+            T_smap_origin_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
+            current_vp_smap_frame = Viewpoint(T=T_smap_origin_to_fcu) 
 
             # self.exploration_logic()
+
+            self.tryAddingGoalsNearby(current_vp_smap_frame)
+            self.visualize_exploration_goals()
 
             if self.roadmap is None or self.roadmap_navigation_failed:
                 print("TMP - pathfinding home")
@@ -1137,86 +1169,111 @@ class LocalNavigatorModule:
     # --EXPLORATION STUFF
 
     def findBestGlobalGoal(self):# # #{
-        pass
+        return None, None
     # # #}
 
-    def getEquivalentGlobalViewpoints(self, vp):# # #{
-        return []
+    def isViewpointBlockedByExplorationGoals(self, vp):# # #{
+        if self.exploration_goals is None:
+            return False, None
+
+        explo_points = np.array([goal.viewpoint.position for goal in self.exploration_goals])
+        explo_headings = np.array([goal.viewpoint.heading for goal in self.exploration_goals]).flatten()
+
+        dists = np.linalg.norm(vp.position - explo_points, axis = 1).flatten()
+
+        print("IN HEADING")
+        print(vp.heading)
+        # heading_difs = np.unwrap(explo_headings - vp.heading)
+        heading_difs = hdif(explo_headings - vp.heading)
+
+        print("HDIFS1:")
+        print(heading_difs)
+        gp = heading_difs > np.pi
+        lp = heading_difs < -np.pi
+        heading_difs[gp] = np.pi * 2 - heading_difs[gp] 
+        heading_difs[lp] = np.pi * 2 + heading_difs[lp] 
+        print(np.sum(gp))
+        print(np.sum(lp))
+        print("HDIFS2:")
+        print(heading_difs)
+
+        # print("PES")
+        # print(explo_points.shape)
+        # print(dists.shape)
+        # print(self.exploration_goals.shape)
+        # print(dists)
+
+        distfailed = dists < self.goal_blocking_dist
+        headingfailed = np.abs(heading_difs) < self.goal_blocking_angle
+        print("DF " + str(np.sum(distfailed)))
+        print("HF " + str(np.sum(headingfailed)))
+
+        blocking_mask = np.logical_and(distfailed, headingfailed)
+
+        if not np.any(blocking_mask):
+            return False, None
+
+        blocking_goals = self.exploration_goals[blocking_mask]
+        print("BLOCKED BY: " + str(np.sum(blocking_mask)))
+        return True, blocking_goals
+
     # # #}
 
-    def findLocalExplorationViewpoints(self):# # #{
-        best_path_pts, best_path_headings = self.find_paths_rrt_smap_frame(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist, max_step_size = self.path_step_size, other_submap_idxs = trusted_submap_idxs)
-        pass
+    def tryAddingGoalsNearby(self, planning_start_vp, search_dist=30, planning_time=0.5):# # #{
+        frontier_vps = self.find_paths_rrt_smap_frame(planning_start_vp, max_comp_time = planning_time, min_odist = self.min_planning_odist, max_odist = self.max_planning_odist, max_step_size = self.path_step_size, max_spread_dist = search_dist, mode = 'find_goals')
+        n_added = 0
+
+
+
+        if len(frontier_vps ) > 0:
+            acceptable_goals = []
+            n_added = 0
+            for i in range(len(frontier_vps)):
+                is_blocked, by_who = self.isViewpointBlockedByExplorationGoals(frontier_vps[i])
+                if is_blocked:
+                    continue
+                new_goal = ExplorationGoal(frontier_vps[i])
+                if self.exploration_goals is None:
+                    self.exploration_goals = np.array([new_goal], dtype=object)
+                else:
+                    self.exploration_goals = np.concatenate((self.exploration_goals, np.array([new_goal], dtype=object)))
+                n_added += 1
+            if n_added == 0:
+                return 0
+            print("EXPLORATION - now have num of goals: " + str(self.exploration_goals.size))
+        return n_added
     # # #}
 
     def exploration_logic(self):# # #{
-
         T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
-        current_vp = Viewpoint(T=T_global_to_fcu) 
+        T_smap_origin_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
+        current_vp_smap_frame = Viewpoint(T=T_smap_origin_to_fcu) 
 
-        # IF CURRENT VP BECAME UNREACHABLE, TRIGGER RE-SELECTION
-        if self.exploration_state == 'global':
-            if self.roadmap is None:
-                # FIND A* PATHS TO ALL KNOWN GOALS
-                global_goal_roadmap, dist = self.findBestGlobalGoal()
+        if self.roadmap_navigation_failed:
+            print("ROADMAP NAV TO EXPLORATION GLOBAL GOAL FAILED, SWITCHING TO LOCAL EXPLO")
+            self.stop_following_roadmap_and_stop()
+            self.exploration_state == 'local'
+            return
 
-                # IF NONE FOUND, SWITCH TO LOCAL SEARCH AND TRY SEARCHING HERE (todo -increase counter)
-                if global_goal_roadmap is None:
-                    self.exploration_state == 'local'
-                    # TODO - add counter
-                    return
+        elif self.roadmap_navigation_success:
+            # TODO - MARK NEARBY VPS AS VISITED
+            pass
 
-                # IF SOME IS GOOD, SET IT AS NAVGOAL AND FUCKING GO TO IT
-                self.set_roadmap(global_goal_roadmap)
+        if self.roadmap is None:
+            # FIND A* PATHS TO ALL KNOWN GOALS
+            global_goal_roadmap, dist = self.findBestGlobalGoal()
 
-            elif self.roadmap_navigation_failed:
-                print("ROADMAP NAV TO EXPLORATION GLOBAL GOAL FAILED, SWITCHING TO LOCAL EXPLO")
-                self.stop_following_roadmap_and_stop()
-                self.exploration_state == 'local'
+            # IF NONE FOUND, SWITCH TO LOCAL SEARCH AND TRY SEARCHING HERE (todo -increase counter)
+            if global_goal_roadmap is None:
+                self.tryAddingGoalsNearby()
+                self.visualize_exploration_goals()
+                # TODO - search for nearby goals, N times
+                # TODO - counter++
                 return
 
-        elif self.exploration_state == 'local':
-            # IF NAVIGATING TO SOME GOAL AND DONE, WILL SELECT NEW ONE. OTHERWISE CONTINUE
-            if not self.roadmap is None:
-                if self.roadmap_navigation_failed:
-                    print("EXPLO LOCAL - NAV FAILED, STOPPING AND SEARCHING")
-                    self.stop_following_roadmap_and_stop()
-                    # TODO - add counter
+            # IF SOME IS GOOD, SET IT AS NAVGOAL AND FUCKING GO TO IT
+            self.set_roadmap(global_goal_roadmap)
 
-                elif self.roadmap_navigation_success:
-                    # WHEN REACHED SOME LOCAL VIEWING POSE - ADD OBSERVATION COUNTER TO THE GOAL VPS!!
-                    print("EXPLO LOCAL - NAV SUCCESS, ADDING OBSVS")
-                    thus_observed_global_vps = self.getEquivalentGlobalViewpoints(current_vp)
-                    for vp in thus_observed_global_vps:
-                        vp.num_observations += 1
-                else:
-                    return
-
-            # SEARCH FOR LOCAL GOALS NOT BLOCKED BY ALREADY SAVED GOALS
-            print("EXPLO LOCAL - SEARCHING FOR GOALS")
-            local_vps, values, path_costs, tree = self.findLocalExplorationViewpoints()
-
-            # IF NONE FOUND, GOTO GLOBAL TO SEARCH FOR GLOBAL ONES TOO
-            if viewpoints is None:
-                print("EXPLO LOCAL - NONE OK FOUND")
-                self.exploration_state == 'global'
-                return
-
-            # SELECT BEST ONE
-            print("EXPLO LOCAL - FOUND OK VPS: " + str(len(local_vps)))
-            best_vp_index = np.argmin(values - path_costs)
-            best_vp = local_vps[best_vp_index]
-
-            # SAVE ALL
-            self.saveGlobalExplorationViewpoints(local_vps)
-
-            # SET THE BEST ONE AS CURRENT NAVGOAL
-            print("EXPLO LOCAL - SETTING BEST VP AS GOAL")
-            localgoal_roadmap = NavRoadmap(best_vp.position, best_vp.heading)
-            self.set_roadmap(localgoal_roadmap)
-
-        else:
-            print("ERROR - UNKNOWN EXPLORATION STATE!!!!!!!!!!!!!!!!!")
     # # #}
 
     # --UTILS
@@ -1520,5 +1577,43 @@ class LocalNavigatorModule:
 
         pub.publish(marker_array)
 # # #}
+
+    def visualize_exploration_goals(self, scale = 1):# # #{
+        marker_array = MarkerArray()
+        if self.exploration_goals is None:
+            return
+        frame_id = self.odom_frame
+
+        for i in range(self.exploration_goals.size):
+            marker = Marker()
+            marker.header.frame_id = frame_id
+            marker.header.stamp = rospy.Time.now()
+            marker.type = Marker.ARROW
+            marker.action = Marker.ADD
+            marker.id = i
+
+            # Set the scale
+            marker.scale.x = scale *0.4
+            marker.scale.y = scale *2.0
+            marker.scale.z = scale *1.0
+
+            marker.color.a = 1
+            marker.color.r = 1
+            marker.color.g = 1
+            marker.color.b = 0
+
+            map_heading = self.exploration_goals[i].viewpoint.heading
+            pt = self.exploration_goals[i].viewpoint.position
+
+            arrowlen = 3
+            xbonus = arrowlen * np.cos(map_heading)
+            ybonus = arrowlen * np.sin(map_heading)
+            points_msg = [Point(x=pt[0], y=pt[1], z=pt[2]), Point(x=pt[0]+xbonus, y=pt[1]+ybonus, z=pt[2])]
+            marker.points = points_msg
+
+            # Add the marker to the MarkerArray
+            marker_array.markers.append(marker)
+
+        self.exploration_goals_vis_pub.publish(marker_array)# # #}
 
 

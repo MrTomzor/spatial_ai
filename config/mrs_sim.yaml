@@ -4,7 +4,7 @@ platform: "bluefox_uav_gazebo"
 
 local_mapping:
   using_external_slam_pts: True
-  verbose_submap_construction: True
+  verbose_submap_construction: False
 
   keyframe_dist_thr: 4
   slam_filtering_enabled: False

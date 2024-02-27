@@ -113,6 +113,9 @@ def transformPoints(pts, T):
     res = res / res[M, :] # unhomogenize
     return res[:M, :].T
 
+def hdif(vals):
+    return (vals + np.pi) % (2 * np.pi) - np.pi
+
 def transformViewpoints(pts, headings, T):
     # pts = Nx3 matrix, T = transformation matrix to apply
     res = np.concatenate((pts.T, np.full((1, pts.shape[0]), 1)))
