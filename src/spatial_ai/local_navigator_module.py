@@ -69,13 +69,15 @@ from scipy.spatial.transform import Rotation as R
 
 
 class NavRoadmap:# # #{
-    def __init__(self, points, headings):
+    def __init__(self, points, headings = None):
         self.points = points
         self.headings = headings
+        if headings is None:
+            self.headings = np.full((points.shape[0]), None).flatten()
 
-    def __init__(self, points):
-        self.points = points
-        self.headings = np.full((points.shape[0]), None).flatten()
+    # def __init__(self, points):
+    #     self.points = points
+    #     self.headings = np.full((points.shape[0]), None).flatten()
 # # #}
 
 class ExplorationGoal:
@@ -161,6 +163,7 @@ class LocalNavigatorModule:
         self.exploration_goals = None
         self.goal_blocking_dist = 10
         self.goal_blocking_angle = np.pi/2
+        self.goal_max_obsvs = 1
         
         # # #}
 
@@ -169,9 +172,9 @@ class LocalNavigatorModule:
     def find_headingpath_astar_smap_frame(self, planning_start_vp, max_comp_time, min_odist, max_odist, goal_vp_smap, constant_heading_states_end = 0):# # #{
         # FIND PATH WITHOUT HEADINGS USING ASTAR ON SMAP
         # TODO
-        raw_pts = self.findPathAstarInSubmap(self.mapper.spheremap, planning_start_vp.position, goal_vp_smap.position, maxdist_to_graph=10, min_safe_dist=self.min_planning_odist, max_safe_dist=self.max_planning_odist, safety_weight = self.safety_weight)
+        raw_pts, path_cost = self.findPathAstarInSubmap(self.mapper.spheremap, planning_start_vp.position, goal_vp_smap.position, maxdist_to_graph=10, min_safe_dist=self.min_planning_odist, max_safe_dist=self.max_planning_odist, safety_weight = self.safety_weight)
         if raw_pts is None:
-            return None, None
+            return None, None, None
         n_pts = raw_pts.shape[0]
 
         # FIND HEADINGS FOR THE PATH THAT WOULD SUFFICE ALL CONSTRAINTS
@@ -202,7 +205,7 @@ class LocalNavigatorModule:
         if not goal_vp_smap.use_heading:
             final_pts = np.concatenate((raw_pts, goal_vp_smap.position), axis = 0)
             final_headings = np.concatenate((front_flight_headings.flatten(), np.array([front_flight_headings[-1]]).flatten()))
-            return final_pts, final_headings
+            return final_pts, final_headings, path_cost
 
         # ITERATIVELY CHECK HOW CLOSE TO THE GOAL YOU SHOULD ROTATE TO GOAL HEADING
         # TODO - is goal vp in path? NO!! ONLY THRUS SPHERES!!! n_pts-1 is idx of last sphere before goal!!!
@@ -223,7 +226,7 @@ class LocalNavigatorModule:
 
         if turning_start_idx is None:
             print("ASTAR SENDABLE PATH PLANNING -- cant find good index to start turning!!!")
-            return None, None
+            return None, None, None
 
         print("ASTAR SENDABLE PATH PLANNING -- TURNING START IDX: " + str(turning_start_idx) + "/" + str(n_pts+1))
 
@@ -254,7 +257,7 @@ class LocalNavigatorModule:
         final_pts = np.concatenate((raw_pts, goal_vp_smap.position), axis = 0)
         final_headings = np.concatenate((aligning_headings, goal_vp_smap.heading), axis = 0)
 
-        return final_pts, final_headings
+        return final_pts, final_headings, path_cost
     # # #}
 
     def find_paths_rrt_smap_frame(self, start_vp, visualize = True, max_comp_time=0.5, max_step_size = 0.5, max_spread_dist=15, min_odist = 0.1, max_odist = 0.5, max_iter = 700006969420, goal_vp_smap=None, p_greedy = 0.3, mode='find_goals', other_submap_idxs = None):# # #{
@@ -644,7 +647,7 @@ class LocalNavigatorModule:
 
         if smap.points is None: 
             print("PATHFIND: MAP IS EMPTY!!!")
-            return None
+            return None, None
 
         # FIND NEAREST NODES TO START AND END
         dist_from_startpoint = np.linalg.norm((smap.points - startpoint), axis=1) - smap.radii
@@ -660,7 +663,7 @@ class LocalNavigatorModule:
             print(dist_from_endpoint[end_node_index])
             print("N SPHERES:")
             print(smap.points.shape[0])
-            return None
+            return None, None
         print("PATHFIND: node indices:")
         print(start_node_index)
         print(end_node_index)
@@ -718,11 +721,12 @@ class LocalNavigatorModule:
         print(path)
         print("N CLOSED NODES: " + str(len(closed_set.keys())))
 
+        if len(path) == 0:
+            return None, None
+
         self.visualize_trajectory(smap.points[np.array(path), :], smap.T_global_to_own_origin, headings=None, do_line=True, start=startpoint, goal=endpoint, pub=self.global_path_planning_vis_pub)
 
-        if len(path) == 0:
-            return None
-        return smap.points[np.array(path), :]
+        return smap.points[np.array(path), :], g_score[end_node_index]
 # # #}
 
     def planning_loop_iter(self):# # #{
@@ -734,22 +738,23 @@ class LocalNavigatorModule:
             T_smap_origin_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
             current_vp_smap_frame = Viewpoint(T=T_smap_origin_to_fcu) 
 
-            # self.exploration_logic()
-
             self.tryAddingGoalsNearby(current_vp_smap_frame)
             self.visualize_exploration_goals()
+            self.exploration_logic()
 
-            if self.roadmap is None or self.roadmap_navigation_failed:
-                print("TMP - pathfinding home")
-                T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
-                T_smap_origin_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
-                pos_fcu_in_global_frame = T_global_to_fcu[:3, 3]
+            # self.visualize_exploration_goals()
 
-                path_home_pts = self.findPathAstarInSubmap(self.mapper.spheremap, T_smap_origin_to_fcu[:3, 3].T, np.zeros((3,1)).T, maxdist_to_graph=10, min_safe_dist=self.min_planning_odist, max_safe_dist=self.max_planning_odist, safety_weight = self.safety_weight)  
-                path_home_pts = transformPoints(path_home_pts, self.mapper.spheremap.T_global_to_own_origin)
+            # if self.roadmap is None or self.roadmap_navigation_failed:
+            #     print("TMP - pathfinding home")
+            #     T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
+            #     T_smap_origin_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
+            #     pos_fcu_in_global_frame = T_global_to_fcu[:3, 3]
 
-                rm = NavRoadmap(path_home_pts)
-                self.set_roadmap(rm)
+            #     path_home_pts, path_cost = self.findPathAstarInSubmap(self.mapper.spheremap, T_smap_origin_to_fcu[:3, 3].T, np.zeros((3,1)).T, maxdist_to_graph=10, min_safe_dist=self.min_planning_odist, max_safe_dist=self.max_planning_odist, safety_weight = self.safety_weight)  
+            #     path_home_pts = transformPoints(path_home_pts, self.mapper.spheremap.T_global_to_own_origin)
+
+            #     rm = NavRoadmap(path_home_pts)
+            #     self.set_roadmap(rm)
 
             self.roadmap_following_iter()
 
@@ -973,6 +978,11 @@ class LocalNavigatorModule:
         goal_pos = self.roadmap.points[self.roadmap_index, :].reshape((1,3))
         goal_heading = self.roadmap.headings[self.roadmap_index]
 
+        # TODO - fix better, just wanna align at end!
+        # if self.roadmap_index != roadmap_len-1:
+        #     goal_heading = None
+        goal_heading = None
+
         goal_dist = np.linalg.norm(current_pos - goal_pos)
         heading_reached = True
 
@@ -1103,7 +1113,7 @@ class LocalNavigatorModule:
             max_spread_dist = np.linalg.norm(planning_start_vp.position - goal_vp_smap_pos) * 1.2
             best_path_pts, best_path_headings = self.find_paths_rrt_smap_frame(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist, mode = 'to_goal', goal_vp_smap = Viewpoint(goal_vp_smap_pos, goal_vp_smap_heading), max_step_size = self.path_step_size, other_submap_idxs = trusted_submap_idxs, max_spread_dist=max_spread_dist)
         elif mode == "astar":
-            best_path_pts, best_path_headings = self.find_headingpath_astar_smap_frame(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist, goal_vp_smap = Viewpoint(goal_vp_smap_pos, goal_vp_smap_heading))
+            best_path_pts, best_path_headings, path_cost = self.find_headingpath_astar_smap_frame(planning_start_vp , max_comp_time = planning_time, min_odist = current_minodist, max_odist = current_maxodist, goal_vp_smap = Viewpoint(goal_vp_smap_pos, goal_vp_smap_heading))
 
     
         if best_path_pts is None:
@@ -1168,8 +1178,49 @@ class LocalNavigatorModule:
 
     # --EXPLORATION STUFF
 
-    def findBestGlobalGoal(self):# # #{
-        return None, None
+    def getBestGoalRoadmap(self):# # #{
+        T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
+        T_smap_origin_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
+        current_vp_smap_frame = Viewpoint(T=T_smap_origin_to_fcu) 
+
+        if self.exploration_goals is None:
+            return None
+
+        n_tries = self.exploration_goals.size
+        paths_to_goals = []
+        paths_costs = []
+
+        for i in range(n_tries):
+            goal = self.exploration_goals[i]
+            if goal.num_observations >= self.goal_max_obsvs:
+                continue
+
+            # FIND PATH TO GOAL, SAVE IT AND COST, IF FOUND
+            # TRANSFORM GOAL TO SMAP FRAME
+            goal_pos_smap, goal_heading_smap = transformViewpoints(goal.viewpoint.position.reshape((1,3)), np.array([goal.viewpoint.heading]), np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin))
+            goal_vp_smap = Viewpoint(goal_pos_smap, goal_heading_smap)
+
+            # FIND HEADING PATH IF POSSIBLE
+            path_pts, path_headings, path_cost = self.find_headingpath_astar_smap_frame(current_vp_smap_frame , max_comp_time = 1, min_odist = self.min_planning_odist, max_odist = self.max_planning_odist, goal_vp_smap = goal_vp_smap)
+            if not path_pts is None:
+                paths_to_goals.append([path_pts, path_headings])
+                paths_costs.append(path_cost)
+
+        # IF NO VPS REACHABLE, RETURN 
+        if len(paths_to_goals) == 0:
+            return None
+
+        # RANK THE PATHS AND VPS
+        scores = np.array(paths_costs)
+        best_goal_idx = np.argmin(scores)
+        best_path_pts = paths_to_goals[best_goal_idx][0]
+        best_path_headings = paths_to_goals[best_goal_idx][1]
+
+        # TRANSFORMED BEST PATH TO GLOBAL FRAME
+        global_pts, global_headings = transformViewpoints(best_path_pts, best_path_headings, self.mapper.spheremap.T_global_to_own_origin)
+
+        # RETURN ROADMAP IN GLOBAL FRAME
+        return NavRoadmap(global_pts, global_headings)
     # # #}
 
     def isViewpointBlockedByExplorationGoals(self, vp):# # #{
@@ -1181,32 +1232,16 @@ class LocalNavigatorModule:
 
         dists = np.linalg.norm(vp.position - explo_points, axis = 1).flatten()
 
-        print("IN HEADING")
-        print(vp.heading)
         # heading_difs = np.unwrap(explo_headings - vp.heading)
         heading_difs = hdif(explo_headings - vp.heading)
 
-        print("HDIFS1:")
-        print(heading_difs)
         gp = heading_difs > np.pi
         lp = heading_difs < -np.pi
         heading_difs[gp] = np.pi * 2 - heading_difs[gp] 
         heading_difs[lp] = np.pi * 2 + heading_difs[lp] 
-        print(np.sum(gp))
-        print(np.sum(lp))
-        print("HDIFS2:")
-        print(heading_difs)
-
-        # print("PES")
-        # print(explo_points.shape)
-        # print(dists.shape)
-        # print(self.exploration_goals.shape)
-        # print(dists)
 
         distfailed = dists < self.goal_blocking_dist
         headingfailed = np.abs(heading_difs) < self.goal_blocking_angle
-        print("DF " + str(np.sum(distfailed)))
-        print("HF " + str(np.sum(headingfailed)))
 
         blocking_mask = np.logical_and(distfailed, headingfailed)
 
@@ -1214,7 +1249,6 @@ class LocalNavigatorModule:
             return False, None
 
         blocking_goals = self.exploration_goals[blocking_mask]
-        print("BLOCKED BY: " + str(np.sum(blocking_mask)))
         return True, blocking_goals
 
     # # #}
@@ -1261,7 +1295,7 @@ class LocalNavigatorModule:
 
         if self.roadmap is None:
             # FIND A* PATHS TO ALL KNOWN GOALS
-            global_goal_roadmap, dist = self.findBestGlobalGoal()
+            global_goal_roadmap = self.getBestGoalRoadmap()
 
             # IF NONE FOUND, SWITCH TO LOCAL SEARCH AND TRY SEARCHING HERE (todo -increase counter)
             if global_goal_roadmap is None:
@@ -1270,6 +1304,7 @@ class LocalNavigatorModule:
                 # TODO - search for nearby goals, N times
                 # TODO - counter++
                 return
+            print("EXPLORATION - SETTING NEW ROADMAP TO GOAL!!!")
 
             # IF SOME IS GOOD, SET IT AS NAVGOAL AND FUCKING GO TO IT
             self.set_roadmap(global_goal_roadmap)
