@@ -148,7 +148,8 @@ class SubmapBuilderModule:
 
             if self.verbose_submap_construction:
                 print("PCL MSG PROCESSING NOW")
-            comp_start_time = time.time()
+            update_start_time = time.time()
+            interm_time = time.time()
 
             # CHECK TRAVELED DIST
             if not self.spheremap is None:
@@ -305,6 +306,11 @@ class SubmapBuilderModule:
                 if len(self.mchunk.submaps) > 2:
                     self.saveEpisodeFull(None)
             # # #}
+            
+            start_comps_dt = (time.time() - interm_time)
+            interm_time = time.time()
+            if self.verbose_submap_construction:
+                print("START COMPS TIME: " + str(start_comps_dt))
 
             # COMPUTE VISIBLE FREESPACE MESH # #{
             # TRANSFORM SLAM PTS TO -----CAMERA FRAME---- AND COMPUTE THEIR PIXPOSITIONS
@@ -330,7 +336,6 @@ class SubmapBuilderModule:
             tri = Delaunay(pixpos)
 
             # CONSTRUCT OBSTACLE MESH
-            comp_mesh = time.time()
             obstacle_mesh = trimesh.Trimesh(vertices=positive_z_points.T, faces = tri.simplices)
 
             # CONSTRUCT POLYGON OF PIXPOSs OF VISIBLE SLAM PTS
@@ -360,8 +365,6 @@ class SubmapBuilderModule:
 
             # CONSTRUCT OBSTACLE POINT MESH AND QUERY
             obstacle_mesh_query = trimesh.proximity.ProximityQuery(obstacle_mesh)
-            comp_time = time.time() - comp_mesh
-
             # # #}
 
             # SAMPLE NEW FRONTIERS ALONG THE VISIBLE FREESPACE MESH# #{
@@ -377,8 +380,10 @@ class SubmapBuilderModule:
                 # fr_samples = fr_samples[fr_sample_odists > -0.1, :]
                 # print(fr_samples.shape)
 
+            meshing_dt = time.time() - interm_time
+            interm_time = time.time()
             if self.verbose_submap_construction:
-                print("MESHING time: " + str((comp_time) * 1000) +  " ms")
+                print("MESHING time: " + str((meshing_dt) * 1000) +  " ms")
             # # #}
 
             # UPDATE OLD SPHERES# #{
@@ -480,6 +485,11 @@ class SubmapBuilderModule:
                     # self.spheremap.removeNodes(np.where(idx_picker)[0])
             # # #}
             
+            old_update_dt = time.time() - interm_time
+            interm_time = time.time()
+            if self.verbose_submap_construction:
+                print("OLD SPHERE UPDATE time: " + str((old_update_dt ) * 1000) +  " ms")
+
             # TRY ADDING NEW SPHERES# #{
             # TODO fix - by raycasting!!!
             # TODO - better sampling to sample near UAV prioritized
@@ -574,7 +584,7 @@ class SubmapBuilderModule:
             self.spheremap.radii = np.concatenate((self.spheremap.radii.flatten(), mindists[new_sphere_idxs].flatten()))
             self.spheremap.connections = np.concatenate((self.spheremap.connections.flatten(), np.array([None for i in range(n_spheres_to_add)], dtype=object).flatten()))
             # # #}
-            
+
             # ADD SPHERE AT CURRENT POSITION!# #{
             pos_in_smap_frame = T_delta_odom[:3, 3].reshape((1,3)) 
             self.spheremap.points = np.concatenate((self.spheremap.points, pos_in_smap_frame))
@@ -583,17 +593,20 @@ class SubmapBuilderModule:
             n_spheres_to_add += 1
             # # #}
 
+            new_update_dt = time.time() - interm_time
+            interm_time = time.time()
+            if self.verbose_submap_construction:
+                print("NEW SPHERE UPDATE time: " + str((new_update_dt ) * 1000) +  " ms")
+
             self.spheremap.updateConnections(np.arange(n_spheres_before_adding, n_spheres_before_adding+n_spheres_to_add))
             new_idxs = np.arange(self.spheremap.radii.size)[self.spheremap.radii.size - n_spheres_to_add : self.spheremap.radii.size]
             self.spheremap.removeSpheresIfRedundant(new_idxs)
-
             self.spheremap.labelSpheresByConnectivity()
 
-            comp_time = time.time() - comp_start_time
-            print("SPHEREMAP integration time: " + str((comp_time) * 1000) +  " ms")
-
+            connectivity_final_dt = time.time() - interm_time
+            interm_time = time.time()
             if self.verbose_submap_construction:
-                print("N SPHERES: " + str(self.spheremap.points.shape[0]))
+                print("FINAL CONNECTIVITY UPDATE time: " + str((connectivity_final_dt) * 1000) +  " ms")
 
             comp_start_time = time.time()
             self.spheremap.spheres_kdtree = KDTree(self.spheremap.points)
@@ -616,7 +629,12 @@ class SubmapBuilderModule:
 
             comp_time = time.time() - comp_start_time
             if self.verbose_submap_construction:
-                print("SURFELS integration time: " + str((comp_time) * 1000) +  " ms")
+                print("SURFELS+FRONTIERS integration time: " + str((comp_time) * 1000) +  " ms")
+
+            # TOTAL COMPUTATION TIME
+            comp_time = time.time() - update_start_time
+            print("SPHEREMAP integration time: " + str((comp_time) * 1000) +  " ms")
+
 
             # VISUALIZE CURRENT SPHERES
             self.visualize_spheremap()
