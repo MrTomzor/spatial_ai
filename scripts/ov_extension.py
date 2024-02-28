@@ -10,7 +10,6 @@ import threading
 
 import heapq
 
-import dbow
 import rospkg
 
 from spatial_ai.common_spatial import *
