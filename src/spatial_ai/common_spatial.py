@@ -8,8 +8,8 @@ import pickle
 import rospy
 import tf.transformations as tfs
 from scipy.spatial.transform import Rotation as R
-import open3d 
-import open3d.t.pipelines.registration as treg
+# import open3d 
+# import open3d.t.pipelines.registration as treg
 from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Point
 

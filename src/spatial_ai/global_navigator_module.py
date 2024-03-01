@@ -9,7 +9,7 @@ import threading
 
 import heapq
 
-import dbow
+# import dbow
 import rospkg
 
 from spatial_ai.common_spatial import *
@@ -46,22 +46,22 @@ import copy
 from scipy.spatial.transform import Rotation
 import tf
 import tf2_ros
-import tf2_geometry_msgs  # for transforming geometry_msgs
+# import tf2_geometry_msgs  # for transforming geometry_msgs
 import tf.transformations as tfs
 from geometry_msgs.msg import TransformStamped
 
 
-import gtsam
-from gtsam import DoglegOptimizer
-import gtsam.utils.plot as gtsam_plot
+# import gtsam
+# from gtsam import DoglegOptimizer
+# import gtsam.utils.plot as gtsam_plot
 import matplotlib.pyplot as plt
 import numpy as np
-from gtsam.symbol_shorthand import L, X
-from gtsam.examples import SFMdata
+# from gtsam.symbol_shorthand import L, X
+# from gtsam.examples import SFMdata
 from mpl_toolkits.mplot3d import Axes3D  # pylint: disable=W0611
 
 import sys
-from termcolor import colored, cprint
+# from termcolor import colored, cprint
 
 from scipy.spatial.transform import Rotation as R
 
@@ -151,7 +151,7 @@ class GlobalNavigatorModule:
         self.planning_enabled = rospy.get_param("global_nav/enabled")
         self.testing_mchunk_filename = rospy.get_param("global_nav/testing_mchunk_filename")
         mchunk_filepath = rospkg.RosPack().get_path('spatial_ai') + "/memories/" + self.testing_mchunk_filename
-        self.test_mchunk = CoherentSpatialMemoryChunk.load(mchunk_filepath)
+        # self.test_mchunk = CoherentSpatialMemoryChunk.load(mchunk_filepath)
 
         # PLANNING PARAMS
 

@@ -6,7 +6,7 @@ import threading
 
 import heapq
 
-import dbow
+# import dbow
 import rospkg
 
 from spatial_ai.common_spatial import *
@@ -43,22 +43,22 @@ import copy
 from scipy.spatial.transform import Rotation
 import tf
 import tf2_ros
-import tf2_geometry_msgs  # for transforming geometry_msgs
+# import tf2_geometry_msgs  # for transforming geometry_msgs
 import tf.transformations as tfs
 from geometry_msgs.msg import TransformStamped
 
 
-import gtsam
-from gtsam import DoglegOptimizer
-import gtsam.utils.plot as gtsam_plot
+# import gtsam
+# from gtsam import DoglegOptimizer
+# import gtsam.utils.plot as gtsam_plot
 import matplotlib.pyplot as plt
 import numpy as np
-from gtsam.symbol_shorthand import L, X
-from gtsam.examples import SFMdata
+# from gtsam.symbol_shorthand import L, X
+# from gtsam.examples import SFMdata
 from mpl_toolkits.mplot3d import Axes3D  # pylint: disable=W0611
 
 import sys
-from termcolor import colored, cprint
+# from termcolor import colored, cprint
 
 class SubmapBuilderModule:
     def __init__(self, w, h, K, camera_frame_id, odom_orig_frame_id, fcu_frame, tf_listener, T_imu_to_cam, T_fcu_to_imu ):# # #{
