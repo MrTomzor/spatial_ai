@@ -194,11 +194,13 @@ class LocalNavigatorModule:
 
             # CLAMP
             front_heading = np.arctan2(dirvec[1], dirvec[0])
-            heading_dif = np.unwrap(np.array(front_heading).flatten() - np.array(prev_heading).flatten()) 
+            # heading_dif = np.unwrap(np.array(front_heading).flatten() - np.array(prev_heading).flatten()) 
+            heading_dif = hdif(np.array(front_heading).flatten() - np.array(prev_heading).flatten()) 
 
             max_allowed_heading_change = self.max_heading_change_per_m * dist
             if np.abs(heading_dif) > max_allowed_heading_change:
-                front_flight_headings[i] = np.unwrap(prev_heading + max_allowed_heading_change * np.sign(heading_dif))
+                # front_flight_headings[i] = np.unwrap(prev_heading + max_allowed_heading_change * np.sign(heading_dif))
+                front_flight_headings[i] = hdif(prev_heading + max_allowed_heading_change * np.sign(heading_dif))
 
 
             prev_pt = raw_pts[i]
@@ -208,12 +210,17 @@ class LocalNavigatorModule:
         if not goal_vp_smap.use_heading:
             final_pts = np.concatenate((raw_pts, goal_vp_smap.position), axis = 0)
             final_headings = np.concatenate((front_flight_headings.flatten(), np.array([front_flight_headings[-1]]).flatten()))
+            # print("FINAL HEADINGS:")
+            # print((final_headings * (180 / np.pi)).astype(int))
+            # print("GOAL HEADING:")
+            # print("NONE")
+
             return final_pts, final_headings, path_cost
 
         # ITERATIVELY CHECK HOW CLOSE TO THE GOAL YOU SHOULD ROTATE TO GOAL HEADING
         # TODO - is goal vp in path? NO!! ONLY THRUS SPHERES!!! n_pts-1 is idx of last sphere before goal!!!
         turning_start_idx = None
-        goal_heading = goal_vp_smap.heading
+        goal_heading = hdif(goal_vp_smap.heading)
         prev_pt = goal_vp_smap.position
         summed_dist = 0
 
@@ -222,7 +229,8 @@ class LocalNavigatorModule:
             dist = np.linalg.norm(raw_pts[start_idx] - prev_pt)
             summed_dist += dist
 
-            heading_dif_to_goal = np.unwrap(goal_heading - front_flight_headings[start_idx])
+            # heading_dif_to_goal = np.unwrap(goal_heading - front_flight_headings[start_idx])
+            heading_dif_to_goal = hdif(goal_heading - front_flight_headings[start_idx])
             if np.abs(heading_dif_to_goal) < summed_dist * self.max_heading_change_per_m:
                 turning_start_idx = start_idx
                 break
@@ -232,6 +240,7 @@ class LocalNavigatorModule:
             return None, None, None
 
         print("ASTAR SENDABLE PATH PLANNING -- TURNING START IDX: " + str(turning_start_idx) + "/" + str(n_pts+1))
+        # TODO - make it turn EVEN SOONER based on some dist criterion (so that we move a lot looking in the dir of the goal at the end)
 
         # NOW MODIFY THE HEADING CHANGES FROM TURNING START (if too soon, just stay at end heading!)
         prev_pt = raw_pts[turning_start_idx]
@@ -239,24 +248,25 @@ class LocalNavigatorModule:
         aligning_headings = front_flight_headings
 
         for i in range(turning_start_idx+1, n_pts):
-            heading_dif_to_goal = np.unwrap(goal_heading - prev_heading)
-            dist = np.linalg.norm(raw_pts[i] - prev_pt)
+            # heading_dif_to_goal = np.unwrap(goal_heading - prev_heading)
+            heading_dif_to_goal = hdif(goal_heading - prev_heading)
 
             # CLOSE ENOUGH
+            dist = np.linalg.norm(raw_pts[i] - prev_pt)
             max_allowed_heading_change = self.max_heading_change_per_m * dist
             if np.abs(heading_dif_to_goal) < max_allowed_heading_change:
                 aligning_headings[i:] = goal_heading
                 break
 
             # ELSE, MOVE AS MUCH AS POSSIBLE TO THE GOAL HEADING
-            new_heading = np.unwrap(prev_heading + max_allowed_heading_change * np.sign(heading_dif_to_goal))
+            # new_heading = np.unwrap(prev_heading + max_allowed_heading_change * np.sign(heading_dif_to_goal))
+            new_heading = hdif(prev_heading + max_allowed_heading_change * np.sign(heading_dif_to_goal))
             aligning_headings[i] = new_heading
 
             prev_pt = raw_pts[i]
             prev_heading = aligning_headings[i]
 
         # ATTACH END VP
-        # TODO
         final_pts = np.concatenate((raw_pts, goal_vp_smap.position), axis = 0)
         final_headings = np.concatenate((aligning_headings, goal_vp_smap.heading), axis = 0)
 
@@ -1134,7 +1144,7 @@ class LocalNavigatorModule:
         print("SHAPEZ")
         print(goal_pos.shape)
         goal_vp_smap_pos, goal_vp_smap_heading = transformViewpoints(goal_pos, goal_heading, np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin))
-        goal_vp_smap_heading = None # TODO - remove
+        # goal_vp_smap_heading = None # TODO - remove
         print("GOAL IN SMAP FRAME:")
         print(goal_vp_smap_pos)
         print("GOAL IN ODOM FRAME:")
