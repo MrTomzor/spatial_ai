@@ -88,6 +88,8 @@ class ExplorationGoal:
 class LocalNavigatorModule:
     def __init__(self, mapper, ptraj_topic, output_path_topic):# # #{
 
+        self.main_state = 'exploring'
+
         self.mapper = mapper
         self.odom_frame = mapper.odom_frame
         self.fcu_frame = mapper.fcu_frame
@@ -163,7 +165,6 @@ class LocalNavigatorModule:
         self.roomba_bounds_global = [-20, 20, -30, 30, -10, 20]
 
         # EXPLO PARAMS
-        self.exploration_state = "local"
         self.exploration_goals = None
         self.goal_blocking_dist = 10
         self.goal_blocking_angle = np.pi/2
@@ -746,30 +747,34 @@ class LocalNavigatorModule:
     def planning_loop_iter(self):# # #{
         if not self.planning_enabled:
             return
+
+        # TODO fix lock - copy map for using here?
         with ScopedLock(self.mapper.spheremap_mutex):
-            # self.dumb_forward_flight_rrt_iter()
-            T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
-            T_smap_origin_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
-            current_vp_smap_frame = Viewpoint(T=T_smap_origin_to_fcu) 
 
-            self.tryAddingGoalsNearby(current_vp_smap_frame)
-            self.visualize_exploration_goals()
-            self.exploration_logic()
+            # EXPLORATION LOGIC
+            if self.main_state == 'exploring':
+                T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
+                T_smap_origin_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
+                current_vp_smap_frame = Viewpoint(T=T_smap_origin_to_fcu) 
 
-            # self.visualize_exploration_goals()
+                self.tryAddingGoalsNearby(current_vp_smap_frame)
+                self.visualize_exploration_goals()
+                self.exploration_logic()
 
-            # if self.roadmap is None or self.roadmap_navigation_failed:
-            #     print("TMP - pathfinding home")
-            #     T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
-            #     T_smap_origin_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
-            #     pos_fcu_in_global_frame = T_global_to_fcu[:3, 3]
+            # HOMING LOGIC
+            elif self.main_state == 'homing':
+                if self.roadmap is None or self.roadmap_navigation_failed:
+                    T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
+                    T_smap_origin_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
+                    pos_fcu_in_global_frame = T_global_to_fcu[:3, 3]
 
-            #     path_home_pts, path_cost = self.findPathAstarInSubmap(self.mapper.spheremap, T_smap_origin_to_fcu[:3, 3].T, np.zeros((3,1)).T, maxdist_to_graph=10, min_safe_dist=self.min_planning_odist, max_safe_dist=self.max_planning_odist, safety_weight = self.safety_weight)  
-            #     path_home_pts = transformPoints(path_home_pts, self.mapper.spheremap.T_global_to_own_origin)
+                    path_home_pts, path_cost = self.findPathAstarInSubmap(self.mapper.spheremap, T_smap_origin_to_fcu[:3, 3].T, np.zeros((3,1)).T, maxdist_to_graph=10, min_safe_dist=self.min_planning_odist, max_safe_dist=self.max_planning_odist, safety_weight = self.safety_weight)  
+                    path_home_pts = transformPoints(path_home_pts, self.mapper.spheremap.T_global_to_own_origin)
 
-            #     rm = NavRoadmap(path_home_pts)
-            #     self.set_roadmap(rm)
+                    rm = NavRoadmap(path_home_pts)
+                    self.set_roadmap(rm)
 
+            # ALWAYS FOLLOW ROADMAP IF SOME SET
             self.roadmap_following_iter()
 
     # # #}
@@ -1014,6 +1019,10 @@ class LocalNavigatorModule:
 
         if goal_dist < self.reaching_dist and heading_reached:
             print("-----------------------ROADMAP NAVIGATION SUCCESS----------------------")
+            print("GOAL AND CURRENT POS: ")
+            print(goal_pos)
+            print(current_pos)
+            print("GOAL DIST: " + str(goal_dist))
             self.roadmap_navigation_success = True
         # # #}
 
@@ -1110,14 +1119,13 @@ class LocalNavigatorModule:
             notmovedtime = (rospy.Time.now() - self.last_mrs_path_moved_time).to_sec()
             if notmovedtime > self.mrs_path_failing_time or self.mrs_path_index == path_len:
                 print("MRS PATH - replanning")
-                print(i)
+                print(self.mrs_path_index)
                 print(path_len)
                 print(notmovedtime)
                 self.mrs_path = None
                 should_replan = True
         # # #}
 
-        # if enhancing_path and (rospy.Time.now() - self.mrs_path_send_time).to_sec() < 4:
         if not should_replan:
             return
 
@@ -1272,6 +1280,7 @@ class LocalNavigatorModule:
         # TRANSFORMED BEST PATH TO GLOBAL FRAME
         global_pts, global_headings = transformViewpoints(best_path_pts, best_path_headings, self.mapper.spheremap.T_global_to_own_origin)
         global_headings[:(global_headings.size-1)] = None # so that we only enforce heading on the last one!
+        # TODO - set only up to turning index!!! -> FUNCTION FOR TURNING INDEX!! (used also in theh eadingpath func)
 
         # RETURN ROADMAP IN GLOBAL FRAME
         return NavRoadmap(global_pts, global_headings)
@@ -1308,13 +1317,11 @@ class LocalNavigatorModule:
     # # #}
 
     def tryAddingGoalsNearby(self, planning_start_vp, search_dist=30, planning_time=0.5):# # #{
+
         frontier_vps = self.find_paths_rrt_smap_frame(planning_start_vp, max_comp_time = planning_time, min_odist = self.min_planning_odist, max_odist = self.max_planning_odist, max_step_size = self.path_step_size, max_spread_dist = search_dist, mode = 'find_goals')
         n_added = 0
 
-
-
         if len(frontier_vps ) > 0:
-            acceptable_goals = []
             n_added = 0
             for i in range(len(frontier_vps)):
                 is_blocked, by_who = self.isViewpointBlockedByExplorationGoals(frontier_vps[i])
@@ -1341,7 +1348,6 @@ class LocalNavigatorModule:
         if self.roadmap_navigation_failed:
             print("ROADMAP NAV TO EXPLORATION GLOBAL GOAL FAILED")
             self.stop_following_roadmap_and_stop()
-            self.exploration_state == 'local'
             return
 
         elif self.roadmap_navigation_success:
