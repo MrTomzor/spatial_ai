@@ -132,10 +132,14 @@ class LocalNavigatorModule:
         self.roadmap_navigation_success = False
 
         self.local_nav_start_time = rospy.get_rostime()
-        self.local_reaching_dist = 3
         self.traj_min_duration = 10
 
-        self.last_path_send_time = rospy.Time.now()
+        self.mrs_path_reaching_dist = 0.3
+        self.mrs_path = None
+        self.mrs_path_index = None
+        self.mrs_path_send_time = rospy.Time.now()
+        self.mrs_path_failing_time = 8
+
         self.current_goal_vp_global = None
         self.reaching_dist = rospy.get_param("local_nav/reaching_dist")
         self.reaching_angle = np.pi/2
@@ -921,7 +925,10 @@ class LocalNavigatorModule:
 
         self.path_for_trajectory_generator_pub.publish(msg)
         print("SENT PATH TO TRAJ GENERATOR, N PTS: " + str(n_pts))
-        self.last_path_send_time = rospy.Time.now()
+        self.mrs_path = path
+        self.mrs_path_index = 0
+        self.mrs_path_send_time = rospy.Time.now()
+        self.last_mrs_path_moved_time = rospy.Time.now()
 
         return None
 # # #}
@@ -1071,8 +1078,35 @@ class LocalNavigatorModule:
         # # #}
 
         # IF TIME TO PERIODICALLY REPLAN / PREDICTED TRAJ UNSAFE / CARROT GOAL MOVED A LOT, COMPUTE NEW PATH TO CURRENT CARROT AND SEND IT
-        if enhancing_path and (rospy.Time.now() - self.last_path_send_time).to_sec() < 4:
-        # if enhancing_path:
+        should_replan = False
+
+        # UPDATE MRS PATH PROGRESS (ON MRS PATH)# #{
+        if self.mrs_path is None:
+            should_replan = True
+        else:
+            path_len = self.mrs_path.shape[0]
+            i = self.mrs_path_index + 1
+            while i < path_len:
+                pos = self.mrs_path[i, :]
+                dist = np.linalg.norm(current_pos - pos)
+                if dist < self.mrs_path_reaching_dist:
+                    self.mrs_path_index = i
+                    print("MRS PATH - increased carrot index to " + str(i))
+                    self.last_mrs_path_moved_time = rospy.Time.now()
+                i += 1
+
+            notmovedtime = (rospy.Time.now() - self.last_mrs_path_moved_time).to_sec()
+            if notmovedtime > self.mrs_path_failing_time or self.mrs_path_index == path_len:
+                print("MRS PATH - replanning")
+                print(i)
+                print(path_len)
+                print(notmovedtime)
+                self.mrs_path = None
+                should_replan = True
+        # # #}
+
+        # if enhancing_path and (rospy.Time.now() - self.mrs_path_send_time).to_sec() < 4:
+        if not should_replan:
             return
 
         # GET THE START POSE ALONG PREDICTED TRAJECTORY UP TO planning_time IN THE FUTURE
