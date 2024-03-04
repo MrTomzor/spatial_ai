@@ -100,6 +100,7 @@ class LocalNavigatorModule:
 
         # VIS PUB
         self.path_planning_vis_pub = rospy.Publisher('path_planning_vis', MarkerArray, queue_size=10)
+        self.roadmap_vis_pub = rospy.Publisher('roadmap', MarkerArray, queue_size=10)
         self.global_path_planning_vis_pub = rospy.Publisher('path_planning_vis_global', MarkerArray, queue_size=10)
         self.unsorted_vis_pub = rospy.Publisher('unsorted_markers', MarkerArray, queue_size=10)
         self.exploration_goals_vis_pub = rospy.Publisher('exploration_goals', MarkerArray, queue_size=10)
@@ -737,7 +738,7 @@ class LocalNavigatorModule:
         if len(path) == 0:
             return None, None
 
-        self.visualize_trajectory(smap.points[np.array(path), :], smap.T_global_to_own_origin, headings=None, do_line=True, start=startpoint, goal=endpoint, pub=self.global_path_planning_vis_pub)
+        # self.visualize_trajectory(smap.points[np.array(path), :], smap.T_global_to_own_origin, headings=None, do_line=True, start=startpoint, goal=endpoint, pub=self.global_path_planning_vis_pub)
 
         return smap.points[np.array(path), :], g_score[end_node_index]
 # # #}
@@ -953,6 +954,9 @@ class LocalNavigatorModule:
             return
         if self.roadmap_navigation_failed:
             return
+
+        # VISUALIZE ROADMAP
+        self.visualize_trajectory(self.roadmap.points, np.eye(4), None, do_line = True, frame_id = self.odom_frame, pub = self.roadmap_vis_pub)
 
         # GET CURRENT POS IN ODOM FRAME, GET PLANNING TIME# #{
         T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
@@ -1197,7 +1201,8 @@ class LocalNavigatorModule:
         self.send_path_to_trajectory_generator(pts_fcu, headings_fcu)
         self.trajectory_following_moved_time = rospy.get_rostime()
 
-        self.visualize_trajectory(pts_global, np.eye(4), headings_global, do_line = False, frame_id = self.odom_frame, pub = self.path_planning_vis_pub)
+        # VISUALIZE SHORTPATH THAT FOLLOWS ROADMAP
+        self.visualize_trajectory(pts_global, np.eye(4), headings_global, do_line = False, frame_id = self.odom_frame, pub = self.path_planning_vis_pub, clr=[0,0,0])
 
     # # #}
 
@@ -1238,6 +1243,8 @@ class LocalNavigatorModule:
         paths_to_goals = []
         paths_costs = []
 
+
+        marker_id = 0
         for i in range(n_tries):
             goal = self.exploration_goals[i]
             if goal.num_observations >= self.goal_max_obsvs:
@@ -1250,9 +1257,13 @@ class LocalNavigatorModule:
 
             # FIND HEADING PATH IF POSSIBLE
             path_pts, path_headings, path_cost = self.find_headingpath_astar_smap_frame(current_vp_smap_frame , max_comp_time = 1, min_odist = self.min_planning_odist, max_odist = self.max_planning_odist, goal_vp_smap = goal_vp_smap)
+
             if not path_pts is None:
                 paths_to_goals.append([path_pts, path_headings])
                 paths_costs.append(path_cost)
+
+                # VISUALIZE PATHS TO POTENTIAL GOALS
+                marker_id = 1 + self.visualize_trajectory(path_pts, self.mapper.spheremap.T_global_to_own_origin, headings=None, do_line=True, pub=self.global_path_planning_vis_pub, marker_id = marker_id, clr = [0.7, 0.7, 0])
 
         # IF NO VPS REACHABLE, RETURN 
         if len(paths_to_goals) == 0:
@@ -1551,17 +1562,17 @@ class LocalNavigatorModule:
                 line_marker.points.append(point2)
             marker_array.markers.append(line_marker)
 
-        self.path_planning_vis_pub .publish(marker_array)
+        self.path_planning_vis_pub.publish(marker_array)
 # # #}
 
-    def visualize_trajectory(self,points_untransformed, T_vis, headings=None,do_line=True, start=None, goal=None, frame_id=None, pub=None):# # #{
+    def visualize_trajectory(self,points_untransformed, T_vis, headings=None,do_line=True, start=None, goal=None, frame_id=None, pub=None, marker_id = 0, clr = [0,0,0]):# # #{
         if frame_id is None:
             frame_id = self.odom_frame
         marker_array = MarkerArray()
         print(points_untransformed.shape)
         pts = transformPoints(points_untransformed, T_vis)
 
-        marker_id = 0
+        
         if not start is None:
             start = transformPoints(start.reshape((1,3)), T_vis)
             goal = transformPoints(goal.reshape((1,3)), T_vis)
@@ -1580,9 +1591,9 @@ class LocalNavigatorModule:
             marker.pose.position.y = start[0, 1]
             marker.pose.position.z = start[0, 2]
 
-            marker.scale.x = 2
-            marker.scale.y = 2
-            marker.scale.z = 2
+            marker.scale.x = 0.2
+            marker.scale.y = 0.2
+            marker.scale.z = 0.2
 
             marker.color.a = 1
             marker.color.r = 1.0
@@ -1613,8 +1624,9 @@ class LocalNavigatorModule:
             line_marker.action = Marker.ADD
             line_marker.scale.x = 0.1  # Line width
             line_marker.color.a = 1.0  # Alpha
-            line_marker.color.r = 0.0  
-            line_marker.color.b = 0.0  
+            line_marker.color.r = clr[0]  
+            line_marker.color.g = clr[1]  
+            line_marker.color.b = clr[2]  
 
             line_marker.id = marker_id
             marker_id += 1
@@ -1667,6 +1679,7 @@ class LocalNavigatorModule:
                 marker_array.markers.append(marker)
 
         pub.publish(marker_array)
+        return marker_array.markers[-1].id
 # # #}
 
     def visualize_exploration_goals(self, scale = 1):# # #{
