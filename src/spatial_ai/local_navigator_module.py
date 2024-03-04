@@ -1011,8 +1011,6 @@ class LocalNavigatorModule:
             if heading_dif > self.reaching_angle:
                 heading_reached = False
             goal_heading = np.array([goal_heading]).flatten()
-        else:
-            goal_heading = np.array([current_heading])
 
         if goal_dist < self.reaching_dist and heading_reached:
             print("-----------------------ROADMAP NAVIGATION SUCCESS----------------------")
@@ -1145,14 +1143,10 @@ class LocalNavigatorModule:
             trusted_submap_idxs = [len(self.mapper.mchunk.submaps) - 1]
 
         # TRANSFORM GOAL VP TO SPHEREMAP COORDS
-        print("SHAPEZ")
-        print(goal_pos.shape)
-        goal_vp_smap_pos, goal_vp_smap_heading = transformViewpoints(goal_pos, goal_heading, np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin))
-        # goal_vp_smap_heading = None # TODO - remove
-        print("GOAL IN SMAP FRAME:")
-        print(goal_vp_smap_pos)
-        print("GOAL IN ODOM FRAME:")
-        print(goal_pos)
+        tmp_heading = np.array([current_heading]).flatten() if goal_heading is None else goal_heading
+        goal_vp_smap_pos, goal_vp_smap_heading = transformViewpoints(goal_pos, tmp_heading, np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin))
+        if goal_heading is None:
+            goal_vp_smap_heading = None
 
         # COMPUTE THE PATH
         best_path_pts = None 
@@ -1277,6 +1271,7 @@ class LocalNavigatorModule:
 
         # TRANSFORMED BEST PATH TO GLOBAL FRAME
         global_pts, global_headings = transformViewpoints(best_path_pts, best_path_headings, self.mapper.spheremap.T_global_to_own_origin)
+        global_headings[:(global_headings.size-1)] = None # so that we only enforce heading on the last one!
 
         # RETURN ROADMAP IN GLOBAL FRAME
         return NavRoadmap(global_pts, global_headings)
