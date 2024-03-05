@@ -29,6 +29,24 @@ class ScopedLock:
         # print("UNLOCKING MUTEX")
         self.lock.release()
 
+class BoundingBox3D:
+    def __init__(self, pos=None, axes=None, minmaxvals=None):
+        self.pos = pos # shape (1, 3)
+        self.axes = axes # shape (3, 3)
+        self.minmaxvals = minmaxvals  # shape (2, 3)
+
+    def expand(self, dist):
+        self.minmaxvals[0, :] -= dist
+        self.minmaxvals[1, :] += dist
+
+    def pts_in_mask(self, pts):
+        pts_moved = pts - self.pos
+        pts_projected = (self.axes @ pts_moved.T).T
+        within_limits = np.logical_and(
+            np.all(pts_projected >= self.minmaxvals[0, :], axis=1),
+            np.all(pts_projected <= self.minmaxvals[1, :], axis=1)
+        )
+        return within_limits
 
 def getPixelPositions(pts, K):
     # pts = 3D points u wish to project
@@ -218,6 +236,7 @@ class SphereMap:
 
         self.min_radius = min_radius
         self.max_radius = init_radius# # #}
+        self.max_allowed_radius = 10
 
     def computeStorageMetrics(self):# # #{
         self.centroid = np.mean(self.points, axis=0)

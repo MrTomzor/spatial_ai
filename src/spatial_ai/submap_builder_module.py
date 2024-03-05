@@ -408,14 +408,31 @@ class SubmapBuilderModule:
                 # project sphere points to current camera frame
                 transformed_old_points  = transformPoints(self.spheremap.points, np.linalg.inv(T_orig_to_current_cam))
 
-                # Filter out spheres with z below zero or above the max z of obstacle points
-                # TODO - use dist rather than z for checking?
-                # TODO - take into account the sphere radii!!! some sphere can be very big
-                max_vis_z = np.max(positive_z_points[2, :])
-                z_ok_mask = np.logical_and(transformed_old_points[:, 2] > 0, transformed_old_points[:, 2] <= max_vis_z)
+                # GET UPDATABLE SPHERES 
+                # CONSTRUCT BBX
+                bbx = BoundingBox3D()
+                bbx.pos = np.zeros((1,3))
+                bbx.axes = np.eye(3)
+                # GET MIN AND MAX BY MIN AND MAX POLYHEDRON PTS + MAX RADIUS
+                # print("KOCKA")
+                # print(np.min(fovmesh_pts_with_orig.T, axis=0).shape)
+                bbx_min = np.min(fovmesh_pts_with_orig.T, axis=0).reshape((1,3))
+                bbx_max = np.max(fovmesh_pts_with_orig.T, axis=0).reshape((1,3))
+                bbx.minmaxvals = np.concatenate((bbx_min, bbx_max), axis = 0)
+                bbx.expand(self.spheremap.max_radius)
+
+                # USE BBX TO GET SPHERES THAT COULD BE UPDATED 
+
+                # max_vis_z = np.max(positive_z_points[2, :])
+                # z_ok_mask = np.logical_and(transformed_old_points[:, 2] > 0, transformed_old_points[:, 2] <= max_vis_z)
+                z_ok_mask = bbx.pts_in_mask(transformed_old_points)
+                print("KOCKA")
+                print(z_ok_mask.shape)
 
                 z_ok_points = transformed_old_points[z_ok_mask , :] # remove spheres with negative z
+                print(z_ok_points.shape)
                 worked_sphere_idxs = np.arange(n_spheres_old)[z_ok_mask ]
+
 
                 # check the ones that are projected into the 2D hull
                 old_pixpos = getPixelPositions(z_ok_points.T, self.K)
@@ -461,7 +478,7 @@ class SubmapBuilderModule:
                     old_spheres_fov_dists = np.abs(fov_mesh_query.signed_distance(visible_old_points))
                     pt_distmatrix = scipy.spatial.distance_matrix(visible_old_points, fovmesh_pts.T)
                     old_spheres_obs_dists = np.min(pt_distmatrix, axis = 1)
-                    upperbound_combined = np.minimum(old_spheres_fov_dists, old_spheres_obs_dists)
+                    upperbound_combined = np.minimum( np.minimum(old_spheres_fov_dists, old_spheres_obs_dists), self.spheremap.max_allowed_radius)
 
                     should_decrease_radius = old_spheres_obs_dists < self.spheremap.radii[worked_sphere_idxs]
                     spheres_in_visible_mesh = fov_mesh.contains(visible_old_points)
