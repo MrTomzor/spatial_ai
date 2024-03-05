@@ -612,9 +612,26 @@ class SubmapBuilderModule:
             comp_start_time = time.time()
             self.spheremap.spheres_kdtree = KDTree(self.spheremap.points)
             self.spheremap.max_radius = np.max(self.spheremap.radii)
+
             comp_time = time.time() - comp_start_time
             if self.verbose_submap_construction:
                 print("Sphere KDTree computation: " + str((comp_time) * 1000) +  " ms")
+
+            comp_start_time = time.time()
+            # self.spheremap.nodes_distmatrix = scipy.spatial.distance_matrix(self.spheremap.points, self.spheremap.points)
+            n_now_nodes = self.spheremap.radii.size
+            self.spheremap.nodes_distmatrix = np.zeros((n_now_nodes, n_now_nodes))
+            for i in range(n_now_nodes):
+                conns = self.spheremap.connections[i]
+                if not conns is None:
+                    # print("CONNS")
+                    # print(conns)
+                    dirvecs =  self.spheremap.points[conns, :] - self.spheremap.points[i, :].reshape((1,3))
+                    # print(dirvecs.shape)
+                    self.spheremap.nodes_distmatrix[i, conns] = np.linalg.norm(dirvecs, axis = 1)
+            comp_time = time.time() - comp_start_time
+            if self.verbose_submap_construction:
+                print("distmatrix computation: " + str((comp_time) * 1000) +  " ms")
 
             # HANDLE ADDING/REMOVING VISIBLE 3D POINTS
             comp_start_time = time.time()

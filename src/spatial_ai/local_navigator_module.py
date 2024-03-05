@@ -182,6 +182,8 @@ class LocalNavigatorModule:
             return None, None, None
         n_pts = raw_pts.shape[0]
 
+        start_time = time.time()
+
         # FIND HEADINGS FOR THE PATH THAT WOULD SUFFICE ALL CONSTRAINTS
 
         # SIMPLEST APPROACH - COMPUTE FRONT-FLYING HEADINGS, AND THEN GO FROM THE END AND ITERATIVELY TRY SHORTER TIMES WHEN TO START TURNING
@@ -217,6 +219,7 @@ class LocalNavigatorModule:
             # print("GOAL HEADING:")
             # print("NONE")
 
+            print('HEADINGPATH TOTAL: %s' % ((time.time() - start_time)*1000))
             return final_pts, final_headings, path_cost
 
         # ITERATIVELY CHECK HOW CLOSE TO THE GOAL YOU SHOULD ROTATE TO GOAL HEADING
@@ -272,6 +275,7 @@ class LocalNavigatorModule:
         final_pts = np.concatenate((raw_pts, goal_vp_smap.position), axis = 0)
         final_headings = np.concatenate((aligning_headings, goal_vp_smap.heading), axis = 0)
 
+        print('HEADINGPATH TOTAL: %s' % ((time.time() - start_time)*1000))
         return final_pts, final_headings, path_cost
     # # #}
 
@@ -660,9 +664,15 @@ class LocalNavigatorModule:
         print(startpoint)
         print(endpoint)
 
+        start_time = time.time()
+
         if smap.points is None: 
             print("PATHFIND: MAP IS EMPTY!!!")
             return None, None
+
+        # PRECOMPUTE UNSAFE SPHERES
+        unsafe_mask = smap.radii < min_safe_dist
+        expanded_mask = np.full(smap.radii.shape, False)
 
         # FIND NEAREST NODES TO START AND END
         dist_from_startpoint = np.linalg.norm((smap.points - startpoint), axis=1) - smap.radii
@@ -692,16 +702,23 @@ class LocalNavigatorModule:
         heapq.heappush(open_set, (0, start_node_index, None))
 
         # Dictionary to store the cost of reaching each node from the start
-        g_score = {start_node_index: 0}
+        # g_score = {start_node_index: 0}
+        g_score = np.full(smap.radii.shape, 0.0)
 
         # Dictionary to store the estimated total cost from start to goal passing through the node
         startned_dist = np.linalg.norm(smap.points[start_node_index] - goal_node_pt)
         print("PATHFIND: startnend dist:" + str(startned_dist))
-        f_score = {start_node_index: startned_dist }
+        # f_score = {start_node_index: startned_dist }
+        # g_score = np.full(smap.radii.shape, 0.0)
+        f_score = np.full(smap.radii.shape, 0.0)
+        f_score[start_node_index] = startned_dist * self.safety_weight
+
+        print('PATH PLANNING START: %s' % ((time.time() - start_time)*1000))
 
         path = []
         while open_set:
             current_f, current_index, parent = heapq.heappop(open_set)
+            expanded_mask[current_index] = True
             # print("POPPED: " + str(current_index) + " F: " + str(current_f))
 
             if current_index == end_node_index:
@@ -721,20 +738,27 @@ class LocalNavigatorModule:
                 continue
 
             for neighbor_index in conns:
-                euclid_dist = np.linalg.norm(smap.points[current_index] - smap.points[neighbor_index])
+                # euclid_dist = np.linalg.norm(smap.points[current_index] - smap.points[neighbor_index])
+                euclid_dist = smap.nodes_distmatrix[current_index, neighbor_index]
                 safety_cost = self.compute_safety_cost(smap.radii[neighbor_index], min_safe_dist, max_safe_dist) * euclid_dist * self.safety_weight
+                # safety_cost = 0
                 tentative_g = g_score[current_index] + euclid_dist + safety_cost
 
-                if neighbor_index not in g_score or tentative_g < g_score[neighbor_index]:
+                # if neighbor_index not in g_score or tentative_g < g_score[neighbor_index]:
+                if (not expanded_mask[neighbor_index]) or tentative_g < g_score[neighbor_index]:
+                    expanded_mask[neighbor_index] = True
                     g_score[neighbor_index] = tentative_g
-                    f_score[neighbor_index] = tentative_g + np.linalg.norm(smap.points[neighbor_index] - goal_node_pt)
+                    # f_score[neighbor_index] = tentative_g + np.linalg.norm(smap.points[neighbor_index] - goal_node_pt) * self.safety_weight
+                    f_score[neighbor_index] = tentative_g
                     heapq.heappush(open_set, (f_score[neighbor_index], neighbor_index, current_index))
                     closed_set[neighbor_index] = current_index
 
         path.reverse()
-        print("PATHFIND: RES PATH: ")
-        print(path)
-        print("N CLOSED NODES: " + str(len(closed_set.keys())))
+        print('PATH PLANNING TOTAL: %s' % ((time.time() - start_time)*1000))
+
+        # print("PATHFIND: RES PATH: ")
+        # print(path)
+        print("N CLOSED NODES: " + str(len(closed_set.keys())) + "/" + str(smap.points.shape[0]))
 
         if len(path) == 0:
             return None, None
