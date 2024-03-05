@@ -1416,14 +1416,14 @@ class LocalNavigatorModule:
         T_odom[:3, 3] = odom_p
         return T_odom# # #}
 
-    def compute_safety_cost(self, node2_radius, dist):# # #{
-        if node2_radius < self.min_planning_odist:
-            node2_radius = self.min_planning_odist
-        if node2_radius > self.max_planning_odist:
-            return 0
-        saf = (node2_radius - self.min_planning_odist) / (self.max_planning_odist  - self.min_planning_odist)
-        return saf * saf * dist
-    # # #}
+    # def compute_safety_cost(self, node2_radius, dist):# # #{
+    #     if node2_radius < self.min_planning_odist:
+    #         node2_radius = self.min_planning_odist
+    #     if node2_radius > self.max_planning_odist:
+    #         return 0
+    #     saf = (node2_radius - self.min_planning_odist) / (self.max_planning_odist  - self.min_planning_odist)
+    #     return saf * saf * dist
+    # # # #}
 
     def compute_safety_cost(self, node2_radius, minodist, maxodist):# # #{
         if node2_radius < minodist:

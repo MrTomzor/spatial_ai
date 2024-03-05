@@ -102,6 +102,7 @@ class SubmapBuilderModule:
         # VIS PUB
         self.spheremap_outline_pub = rospy.Publisher('spheres', MarkerArray, queue_size=10)
         self.spheremap_freespace_pub = rospy.Publisher('spheremap_freespace', MarkerArray, queue_size=10)
+        self.freespace_polyhedron_pub = rospy.Publisher('visible_freespace_poly', MarkerArray, queue_size=10)
 
         self.recent_submaps_vis_pub = rospy.Publisher('recent_submaps_vis', MarkerArray, queue_size=10)
         self.path_planning_vis_pub = rospy.Publisher('path_planning_vis', MarkerArray, queue_size=10)
@@ -379,6 +380,10 @@ class SubmapBuilderModule:
                 # fr_samples = fr_samples[fr_sample_odists > -0.1, :]
                 # print(fr_samples.shape)
 
+            # VISUALIZE VISIBLE FREESPACE POLYHDRON
+            polyhedron_markers = self.get_freespace_polyhedron_markers(self.spheremap.T_global_to_own_origin, T_global_to_fcu, fullmesh_pts.T, fullmesh_simplices)
+            self.freespace_polyhedron_pub.publish(polyhedron_markers) 
+
             meshing_dt = time.time() - interm_time
             interm_time = time.time()
             if self.verbose_submap_construction:
@@ -393,7 +398,6 @@ class SubmapBuilderModule:
                 n_spheres_old = self.spheremap.points.shape[0]
 
                 T_delta_odom = np.linalg.inv(self.spheremap.T_global_to_own_origin) @ T_global_to_fcu
-
                 T_orig_to_current_cam = ( T_delta_odom @ self.T_fcu_to_imu @ self.T_imu_to_cam)
 
                 # project sphere points to current camera frame
@@ -1080,4 +1084,55 @@ class SubmapBuilderModule:
 
         return True
     # # #}
+
+    def get_freespace_polyhedron_markers(self, T_global_to_own_origin, T_global_to_fcu, mesh_pts_smap_frame, tris, protected_pts_smap_frame = None):# # #{
+        # cam_pos_global = T[:3,3].T
+
+        # T_delta_odom = np.linalg.inv(T_global_to_own_origin) @ T_global_to_fcu
+        T_delta_odom = T_global_to_fcu
+        T_orig_to_current_cam = (T_delta_odom @ self.T_fcu_to_imu @ self.T_imu_to_cam)
+
+        mesh_pts_global = transformPoints(mesh_pts_smap_frame, T_orig_to_current_cam)
+
+        marker_array = MarkerArray()
+        line_marker = Marker()
+        line_marker.header.frame_id = self.odom_frame  # Set your desired frame_id
+        line_marker.type = Marker.LINE_LIST
+        line_marker.action = Marker.ADD
+        line_marker.scale.x = 0.2 
+        line_marker.color.a = 1.0  
+        line_marker.color.r = 0.0  
+        line_marker.color.g = 1.0  
+        line_marker.color.b = 0.0  
+
+        for tri in tris:
+            point1 = Point()
+            point2 = Point()
+            point3 = Point()
+
+            point1.x = mesh_pts_global[tri[0],0]
+            point1.y = mesh_pts_global[tri[0],1]
+            point1.z = mesh_pts_global[tri[0],2]
+
+            point2.x = mesh_pts_global[tri[1],0]
+            point2.y = mesh_pts_global[tri[1],1]
+            point2.z = mesh_pts_global[tri[1],2]
+
+            point3.x = mesh_pts_global[tri[2],0]
+            point3.y = mesh_pts_global[tri[2],1]
+            point3.z = mesh_pts_global[tri[2],2]
+
+            line_marker.points.append(point1)
+            line_marker.points.append(point2)
+
+            line_marker.points.append(point2)
+            line_marker.points.append(point3)
+
+            line_marker.points.append(point3)
+            line_marker.points.append(point1)
+
+        marker_array.markers.append(line_marker)
+        return marker_array
+# # #}
+
 
