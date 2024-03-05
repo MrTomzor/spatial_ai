@@ -21,6 +21,7 @@ from scipy.spatial import ConvexHull
 import inspect
 from shapely import geometry
 
+import pyembree
 import trimesh
 import rtree
 
@@ -365,7 +366,7 @@ class SubmapBuilderModule:
             new_simplices.append([hull2d_idxs[len(hull2d_idxs)-1], hull2d_idxs[0], fullmesh_zero_pt_index])
             fullmesh_simplices = np.concatenate((tri.simplices, new_simplices), axis=0)
 
-            fov_mesh = trimesh.Trimesh(vertices=fullmesh_pts.T, faces = fullmesh_simplices)
+            fov_mesh = trimesh.Trimesh(vertices=fullmesh_pts.T, faces = fullmesh_simplices, use_embree = True)
             fov_mesh_query = trimesh.proximity.ProximityQuery(fov_mesh)
 
             # CONSTRUCT OBSTACLE POINT MESH AND QUERY
@@ -391,6 +392,7 @@ class SubmapBuilderModule:
 
             meshing_dt = time.time() - interm_time
             interm_time = time.time()
+            interm_time2 = time.time()
             if self.verbose_submap_construction:
                 print("MESHING time: " + str((meshing_dt) * 1000) +  " ms")
             # # #}
@@ -414,15 +416,13 @@ class SubmapBuilderModule:
                 bbx.pos = np.zeros((1,3))
                 bbx.axes = np.eye(3)
                 # GET MIN AND MAX BY MIN AND MAX POLYHEDRON PTS + MAX RADIUS
-                # print("KOCKA")
-                # print(np.min(fovmesh_pts_with_orig.T, axis=0).shape)
                 bbx_min = np.min(fovmesh_pts_with_orig.T, axis=0).reshape((1,3))
                 bbx_max = np.max(fovmesh_pts_with_orig.T, axis=0).reshape((1,3))
                 bbx.minmaxvals = np.concatenate((bbx_min, bbx_max), axis = 0)
+                bbx_for_surfel_deletion = copy.deepcopy(bbx)
                 bbx.expand(self.spheremap.max_radius)
 
                 # USE BBX TO GET SPHERES THAT COULD BE UPDATED 
-
                 # max_vis_z = np.max(positive_z_points[2, :])
                 # z_ok_mask = np.logical_and(transformed_old_points[:, 2] > 0, transformed_old_points[:, 2] <= max_vis_z)
                 z_ok_mask = bbx.pts_in_mask(transformed_old_points)
@@ -450,12 +450,37 @@ class SubmapBuilderModule:
                 # print(fov_mesh.contains(test_pts))
                 nondeleted_visible_surfels = None
 
+                old_update_dt = time.time() - interm_time2
+                interm_time2 = time.time()
+                if self.verbose_submap_construction:
+                    print("PART -1: " + str((old_update_dt ) * 1000) +  " ms")
+
                 if not self.spheremap.surfel_points is None:
+                    # TODO - here, filter out the ones outside of bbx!
+                    n_surfels = self.spheremap.surfel_points.shape[0]
+                    print(n_surfels)
+
                     surfel_points_in_camframe = transformPoints(self.spheremap.surfel_points, np.linalg.inv(T_orig_to_current_cam))
+
+                    surfels_in_bbx_mask = bbx_for_surfel_deletion.pts_in_mask(surfel_points_in_camframe) 
+                    surfels_in_bbx_idxs = np.where(surfels_in_bbx_mask)[0] 
+                    print("N SURFELS IN BBX: " + str(np.sum(surfels_in_bbx_mask)))
+
+                    # surfel_points_in_camframe = transformPoints(self.spheremap.surfel_points[surfels_in_bbx_mask, :], np.linalg.inv(T_orig_to_current_cam))
+                    contained_surfels_mask = np.full(n_surfels, False)
+                    # print(surfel_points_in_camframe .shape)
+                    # print(contained_surfels_mask .shape)
+                    # contained_surfels_mask[surfels_in_bbx_idxs] = contained_surfels_mask
                     
-                    contained_surfels_mask = fov_mesh.contains(surfel_points_in_camframe)
+                    # contained_surfels_mask = fov_mesh.contains(surfel_points_in_camframe)
+                    contained_surfels_mask[surfels_in_bbx_idxs] = fov_mesh.contains(surfel_points_in_camframe[surfels_in_bbx_idxs, :])
                     contained_surfels_idxs = np.where(contained_surfels_mask)[0]
                     contained_surfels_dists = np.linalg.norm(surfel_points_in_camframe[contained_surfels_mask, :], axis = 1)
+
+                    old_update_dt = time.time() - interm_time2
+                    interm_time2 = time.time()
+                    if self.verbose_submap_construction:
+                        print("PART CONTAINS: " + str((old_update_dt ) * 1000) +  " ms")
                     
                     # DETERMINE PTS THAT HAVE BEEN MEASURED FROM UP CLOSE AND NOW FALL INTO FOV
                     contained_surfels_minmeas_dists = self.spheremap.surfel_minmeas_dists[contained_surfels_mask]
@@ -471,22 +496,56 @@ class SubmapBuilderModule:
                     self.spheremap.surfel_points = self.spheremap.surfel_points[keep_mask]
                     self.spheremap.surfel_minmeas_dists = self.spheremap.surfel_minmeas_dists[keep_mask]
 
+                old_update_dt = time.time() - interm_time2
+                interm_time2 = time.time()
+                if self.verbose_submap_construction:
+                    print("PART 0: " + str((old_update_dt ) * 1000) +  " ms")
+
                 # GET THE SPHERES THAT COULD BE UPDATED BY CURRENTLY SEEN DATA
                 if np.any(z_ok_mask):
+                    interm_time2 = time.time()
+
                     visible_old_points = z_ok_points
                     if not nondeleted_visible_surfels is None:
                         print("ADDING NONDELTED PTS: " + str(nondeleted_visible_surfels.shape[0]))
-                        visible_points = np.append(visible_old_points, nondeleted_visible_surfels, axis=0)
+                        # TODO fix
+                        # visible_points = np.append(visible_old_points, nondeleted_visible_surfels, axis=0)
+                        fovmesh_pts = np.concatenate((fovmesh_pts.T, nondeleted_visible_surfels), axis=0).T
                     worked_sphere_idxs = worked_sphere_idxs
+                    print("N WORKED SPHERE IDXS:")
+                    print(worked_sphere_idxs.size)
 
                     # GET DISTANCES OF OLD SPHERE POINTS TO THE VISIBLE MESH AND TO CONSIDERED OBSTACLE POINTS (visible and old ones that are far, but measured from close)
-                    old_spheres_fov_dists = np.abs(fov_mesh_query.signed_distance(visible_old_points))
+                    interm_time2 = time.time()
+
+                    spheres_in_visible_mesh = fov_mesh.contains(visible_old_points)
+
+                    old_update_dt = time.time() - interm_time2
+                    interm_time2 = time.time()
+                    if self.verbose_submap_construction:
+                        print("PART 0.3 - contains: " + str((old_update_dt ) * 1000) +  " ms")
+
+                    old_spheres_fov_dists_signed = fov_mesh_query.signed_distance(visible_old_points)
+                    # old_spheres_fov_dists_signed = np.full(self.spheremap.radii.shape, 0)
+                    # if np.any(spheres_in_visible_mesh):
+                    #     old_spheres_fov_dists_signed[spheres_in_visible_mesh] = fov_mesh_query.signed_distance(visible_old_points[spheres_in_visible_mesh, :])
+                    old_spheres_fov_dists = np.abs(old_spheres_fov_dists_signed)
+
+                    old_update_dt = time.time() - interm_time2
+                    interm_time2 = time.time()
+                    if self.verbose_submap_construction:
+                        print("PART 0.5 - signed distance: " + str((old_update_dt ) * 1000) +  " ms")
+
                     pt_distmatrix = scipy.spatial.distance_matrix(visible_old_points, fovmesh_pts.T)
                     old_spheres_obs_dists = np.min(pt_distmatrix, axis = 1)
                     upperbound_combined = np.minimum( np.minimum(old_spheres_fov_dists, old_spheres_obs_dists), self.spheremap.max_allowed_radius)
 
+                    old_update_dt = time.time() - interm_time2
+                    interm_time2 = time.time()
+                    if self.verbose_submap_construction:
+                        print("PART 1 - distmatrix: " + str((old_update_dt ) * 1000) +  " ms")
+
                     should_decrease_radius = old_spheres_obs_dists < self.spheremap.radii[worked_sphere_idxs]
-                    spheres_in_visible_mesh = fov_mesh.contains(visible_old_points)
                     could_increase_radius = np.logical_and(upperbound_combined > self.spheremap.radii[worked_sphere_idxs], spheres_in_visible_mesh)
 
                     for i in range(worked_sphere_idxs.size):
@@ -494,6 +553,11 @@ class SubmapBuilderModule:
                             self.spheremap.radii[worked_sphere_idxs[i]] = old_spheres_obs_dists[i]
                         elif could_increase_radius[i]:
                             self.spheremap.radii[worked_sphere_idxs[i]] = upperbound_combined[i]
+
+                    old_update_dt = time.time() - interm_time2
+                    interm_time2 = time.time()
+                    if self.verbose_submap_construction:
+                        print("PART 2 - radii: " + str((old_update_dt ) * 1000) +  " ms")
 
                     # FIND WHICH SMALL SPHERES TO PRUNE AND STOP WORKING WITH THEM, BUT REMEMBER INDICES TO KILL THEM IN THE END
                     idx_picker = self.spheremap.radii[worked_sphere_idxs[i]] < self.spheremap.min_radius
@@ -509,9 +573,20 @@ class SubmapBuilderModule:
                     self.spheremap.updateConnections(worked_sphere_idxs)
                     # self.spheremap.updateConnections(worked_sphere_idxs, sphere_idxs_for_conn_checking)
 
+                    old_update_dt = time.time() - interm_time2
+                    interm_time2 = time.time()
+                    if self.verbose_submap_construction:
+                        print("PART 3 - connections: " + str((old_update_dt ) * 1000) +  " ms")
+
                     # AT THE END, PRUNE THE EXISTING SPHERES THAT BECAME TOO SMALL (delete their pos, radius and conns)
                     # self.spheremap.consistencyCheck()
+
                     self.spheremap.removeSpheresIfRedundant(worked_sphere_idxs)
+
+                    old_update_dt = time.time() - interm_time2
+                    interm_time2 = time.time()
+                    if self.verbose_submap_construction:
+                        print("PART 4 - redundancy: " + str((old_update_dt ) * 1000) +  " ms")
 
                     # self.spheremap.removeNodes(np.where(idx_picker)[0])
             # # #}

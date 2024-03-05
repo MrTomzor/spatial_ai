@@ -419,9 +419,9 @@ class SphereMap:
 
 
             # we delete all old point sfor which at least 1 new pt is too close and measured from closer
-            # old_replaced_by_new_mask = np.any(np.logical_and(existing_points_distmatrix < filtering_radius, old_measdists_extended > new_measdists_extended), axis = 0)
+            old_replaced_by_new_mask = np.any(np.logical_and(existing_points_distmatrix < filtering_radius, old_measdists_extended > new_measdists_extended), axis = 0)
             # TODO - remove
-            old_replaced_by_new_mask = np.full(self.surfel_points.shape[0], False)
+            # old_replaced_by_new_mask = np.full(self.surfel_points.shape[0], False)
 
             # we keep all new points for which all pts that are too close, are deleted (so they are measured from further)
             # pts_survived_first_mask = np.sum(existing_points_distmatrix > filtering_radius, axis=1) == n_existign_points
@@ -435,7 +435,7 @@ class SphereMap:
                 self.surfel_minmeas_dists = self.surfel_minmeas_dists[np.logical_not(old_replaced_by_new_mask)]
 
         # TODO - remove
-        pts_survived_first_mask = np.full((n_test_new_pts), True)
+        # pts_survived_first_mask = np.full((n_test_new_pts), True)
 
         # pts_survived_filter_with_mappoints = visible_points[pts_survived_first_mask]
         pts_survived_filter_with_mappoints = visible_points[pts_survived_first_mask, :]
