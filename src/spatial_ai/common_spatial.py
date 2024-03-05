@@ -666,11 +666,11 @@ class SphereMap:
     # #}
     
     # #{ def updateConnections(self, worked_sphere_idxs):
-    def updateConnections(self, worked_sphere_idxs):
+    def updateConnections(self, worked_sphere_idxs, checked_other_sphere_idxs = None):
         # print("UPDATING CONNECTIONS FOR " + str(worked_sphere_idxs.size) + " SPHERES")
         for idx in worked_sphere_idxs:
             prev_connections = self.connections[idx]
-            intersecting = self.getIntersectingSpheres(self.points[idx, :], self.radii[idx])
+            intersecting = self.getIntersectingSpheres(self.points[idx, :], self.radii[idx], checked_other_sphere_idxs)
             intersecting[idx] = False
             if not np.any(intersecting):
                 self.connections[idx] = None
@@ -721,18 +721,26 @@ class SphereMap:
     # #}
 
     # #{ def getIntersectingSpheres(self, position, radius):
-    def getIntersectingSpheres(self, position, radius):
-        distvectors = self.points - position
+    def getIntersectingSpheres(self, position, radius, checked_other_sphere_idxs=None):
+        distvectors = None
+        res_mask = np.full(self.radii.shape, False)
 
-        # rad2 = radius * radius
-        # norms2 = np.sum(np.multiply(distvectors,distvectors), 1)
-        # intersecting_idxs = norms2
+        if checked_other_sphere_idxs is None:
+            distvectors = self.points - position
+            norms = np.linalg.norm(distvectors, axis=1)
+            # TODO - some minimal radius of intersection!!
 
-        norms = np.linalg.norm(distvectors, axis=1)
+            res_mask = norms < self.radii + radius
+        else:
+            idxs = np.arange(self.points.shape[0])[checked_other_sphere_idxs]
+            distvectors = self.points[idxs, :] - position
+            norms = np.linalg.norm(distvectors, axis=1)
+            intersecting_inner = norms < self.radii + radius
+            # TODO - some minimal radius of intersection!! (IN SEPARATE FUNCTION!!)
 
-        intersecting = norms < self.radii + radius
-        # print("FOUND INTERSECTIONS: " + str(np.sum(intersecting)))
-        return intersecting 
+            res_mask[idxs] = intersecting_inner
+        return res_mask 
+
     # #}
 
 # #}# #}

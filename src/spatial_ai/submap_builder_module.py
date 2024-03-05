@@ -426,6 +426,11 @@ class SubmapBuilderModule:
                 # max_vis_z = np.max(positive_z_points[2, :])
                 # z_ok_mask = np.logical_and(transformed_old_points[:, 2] > 0, transformed_old_points[:, 2] <= max_vis_z)
                 z_ok_mask = bbx.pts_in_mask(transformed_old_points)
+
+                # EXPAND AGAIN TO GET ALL SPHERES THAT COULD CONNECT TO THE MODIFIED SPHERES
+                bbx.expand(self.spheremap.max_radius)
+                sphere_idxs_for_conn_checking = bbx.pts_in_mask(transformed_old_points)
+
                 print("KOCKA")
                 print(z_ok_mask.shape)
 
@@ -502,6 +507,7 @@ class SubmapBuilderModule:
                     # self.spheremap.consistencyCheck()
                     # RE-CHECK CONNECTIONS
                     self.spheremap.updateConnections(worked_sphere_idxs)
+                    # self.spheremap.updateConnections(worked_sphere_idxs, sphere_idxs_for_conn_checking)
 
                     # AT THE END, PRUNE THE EXISTING SPHERES THAT BECAME TOO SMALL (delete their pos, radius and conns)
                     # self.spheremap.consistencyCheck()
