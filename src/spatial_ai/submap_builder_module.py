@@ -196,6 +196,11 @@ class SubmapBuilderModule:
                     print("NO POINTS?")
                 return
             point_cloud_array = point_cloud_array[nonzero_pts, :]
+
+            # TODO - remove
+            # noise_intensity = 1
+            # point_cloud_array = point_cloud_array + np.random.uniform(-noise_intensity, noise_intensity , size=point_cloud_array.shape)
+
             # print("PCL ARRAY SHAPE:")
             # print(point_cloud_array.shape)
             # # #}
@@ -432,7 +437,7 @@ class SubmapBuilderModule:
                     
                     # DETERMINE PTS THAT HAVE BEEN MEASURED FROM UP CLOSE AND NOW FALL INTO FOV
                     contained_surfels_minmeas_dists = self.spheremap.surfel_minmeas_dists[contained_surfels_mask]
-                    protected_contained_surfels_mask = contained_surfels_dists > 1.5 * contained_surfels_minmeas_dists 
+                    protected_contained_surfels_mask = contained_surfels_dists > 1.1 * contained_surfels_minmeas_dists 
                     if np.any(protected_contained_surfels_mask):
                         nondeleted_visible_surfels = surfel_points_in_camframe[contained_surfels_mask, :][protected_contained_surfels_mask, :]
 
