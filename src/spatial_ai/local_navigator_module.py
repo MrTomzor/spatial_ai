@@ -776,6 +776,9 @@ class LocalNavigatorModule:
         # TODO fix lock - copy map for using here?
         with ScopedLock(self.mapper.spheremap_mutex):
 
+            # ALWAYS FOLLOW ROADMAP IF SOME SET
+            self.roadmap_following_iter()
+
             # EXPLORATION LOGIC
             if self.main_state == 'exploring':
                 T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
@@ -799,8 +802,6 @@ class LocalNavigatorModule:
                     rm = NavRoadmap(path_home_pts)
                     self.set_roadmap(rm)
 
-            # ALWAYS FOLLOW ROADMAP IF SOME SET
-            self.roadmap_following_iter()
 
     # # #}
     # def homing_logic(self):
@@ -1269,24 +1270,6 @@ class LocalNavigatorModule:
 
         paths_to_goals = []
         paths_costs = []
-
-        # FIRST TRY JUST TAKING THE ONES UP TO X METERS AWAY EUCLIDIANILLY
-        # potential_goals = self.exploration_goals
-        # goal_pts = np.array([potential_goals[i].viewpoint.position for i in range(n_goals_total)])
-        # goal_dists = np.linalg.norm(goal_pts - T_global_to_fcu[:3,3].T, axis = 1)
-        # near_goals_mask = goal_dists < self.local_exploration_radius 
-        # if np.any(near_goals_mask):
-        #     print("EXPLORATION - SOME GOALS IN LOCAL_EXPLORATION RADIUS, PLANNING ONLY TO THEM")
-        #     print(potential_goals.shape)
-        #     potential_goals = potential_goals[near_goals_mask].flatten()
-        #     print(potential_goals.shape)
-        # else:
-        #     print("EXPLORATION - PLANNING TO ALL GOALS CAUSE NONE ARE " + str(self.local_exploration_radius) + "m CLOSE")
-        #     print("EXPLORATION - closest goal dist: " + str(np.min(goal_dists)))
-        #     print(goal_dists)
-        #     print(goal_pts.shape)
-        # n_goals_considered = potential_goals.size
-
 
         marker_id = 0
         for i in range(n_goals_total):
