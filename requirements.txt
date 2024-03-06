@@ -1,7 +1,7 @@
 rospy
 rospkg
 shapely
-trimesh
+trimesh==3.23.5
 opencv-python
 tf2-utilities
 tf2-geometry-msgs
@@ -10,4 +10,4 @@ matplotlib
 sensor_msgs
 tf2_ros
 netifaces
-pyembree
+pyembree==0.2.11
