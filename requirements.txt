@@ -1,0 +1,13 @@
+rospy
+rospkg
+shapely
+trimesh
+opencv-python
+tf2-utilities
+tf2-geometry-msgs
+scikit-learn
+matplotlib
+sensor_msgs
+tf2_ros
+netifaces
+pyembree

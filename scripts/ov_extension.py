@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+"exec" "`dirname $0`/../python-env/bin/python" "$0" "$@"
 
 # #{ imports
 
