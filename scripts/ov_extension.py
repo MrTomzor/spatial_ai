@@ -307,6 +307,12 @@ class NavNode:
             print("NOT LOCAL NAVING, GIVING SMAP BUILDER CHANCE TO DO " + str(n_upd) + "UPDATES!")
             return
 
+        # TEST COPY
+        # interm_time2 = time.time()
+        # spheremap_copy = copy.deepcopy(self.submap_builder_module.spheremap)
+        # copy_dt = time.time() - interm_time2
+        # print("SMAP COPY DT: " + str((copy_dt) * 1000) +  " ms")
+
         self.local_navigator_module.planning_loop_iter()
         self.n_plan_iters_without_smap_update += 1
         self.n_smap_iters_since_last_planning = 0

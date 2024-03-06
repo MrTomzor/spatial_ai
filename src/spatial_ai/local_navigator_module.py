@@ -1346,7 +1346,7 @@ class LocalNavigatorModule:
 
     # # #}
 
-    def tryAddingGoalsNearby(self, planning_start_vp, search_dist=30, planning_time=0.5):# # #{
+    def tryAddingGoalsNearby(self, planning_start_vp, search_dist=30, planning_time=0.3):# # #{
 
         frontier_vps = self.find_paths_rrt_smap_frame(planning_start_vp, max_comp_time = planning_time, min_odist = self.min_planning_odist, max_odist = self.max_planning_odist, max_step_size = self.path_step_size, max_spread_dist = search_dist, mode = 'find_goals')
         n_added = 0
@@ -1401,7 +1401,7 @@ class LocalNavigatorModule:
                 global_goal_roadmap = self.getBestGoalRoadmap()
                 if global_goal_roadmap is None:
                     print("EXPLORATION - NO GOALS REACHABLE!!!")
-                return
+                    return
 
             print("EXPLORATION - SETTING NEW ROADMAP TO GOAL!!!")
 
