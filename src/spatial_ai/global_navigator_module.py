@@ -22,10 +22,8 @@ import scipy
 from scipy.spatial import Delaunay
 from scipy.spatial import ConvexHull
 import inspect
-from shapely import geometry
 
 import trimesh
-import rtree
 
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import PoseWithCovarianceStamped
@@ -50,13 +48,8 @@ import tf.transformations as tfs
 from geometry_msgs.msg import TransformStamped
 
 
-import gtsam
-from gtsam import DoglegOptimizer
-import gtsam.utils.plot as gtsam_plot
 import matplotlib.pyplot as plt
 import numpy as np
-from gtsam.symbol_shorthand import L, X
-from gtsam.examples import SFMdata
 from mpl_toolkits.mplot3d import Axes3D  # pylint: disable=W0611
 
 import sys
