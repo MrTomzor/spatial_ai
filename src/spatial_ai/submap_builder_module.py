@@ -18,7 +18,6 @@ from scipy.spatial.transform import Rotation
 import scipy
 from scipy.spatial import Delaunay
 from scipy.spatial import ConvexHull
-import inspect
 from shapely import geometry
 
 import pyembree
@@ -49,10 +48,8 @@ from geometry_msgs.msg import TransformStamped
 
 import matplotlib.pyplot as plt
 import numpy as np
-from mpl_toolkits.mplot3d import Axes3D  # pylint: disable=W0611
 
 import sys
-from termcolor import colored, cprint
 # # #}
 
 class SubmapBuilderModule:
