@@ -35,6 +35,8 @@ local_nav:
   reaching_dist: 2
   out_path_resolution: 0.5
 
+  local_exploration_radius: 20
+
 global_nav:
   enabled: False
   testing_mchunk_filename: "threeroom_big_to_left_end.pickle"

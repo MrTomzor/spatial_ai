@@ -165,6 +165,7 @@ class LocalNavigatorModule:
         self.roomba_bounds_global = [-20, 20, -30, 30, -10, 20]
 
         # EXPLO PARAMS
+        self.local_exploration_radius = rospy.get_param("local_nav/local_exploration_radius")
         self.exploration_goals = None
         self.goal_blocking_dist = 10
         self.goal_blocking_angle = np.pi/2
@@ -1257,24 +1258,46 @@ class LocalNavigatorModule:
 
     # --EXPLORATION STUFF
 
-    def getBestGoalRoadmap(self):# # #{
+    def getBestGoalRoadmap(self, max_goal_euclid_dist = None):# # #{
         T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
         T_smap_origin_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
         current_vp_smap_frame = Viewpoint(T=T_smap_origin_to_fcu) 
 
         if self.exploration_goals is None:
             return None
+        n_goals_total = self.exploration_goals.size
 
-        n_tries = self.exploration_goals.size
         paths_to_goals = []
         paths_costs = []
 
+        # FIRST TRY JUST TAKING THE ONES UP TO X METERS AWAY EUCLIDIANILLY
+        # potential_goals = self.exploration_goals
+        # goal_pts = np.array([potential_goals[i].viewpoint.position for i in range(n_goals_total)])
+        # goal_dists = np.linalg.norm(goal_pts - T_global_to_fcu[:3,3].T, axis = 1)
+        # near_goals_mask = goal_dists < self.local_exploration_radius 
+        # if np.any(near_goals_mask):
+        #     print("EXPLORATION - SOME GOALS IN LOCAL_EXPLORATION RADIUS, PLANNING ONLY TO THEM")
+        #     print(potential_goals.shape)
+        #     potential_goals = potential_goals[near_goals_mask].flatten()
+        #     print(potential_goals.shape)
+        # else:
+        #     print("EXPLORATION - PLANNING TO ALL GOALS CAUSE NONE ARE " + str(self.local_exploration_radius) + "m CLOSE")
+        #     print("EXPLORATION - closest goal dist: " + str(np.min(goal_dists)))
+        #     print(goal_dists)
+        #     print(goal_pts.shape)
+        # n_goals_considered = potential_goals.size
+
 
         marker_id = 0
-        for i in range(n_tries):
+        for i in range(n_goals_total):
             goal = self.exploration_goals[i]
+            # goal = potential_goals[i]
             if goal.num_observations >= self.goal_max_obsvs:
                 continue
+            if max_goal_euclid_dist: 
+                euclid_dist = np.linalg.norm(goal.viewpoint.position - T_global_to_fcu[:3,3].T)
+                if euclid_dist > max_goal_euclid_dist:
+                    continue
 
             # FIND PATH TO GOAL, SAVE IT AND COST, IF FOUND
             # TRANSFORM GOAL TO SMAP FRAME
@@ -1386,16 +1409,17 @@ class LocalNavigatorModule:
 
 
         if self.roadmap is None:
-            # FIND A* PATHS TO ALL KNOWN GOALS
-            global_goal_roadmap = self.getBestGoalRoadmap()
+            # FIND A* PATHS TO ALL KNOWN GOALS IN GIVEN RADIUS
+            global_goal_roadmap = self.getBestGoalRoadmap(self.local_exploration_radius)
 
-            # IF NONE FOUND, SWITCH TO LOCAL SEARCH AND TRY SEARCHING HERE (todo -increase counter)
+            # IF NONE FOUND, SWITCH TO GLOBAL SEARCH
             if global_goal_roadmap is None:
-                # self.tryAddingGoalsNearby()
-                # self.visualize_exploration_goals()
-                # TODO - search for nearby goals, N times
-                # TODO - counter++
+                print("EXPLORATION - no reachable goals found withing " + str(self.local_exploration_radius) + "m, finding paths to all goals")
+                global_goal_roadmap = self.getBestGoalRoadmap()
+                if global_goal_roadmap is None:
+                    print("EXPLORATION - NO GOALS REACHABLE!!!")
                 return
+
             print("EXPLORATION - SETTING NEW ROADMAP TO GOAL!!!")
 
             # IF SOME IS GOOD, SET IT AS NAVGOAL AND FUCKING GO TO IT
