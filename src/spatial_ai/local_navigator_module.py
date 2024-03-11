@@ -735,6 +735,10 @@ class LocalNavigatorModule:
                 # safety_cost = 0
                 tentative_g = g_score[current_index] + euclid_dist + safety_cost
 
+                # TODO - CHECK IF NOT UNSAFE TO PLAN!!! (FUCK LOL I WAS PLANNING HERE LOL)
+                if smap.radii[neighbor_index] < min_safe_dist:
+                    continue
+
                 # if neighbor_index not in g_score or tentative_g < g_score[neighbor_index]:
                 if (not expanded_mask[neighbor_index]) or tentative_g < g_score[neighbor_index]:
                     expanded_mask[neighbor_index] = True

@@ -91,6 +91,9 @@ class SubmapBuilderModule:
         # self.save_episode_full = rospy.Service("save_episode_full", EmptySrv, self.saveEpisodeFull)
         # self.return_home_srv = rospy.Service("home", EmptySrv, self.return_home)
 
+        # DATA PUB
+        self.runtimes_pub = rospy.Publisher('spheremap_runtimes', mrs_msgs.msg.Float64ArrayStamped, queue_size=10)
+
         # VIS PUB
         self.spheremap_outline_pub = rospy.Publisher('spheres', MarkerArray, queue_size=10)
         self.spheremap_freespace_pub = rospy.Publisher('spheremap_freespace', MarkerArray, queue_size=10)
@@ -132,6 +135,7 @@ class SubmapBuilderModule:
     # CORE
 
     def camera_update_iter(self, msg, slam_ids = None):# # #{
+        runtime_data = []
 
         # Add new visual keyframe if enough distance has been traveled# # #{
         with ScopedLock(self.spheremap_mutex):
@@ -481,7 +485,7 @@ class SubmapBuilderModule:
 
                     deleted_surfels_idxs = contained_surfels_idxs[np.logical_not(protected_contained_surfels_mask)]
                     surfel_deletion_mask = np.full(self.spheremap.surfel_points.shape[0], False)
-                    surfel_deletion_mask[deleted_surfels_idxs] = True
+                    # surfel_deletion_mask[deleted_surfels_idxs] = True # TODO - change
 
                     keep_mask = np.logical_not(surfel_deletion_mask)
                     self.spheremap.surfel_points = self.spheremap.surfel_points[keep_mask]
@@ -586,6 +590,7 @@ class SubmapBuilderModule:
             interm_time = time.time()
             if self.verbose_submap_construction:
                 print("OLD SPHERE UPDATE time: " + str((old_update_dt ) * 1000) +  " ms")
+            runtime_data.append(old_update_dt)
 
             # TRY ADDING NEW SPHERES# #{
             # TODO fix - by raycasting!!!
@@ -694,6 +699,7 @@ class SubmapBuilderModule:
             interm_time = time.time()
             if self.verbose_submap_construction:
                 print("NEW SPHERE UPDATE time: " + str((new_update_dt ) * 1000) +  " ms")
+            runtime_data.append(new_update_dt)
 
             # CONNECTIONS UPDATE AND SPARSIFICATION# #{
             self.spheremap.updateConnections(np.arange(n_spheres_before_adding, n_spheres_before_adding+n_spheres_to_add))
@@ -706,14 +712,15 @@ class SubmapBuilderModule:
             interm_time = time.time()
             if self.verbose_submap_construction:
                 print("FINAL CONNECTIVITY UPDATE time: " + str((connectivity_final_dt) * 1000) +  " ms")
+            runtime_data.append(connectivity_final_dt)
 
             comp_start_time = time.time()
             self.spheremap.spheres_kdtree = KDTree(self.spheremap.points)
             self.spheremap.max_radius = np.max(self.spheremap.radii)
 
-            comp_time = time.time() - comp_start_time
+            kdtree_comp_time = time.time() - comp_start_time
             if self.verbose_submap_construction:
-                print("Sphere KDTree computation: " + str((comp_time) * 1000) +  " ms")
+                print("Sphere KDTree computation: " + str((kdtree_comp_time) * 1000) +  " ms")
 
             comp_start_time = time.time()
             # self.spheremap.nodes_distmatrix = scipy.spatial.distance_matrix(self.spheremap.points, self.spheremap.points)
@@ -730,6 +737,7 @@ class SubmapBuilderModule:
             comp_time = time.time() - comp_start_time
             if self.verbose_submap_construction:
                 print("distmatrix computation: " + str((comp_time) * 1000) +  " ms")
+            runtime_data.append(kdtree_comp_time + comp_time)
 
             # HANDLE ADDING/REMOVING VISIBLE 3D POINTS
             comp_start_time = time.time()
@@ -746,11 +754,20 @@ class SubmapBuilderModule:
             comp_time = time.time() - comp_start_time
             if self.verbose_submap_construction:
                 print("SURFELS+FRONTIERS integration time: " + str((comp_time) * 1000) +  " ms")
+            runtime_data.append(comp_time)
 
             # TOTAL COMPUTATION TIME
             comp_time = time.time() - update_start_time
             print("SPHEREMAP integration time: " + str((comp_time) * 1000) +  " ms")
+            runtime_data.append(comp_time)
 
+            # PUBLISH RUNTIMES
+            runtime_msg = mrs_msgs.msg.Float64ArrayStamped()
+            h = std_msgs.msg.Header()
+            h.stamp = rospy.Time.now()
+            runtime_msg.header = h
+            runtime_msg.values = runtime_data
+            self.runtimes_pub.publish(runtime_msg)
 
             # VISUALIZE CURRENT SPHERES
             self.visualize_spheremap()
