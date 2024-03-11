@@ -44,6 +44,7 @@ local_nav:
   out_path_resolution: 0.5
 
   local_exploration_radius: 20
+  exploration_goal_blocking_dist: 10
 
 global_nav:
   enabled: False

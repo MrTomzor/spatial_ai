@@ -158,7 +158,7 @@ class LocalNavigatorModule:
         # EXPLO PARAMS
         self.local_exploration_radius = rospy.get_param("local_nav/local_exploration_radius")
         self.exploration_goals = None
-        self.goal_blocking_dist = 7
+        self.goal_blocking_dist = rospy.get_param("local_nav/exploration_goal_blocking_dist")
         self.goal_blocking_angle = np.pi/3
         self.goal_max_obsvs = 1
         self.frontier_visibility_dist = 15
@@ -1323,11 +1323,11 @@ class LocalNavigatorModule:
                     continue
 
             # CHECK IF GOAL STILL HAS SOME FRONTIERS, OTHERWISE DELETW
-            # frontier_val = self.getViewpointFrontierValue(goal.viewpoint)
-            # if frontier_val == 0:
-            #     goal_delete_mask[i] = True
-            #     print("DELETING GOAL VP BECAUSE NO VISIBLE FRONTIERS")
-            #     continue
+            frontier_val = self.getViewpointFrontierValue(goal.viewpoint)
+            if frontier_val == 0:
+                goal_delete_mask[i] = True
+                print("DELETING GOAL VP BECAUSE NO VISIBLE FRONTIERS")
+                continue
 
             # FIND PATH TO GOAL, SAVE IT AND COST, IF FOUND
             # TRANSFORM GOAL TO SMAP FRAME
@@ -1482,7 +1482,7 @@ class LocalNavigatorModule:
 
         pos = vp.position
         heading = vp.heading
-        smap_pos, smap_heading = transformViewpoints(pos.reshape((1,3)), np.array(heading).flatten(), self.mapper.spheremap.T_global_to_own_origin)
+        smap_pos, smap_heading = transformViewpoints(pos.reshape((1,3)), np.array(heading).flatten(), np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin))
 
         T_fcu_to_cam = lookupTransformAsMatrix(self.fcu_frame, self.mapper.camera_frame, self.tf_listener)
         T_smap_orig_to_head_fcu = posAndHeadingToMatrix(smap_pos, smap_heading)
