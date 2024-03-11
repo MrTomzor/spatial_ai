@@ -1,8 +1,6 @@
 #!/usr/bin/env python
 
 # imports# # #{
-import g2o
-
 import rospy
 # from sensor_msgs.msg import Image
 from sensor_msgs.msg import Image, CompressedImage, PointCloud2, PointField

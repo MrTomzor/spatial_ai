@@ -178,11 +178,11 @@ class NavNode:
             self.T_fcu_to_imu = np.eye(4)
             self.width = 752
             self.height = 480
-            self.ov_slampoints_topic = '/ov_msckf/points_slam'
-            self.img_topic = '/uav1/vio/camera/image_raw'
+            self.ov_slampoints_topic = rospy.get_param("local_mapping/slampoints_topic")
+            self.img_topic = rospy.get_param("local_mapping/img_topic")
             self.odom_topic = '/ov_msckf/odomimu'
             self.imu_frame = 'imu'
-            self.fcu_frame = 'uav1/fcu'
+            self.fcu_frame = rospy.get_param("local_mapping/fcu_frame")
             self.camera_frame = 'cam0'
             self.odom_frame = 'global'
             # self.marker_scale = 0.5

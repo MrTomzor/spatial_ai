@@ -140,7 +140,7 @@ class LocalNavigatorModule:
         self.max_goal_vp_pathfinding_times = 3
         self.current_goal_vp_pathfinding_times = 0
 
-        self.fspace_bonus_mod = 2
+        self.fspace_bonus_mod = 1
         self.safety_weight = rospy.get_param("local_nav/safety_weight")
 
         # ROOMBA PARAMS
@@ -157,8 +157,8 @@ class LocalNavigatorModule:
         # EXPLO PARAMS
         self.local_exploration_radius = rospy.get_param("local_nav/local_exploration_radius")
         self.exploration_goals = None
-        self.goal_blocking_dist = 10
-        self.goal_blocking_angle = np.pi/2
+        self.goal_blocking_dist = 7
+        self.goal_blocking_angle = np.pi/3
         self.goal_max_obsvs = 1
         
         # # #}

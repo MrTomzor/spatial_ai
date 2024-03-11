@@ -12,12 +12,19 @@ local_mapping:
   smap_fragmentation_dist: 2000
   n_sphere_samples_per_update: 300
   carryover_dist: 4
-  max_sphere_sampling_z : 8
+  max_sphere_sampling_z : 15
 
   surfel_resolution: 0.3
   frontier_resolution: 2
 
   min_sphere_rad: 0.3
+
+  fcu_frame: 'uav1/fcu'
+  img_topic: '/uav1/vio/camera/image_raw'
+  slampoints_topic: '/ov_msckf/points_slam'
+
+  get_camera_calib_from_topic: False
+  camera_calib_topic: '/uav1/vio/camera/camera_info'
 
 local_nav:
   enabled: True
@@ -32,7 +39,7 @@ local_nav:
   path_abandon_time: 8
 
   clearing_dist: 4
-  reaching_dist: 2
+  reaching_dist: 1
   out_path_resolution: 0.5
 
   local_exploration_radius: 20
