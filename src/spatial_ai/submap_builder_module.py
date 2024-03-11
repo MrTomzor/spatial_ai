@@ -208,7 +208,7 @@ class SubmapBuilderModule:
             init_new_spheremap = False
             memorized_transform_to_prev_map = None
 
-            init_rad = self.min_planning_odist
+            init_rad = self.uav_radius
             min_rad = init_rad
 
             if self.spheremap is None:

@@ -141,7 +141,7 @@ class LocalNavigatorModule:
         self.max_goal_vp_pathfinding_times = 3
         self.current_goal_vp_pathfinding_times = 0
 
-        self.fspace_bonus_mod = 1
+        self.fspace_bonus_mod = 1.2
         self.safety_weight = rospy.get_param("local_nav/safety_weight")
 
         # ROOMBA PARAMS
@@ -1323,11 +1323,11 @@ class LocalNavigatorModule:
                     continue
 
             # CHECK IF GOAL STILL HAS SOME FRONTIERS, OTHERWISE DELETW
-            frontier_val = self.getViewpointFrontierValue(goal.viewpoint)
-            if frontier_val == 0:
-                goal_delete_mask[i] = True
-                print("DELETING GOAL VP BECAUSE NO VISIBLE FRONTIERS")
-                continue
+            # frontier_val = self.getViewpointFrontierValue(goal.viewpoint)
+            # if frontier_val == 0:
+            #     goal_delete_mask[i] = True
+            #     print("DELETING GOAL VP BECAUSE NO VISIBLE FRONTIERS")
+            #     continue
 
             # FIND PATH TO GOAL, SAVE IT AND COST, IF FOUND
             # TRANSFORM GOAL TO SMAP FRAME
@@ -1343,6 +1343,15 @@ class LocalNavigatorModule:
 
                 # VISUALIZE PATHS TO POTENTIAL GOALS
                 marker_id = 1 + self.visualize_trajectory(path_pts, self.mapper.spheremap.T_global_to_own_origin, headings=None, do_line=True, pub=self.global_path_planning_vis_pub, marker_id = marker_id, clr = [0.7, 0.7, 0])
+
+        # DELETE BAD GOALS IF APPLICABLE, DONT NEED ACCES TO THEM NOW
+        if np.any(goal_delete_mask):
+            print("DELETING GOALS: " + str(np.sum(goal_delete_mask)))
+            if np.all(goal_delete_mask):
+                self.exploration_goals = None
+                return None
+            else:
+                self.exploration_goals = self.exploration_goals[np.logical_not(goal_delete_mask)]
 
         # IF NO VPS REACHABLE, RETURN 
         if len(paths_to_goals) == 0:
@@ -1360,14 +1369,6 @@ class LocalNavigatorModule:
         global_headings[:(global_headings.size-1)] = None # so that we only enforce heading on the last one!
         # TODO - set only up to turning index!!! -> FUNCTION FOR TURNING INDEX!! (used also in theh eadingpath func)
 
-        # DELETE BAD GOALS IF APPLICABLE, DONT NEED ACCES TO THEM NOW
-        if np.any(goal_delete_mask):
-            print("DELETING GOALS: " + str(np.sum(goal_delete_mask)))
-            if np.all(goal_delete_mask):
-                self.exploration_goals = None
-                return None
-            else:
-                self.exploration_goals = self.exploration_goals[np.logical_not(goal_delete_mask)]
 
         # RETURN ROADMAP IN GLOBAL FRAME
         return NavRoadmap(global_pts, global_headings)
@@ -1458,10 +1459,12 @@ class LocalNavigatorModule:
 
             # IF NONE FOUND, SWITCH TO GLOBAL SEARCH
             if global_goal_roadmap is None:
+                # print("EXPLORATION - NOW HAVE GOALS: " + str(self.exploration_goals.size))
                 print("EXPLORATION - NO GOALS REACHABLE found withing " + str(self.local_exploration_radius) + "m, finding paths to all goals")
                 global_goal_roadmap = self.getBestGoalRoadmap()
                 if global_goal_roadmap is None:
                     print("EXPLORATION - NO GOALS REACHABLE anywhere!!!")
+                    # print("EXPLORATION - NOW HAVE GOALS: " + str(self.exploration_goals.size))
                     # print("N GOALS NOW:" + str(
                     return
 
