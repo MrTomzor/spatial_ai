@@ -160,6 +160,7 @@ class LocalNavigatorModule:
         self.goal_blocking_dist = 7
         self.goal_blocking_angle = np.pi/3
         self.goal_max_obsvs = 1
+        self.frontier_visibility_dist = 15
         
         # # #}
 
@@ -571,7 +572,7 @@ class LocalNavigatorModule:
 
                         # print(frontier_points_in_camframe)
 
-                        visible_pts_mask = getVisiblePoints(frontier_points_in_camframe, frontier_normals_in_camframe, np.pi/2, 15, w, h, K, verbose=False)
+                        visible_pts_mask = getVisiblePoints(frontier_points_in_camframe, frontier_normals_in_camframe, np.pi/2, self.frontier_visibility_dist, w, h, K, verbose=False)
                         n_visible = np.sum(visible_pts_mask)
                         print("N VISIBLE FRONTIERS: " + str(n_visible))
                         if n_visible > 0:
@@ -1300,6 +1301,8 @@ class LocalNavigatorModule:
         paths_costs = []
 
         marker_id = 0
+        goal_delete_mask = np.full(self.exploration_goals.shape, False)
+
         for i in range(n_goals_total):
             goal = self.exploration_goals[i]
             # goal = potential_goals[i]
@@ -1309,6 +1312,12 @@ class LocalNavigatorModule:
                 euclid_dist = np.linalg.norm(goal.viewpoint.position - T_global_to_fcu[:3,3].T)
                 if euclid_dist > max_goal_euclid_dist:
                     continue
+
+            # CHECK IF GOAL STILL HAS SOME FRONTIERS, OTHERWISE DELETW
+            frontier_val = self.getViewpointFrontierValue(goal.viewpoint)
+            if frontier_val == 0:
+                goal_delete_mask[i] = True
+                continue
 
             # FIND PATH TO GOAL, SAVE IT AND COST, IF FOUND
             # TRANSFORM GOAL TO SMAP FRAME
@@ -1339,6 +1348,15 @@ class LocalNavigatorModule:
         global_pts, global_headings = transformViewpoints(best_path_pts, best_path_headings, self.mapper.spheremap.T_global_to_own_origin)
         global_headings[:(global_headings.size-1)] = None # so that we only enforce heading on the last one!
         # TODO - set only up to turning index!!! -> FUNCTION FOR TURNING INDEX!! (used also in theh eadingpath func)
+
+        # DELETE BAD GOALS IF APPLICABLE, DONT NEED ACCES TO THEM NOW
+        if np.any(goal_delete_mask):
+            print("DELETING GOALS: " + str(np.sum(goal_delete_mask)))
+            if np.all(goal_delete_mask):
+                self.exploration_goals = None
+                return None
+            else:
+                self.exploration_goals = self.exploration_goals[np.logical_not(goal_delete_mask)]
 
         # RETURN ROADMAP IN GLOBAL FRAME
         return NavRoadmap(global_pts, global_headings)
@@ -1437,6 +1455,30 @@ class LocalNavigatorModule:
             self.set_roadmap(global_goal_roadmap)
 
     # # #}
+
+    def getViewpointFrontierValue(self, vp):# # #{
+        w = self.mapper.width
+        h = self.mapper.height
+        K = self.mapper.K
+
+        pos = vp.position
+        heading = vp.heading
+        smap_pos, smap_heading = transformViewpoints(pos.reshape((1,3)), np.array(heading).flatten(), self.mapper.spheremap.T_global_to_own_origin)
+
+        T_fcu_to_cam = lookupTransformAsMatrix(self.fcu_frame, self.mapper.camera_frame, self.tf_listener)
+        T_smap_orig_to_head_fcu = posAndHeadingToMatrix(smap_pos, smap_heading)
+        T_smap_orig_to_head_cam = T_smap_orig_to_head_fcu @ T_fcu_to_cam 
+        T_head_cam_to_smap_orig = np.linalg.inv(T_smap_orig_to_head_cam)
+
+        frontier_points_in_camframe = transformPoints(self.mapper.spheremap.frontier_points, T_head_cam_to_smap_orig)
+        only_rotmatrix = np.eye(4)
+        only_rotmatrix[:3,:3] = T_head_cam_to_smap_orig[:3,:3]
+        frontier_normals_in_camframe = transformPoints(self.mapper.spheremap.frontier_normals, only_rotmatrix)
+
+        visible_pts_mask = getVisiblePoints(frontier_points_in_camframe, frontier_normals_in_camframe, np.pi/2, self.frontier_visibility_dist, w, h, K, verbose=False)
+        n_visible = np.sum(visible_pts_mask)
+        return n_visible
+# # #}
 
     # --UTILS
 

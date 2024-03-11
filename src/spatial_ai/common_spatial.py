@@ -141,7 +141,8 @@ def transformViewpoints(pts, headings, T):
     res = res / res[3, :] # unhomogenize
 
     hedif = transformationMatrixToHeading(T)
-    res_heads = np.unwrap(headings + hedif)
+    # res_heads = np.unwrap(headings + hedif)
+    res_heads = hdif(headings + hedif)
 
     return res[:3, :].T, res_heads
 

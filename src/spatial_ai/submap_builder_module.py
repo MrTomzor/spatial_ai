@@ -426,11 +426,8 @@ class SubmapBuilderModule:
                 bbx.expand(self.spheremap.max_radius)
                 sphere_idxs_for_conn_checking = bbx.pts_in_mask(transformed_old_points)
 
-                print("KOCKA")
-                print(z_ok_mask.shape)
 
                 z_ok_points = transformed_old_points[z_ok_mask , :] # remove spheres with negative z
-                print(z_ok_points.shape)
                 worked_sphere_idxs = np.arange(n_spheres_old)[z_ok_mask ]
 
 
@@ -453,13 +450,13 @@ class SubmapBuilderModule:
                 if not self.spheremap.surfel_points is None:
                     # TODO - here, filter out the ones outside of bbx!
                     n_surfels = self.spheremap.surfel_points.shape[0]
-                    print(n_surfels)
+                    # print(n_surfels)
 
                     surfel_points_in_camframe = transformPoints(self.spheremap.surfel_points, np.linalg.inv(T_orig_to_current_cam))
 
                     surfels_in_bbx_mask = bbx_for_surfel_deletion.pts_in_mask(surfel_points_in_camframe) 
                     surfels_in_bbx_idxs = np.where(surfels_in_bbx_mask)[0] 
-                    print("N SURFELS IN BBX: " + str(np.sum(surfels_in_bbx_mask)))
+                    # print("N SURFELS IN BBX: " + str(np.sum(surfels_in_bbx_mask)))
 
                     # surfel_points_in_camframe = transformPoints(self.spheremap.surfel_points[surfels_in_bbx_mask, :], np.linalg.inv(T_orig_to_current_cam))
                     contained_surfels_mask = np.full(n_surfels, False)
@@ -507,8 +504,8 @@ class SubmapBuilderModule:
                         # visible_points = np.append(visible_old_points, nondeleted_visible_surfels, axis=0)
                         fovmesh_pts = np.concatenate((fovmesh_pts.T, nondeleted_visible_surfels), axis=0).T
                     worked_sphere_idxs = worked_sphere_idxs
-                    print("N WORKED SPHERE IDXS:")
-                    print(worked_sphere_idxs.size)
+                    # print("N WORKED SPHERE IDXS:")
+                    # print(worked_sphere_idxs.size)
 
                     # GET DISTANCES OF OLD SPHERE POINTS TO THE VISIBLE MESH AND TO CONSIDERED OBSTACLE POINTS (visible and old ones that are far, but measured from close)
                     interm_time2 = time.time()
@@ -760,7 +757,8 @@ class SubmapBuilderModule:
 
             # TOTAL COMPUTATION TIME
             comp_time = time.time() - update_start_time
-            print("SPHEREMAP integration time: " + str((comp_time) * 1000) +  " ms")
+            if self.verbose_submap_construction:
+                print("SPHEREMAP integration time: " + str((comp_time) * 1000) +  " ms")
             runtime_data.append(comp_time)
 
             # PUBLISH RUNTIMES
