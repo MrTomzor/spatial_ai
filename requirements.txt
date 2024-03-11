@@ -11,4 +11,4 @@ sensor_msgs
 tf2_ros
 netifaces
 pyembree==0.2.11
-open3d
+open3d==0.18.0
