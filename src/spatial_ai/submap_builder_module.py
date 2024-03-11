@@ -499,7 +499,7 @@ class SubmapBuilderModule:
 
                     visible_old_points = z_ok_points
                     if not nondeleted_visible_surfels is None:
-                        print("ADDING NONDELTED PTS: " + str(nondeleted_visible_surfels.shape[0]))
+                        # print("ADDING NONDELTED PTS: " + str(nondeleted_visible_surfels.shape[0]))
                         # TODO fix
                         # visible_points = np.append(visible_old_points, nondeleted_visible_surfels, axis=0)
                         fovmesh_pts = np.concatenate((fovmesh_pts.T, nondeleted_visible_surfels), axis=0).T

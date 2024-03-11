@@ -15,7 +15,7 @@ local_mapping:
   max_sphere_sampling_z : 15
 
   surfel_resolution: 0.3
-  frontier_resolution: 1
+  frontier_resolution: 1.5
 
   min_sphere_rad: 0.3
 
@@ -38,7 +38,8 @@ local_nav:
   max_heading_change_per_m: 0.314159 
   path_abandon_time: 8
 
-  clearing_dist: 4
+  clearing_dist: 1.5
+  rrt_clearing_dist: 3
   reaching_dist: 1
   out_path_resolution: 0.5
 

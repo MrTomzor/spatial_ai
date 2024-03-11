@@ -109,6 +109,7 @@ class LocalNavigatorModule:
         self.path_abandon_time = rospy.get_param("local_nav/path_abandon_time")
 
         self.planning_clearing_dist = rospy.get_param("local_nav/clearing_dist")
+        self.rrt_planning_clearing_dist = rospy.get_param("local_nav/rrt_clearing_dist")
         self.output_path_resolution = rospy.get_param("local_nav/out_path_resolution")
 
 
@@ -169,7 +170,7 @@ class LocalNavigatorModule:
     def find_headingpath_astar_smap_frame(self, planning_start_vp, max_comp_time, min_odist, max_odist, goal_vp_smap, constant_heading_states_end = 0):# # #{
         # FIND PATH WITHOUT HEADINGS USING ASTAR ON SMAP
         # TODO
-        raw_pts, path_cost = self.findPathAstarInSubmap(self.mapper.spheremap, planning_start_vp.position, goal_vp_smap.position, maxdist_to_graph=0, min_safe_dist=self.min_planning_odist, max_safe_dist=self.max_planning_odist, safety_weight = self.safety_weight)
+        raw_pts, path_cost = self.findPathAstarInSubmap(self.mapper.spheremap, planning_start_vp.position, goal_vp_smap.position, maxdist_to_graph=0, min_safe_dist=self.min_planning_odist, max_safe_dist=self.max_planning_odist, safety_weight = self.safety_weight, clearing_dist = self.planning_clearing_dist)
         if raw_pts is None:
             return None, None, None
         n_pts = raw_pts.shape[0]
@@ -376,7 +377,7 @@ class LocalNavigatorModule:
             new_node_fspace_dist = self.mapper.spheremap.getMaxDistToFreespaceEdge(new_node_pos) * self.fspace_bonus_mod 
             if new_node_fspace_dist < min_odist:
                 # IF AT LEAST IN SPHERE AND WITHIN CLEARING DIST -> IS OK
-                if new_node_fspace_dist < 0 or np.linalg.norm(new_node_pos - start_vp.position) > self.planning_clearing_dist:
+                if new_node_fspace_dist < 0 or np.linalg.norm(new_node_pos - start_vp.position) > self.rrt_planning_clearing_dist:
                     # CHECK WHETHER NOT IN FSPACE OF OTHER MAPS
                     is_unsafe_in_other_maps = True
                     for omi in range(n_prev_smaps):
@@ -583,7 +584,9 @@ class LocalNavigatorModule:
 
                             # heads_values[i] = (global_pos - current_fcu_in_global).flatten()[0] * 5 # VALUE OF DIST IN FORWARD DIR!
                             # heads_values[i] = np.linalg.norm((global_pos - current_fcu_in_global).flatten()) * 5 # VALUE OF DIST IN ANY DIR!
-                            heads_values[i] = np.random.rand() * 50 # VALUE OF DIST IN ANY DIR!
+
+                            # heads_values[i] = np.random.rand() * 50 # VALUE OF DIST IN ANY DIR!
+                            heads_values[i] = acceptance_thresh + 1
 
                             if heads_values[i] <= acceptance_thresh:
                                 heads_values[i] = acceptance_thresh + 1
@@ -691,20 +694,25 @@ class LocalNavigatorModule:
             print("PATHFIND: no nodes are safe!!!")
             return None, None
 
-        # FIND NEAREST NODES TO START AND END
-        dist_from_startpoint = np.linalg.norm((smap.points - startpoint), axis=1) - smap.radii
-        argm = np.argmin(dist_from_startpoint[safe_nodes_mask])
-        # start_node_index = np.argmin(dist_from_startpoint)
-        start_node_index = np.arange(smap.radii.size)[safe_nodes_mask][argm]
-
         # ONLY CONSIDER GOAL POINTS IN THE SAME CONNECTIVITY REGION
         dist_from_endpoint = np.linalg.norm((smap.points - endpoint), axis=1) - smap.radii
         argm = np.argmin(dist_from_endpoint[safe_nodes_mask])
         # end_node_index = np.argmin(dist_from_endpoint)
         end_node_index = np.arange(smap.radii.size)[safe_nodes_mask][argm]
 
+
+        # FIND NEAREST NODES TO START AND END
+        dist_from_startpoint = np.linalg.norm((smap.points - startpoint), axis=1) - smap.radii
+
+        # SET NODES IN CLEARING DIST TO BE SAFE AS WELL (SO CAN START FROM THEM)
+        safe_nodes_mask[dist_from_startpoint < clearing_dist] = True
+
+        argm = np.argmin(dist_from_startpoint[safe_nodes_mask])
+        # start_node_index = np.argmin(dist_from_startpoint)
+        start_node_index = np.arange(smap.radii.size)[safe_nodes_mask][argm]
+
         # CHECK IF GOAL ITSELF IS SAFE
-        if -dist_from_startpoint[end_node_index] > min_safe_dist or dist_from_endpoint[end_node_index] > 0: 
+        if check_end_safety and (-dist_from_startpoint[end_node_index] > min_safe_dist or dist_from_endpoint[end_node_index] > 0):
             print("PATHFIND: goal is unsafe!")
             return None, None
 
@@ -1294,6 +1302,7 @@ class LocalNavigatorModule:
         current_vp_smap_frame = Viewpoint(T=T_smap_origin_to_fcu) 
 
         if self.exploration_goals is None:
+            print("FIND BEST GOAL - cant, no goals!")
             return None
         n_goals_total = self.exploration_goals.size
 
@@ -1317,6 +1326,7 @@ class LocalNavigatorModule:
             frontier_val = self.getViewpointFrontierValue(goal.viewpoint)
             if frontier_val == 0:
                 goal_delete_mask[i] = True
+                print("DELETING GOAL VP BECAUSE NO VISIBLE FRONTIERS")
                 continue
 
             # FIND PATH TO GOAL, SAVE IT AND COST, IF FOUND
@@ -1336,6 +1346,7 @@ class LocalNavigatorModule:
 
         # IF NO VPS REACHABLE, RETURN 
         if len(paths_to_goals) == 0:
+            print("NO PATHS TO ANY GOALS FOUND")
             return None
 
         # RANK THE PATHS AND VPS
@@ -1439,14 +1450,19 @@ class LocalNavigatorModule:
 
         if self.roadmap is None:
             # FIND A* PATHS TO ALL KNOWN GOALS IN GIVEN RADIUS
+
+            print("EXPLORATION - SEARCHING FOR GOALS, N GOALS:")
+            if not self.exploration_goals is None:
+                print(self.exploration_goals.size)
             global_goal_roadmap = self.getBestGoalRoadmap(self.local_exploration_radius)
 
             # IF NONE FOUND, SWITCH TO GLOBAL SEARCH
             if global_goal_roadmap is None:
-                print("EXPLORATION - no reachable goals found withing " + str(self.local_exploration_radius) + "m, finding paths to all goals")
+                print("EXPLORATION - NO GOALS REACHABLE found withing " + str(self.local_exploration_radius) + "m, finding paths to all goals")
                 global_goal_roadmap = self.getBestGoalRoadmap()
                 if global_goal_roadmap is None:
-                    print("EXPLORATION - NO GOALS REACHABLE!!!")
+                    print("EXPLORATION - NO GOALS REACHABLE anywhere!!!")
+                    # print("N GOALS NOW:" + str(
                     return
 
             print("EXPLORATION - SETTING NEW ROADMAP TO GOAL!!!")
