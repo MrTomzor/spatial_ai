@@ -168,10 +168,24 @@ class LocalNavigatorModule:
     def find_headingpath_astar_smap_frame(self, planning_start_vp, max_comp_time, min_odist, max_odist, goal_vp_smap, constant_heading_states_end = 0):# # #{
         # FIND PATH WITHOUT HEADINGS USING ASTAR ON SMAP
         # TODO
-        raw_pts, path_cost = self.findPathAstarInSubmap(self.mapper.spheremap, planning_start_vp.position, goal_vp_smap.position, maxdist_to_graph=10, min_safe_dist=self.min_planning_odist, max_safe_dist=self.max_planning_odist, safety_weight = self.safety_weight)
+        raw_pts, path_cost = self.findPathAstarInSubmap(self.mapper.spheremap, planning_start_vp.position, goal_vp_smap.position, maxdist_to_graph=0, min_safe_dist=self.min_planning_odist, max_safe_dist=self.max_planning_odist, safety_weight = self.safety_weight)
         if raw_pts is None:
             return None, None, None
         n_pts = raw_pts.shape[0]
+
+        # CHECK IF GOAL POS IS IN UNSAFE SPACE
+        do_append_goal = True
+        goal_odist = self.mapper.spheremap.getMaxDistToFreespaceEdge(goal_vp_smap.position)
+        if goal_odist < min_odist:
+            print("HEADINGPATH: goal is unsafe! using closest sphere instead as the goal position")
+            enddist = np.linalg.norm(raw_pts[n_pts-1, :] - goal_vp_smap.position)
+            if enddist < self.goal_blocking_dist:
+                do_append_goal = False
+                goal_vp_smap.position = raw_pts[n_pts-1, :]
+            else:
+                print("HEADINGPATH: goal position not in exploration goal blocking distance, NOT REACHABLE!")
+                return None, None, None
+
 
         start_time = time.time()
 
@@ -203,8 +217,11 @@ class LocalNavigatorModule:
 
         # IF NO ALIGNING AT END NEEDED, JUST FLY
         if not goal_vp_smap.use_heading:
-            final_pts = np.concatenate((raw_pts, goal_vp_smap.position), axis = 0)
-            final_headings = np.concatenate((front_flight_headings.flatten(), np.array([front_flight_headings[-1]]).flatten()))
+            final_pts = raw_pts
+            final_headings = front_flight_headings.flatten()
+            if do_append_goal:
+                final_pts = np.concatenate((final_pts, goal_vp_smap.position), axis = 0)
+                final_headings = np.concatenate((final_headings, np.array([front_flight_headings[-1]]).flatten()))
             # print("FINAL HEADINGS:")
             # print((final_headings * (180 / np.pi)).astype(int))
             # print("GOAL HEADING:")
@@ -232,10 +249,10 @@ class LocalNavigatorModule:
                 break
 
         if turning_start_idx is None:
-            print("ASTAR SENDABLE PATH PLANNING -- cant find good index to start turning!!!")
+            print("HEADINGPATH -- cant find good index to start turning!!!")
             return None, None, None
 
-        print("ASTAR SENDABLE PATH PLANNING -- TURNING START IDX: " + str(turning_start_idx) + "/" + str(n_pts+1))
+        print("HEADINGPATH -- TURNING START IDX: " + str(turning_start_idx) + "/" + str(n_pts+1))
         # TODO - make it turn EVEN SOONER based on some dist criterion (so that we move a lot looking in the dir of the goal at the end)
 
         # NOW MODIFY THE HEADING CHANGES FROM TURNING START (if too soon, just stay at end heading!)
@@ -263,8 +280,11 @@ class LocalNavigatorModule:
             prev_heading = aligning_headings[i]
 
         # ATTACH END VP
-        final_pts = np.concatenate((raw_pts, goal_vp_smap.position), axis = 0)
-        final_headings = np.concatenate((aligning_headings, goal_vp_smap.heading), axis = 0)
+        final_pts = raw_pts
+        final_headings = aligning_headings
+        if do_append_goal:
+            final_pts = np.concatenate((final_pts, goal_vp_smap.position), axis = 0)
+            final_headings = np.concatenate((final_headings, goal_vp_smap.heading), axis = 0)
 
         print('HEADINGPATH TOTAL: %s' % ((time.time() - start_time)*1000))
         return final_pts, final_headings, path_cost
@@ -650,7 +670,7 @@ class LocalNavigatorModule:
 
     # # #}
 
-    def findPathAstarInSubmap(self, smap, startpoint, endpoint, maxdist_to_graph=10, min_safe_dist=0.5, max_safe_dist=3, safety_weight=1):# # #{
+    def findPathAstarInSubmap(self, smap, startpoint, endpoint, maxdist_to_graph=10, min_safe_dist=0.5, max_safe_dist=3, safety_weight=1, check_end_safety=False, clearing_dist=0):# # #{
         print("PATHFIND: STARTING, FROM TO:")
         print(startpoint)
         print(endpoint)
@@ -665,13 +685,27 @@ class LocalNavigatorModule:
         unsafe_mask = smap.radii < min_safe_dist
         expanded_mask = np.full(smap.radii.shape, False)
 
+        safe_nodes_mask = np.logical_not(unsafe_mask)
+        if not np.any(safe_nodes_mask):
+            print("PATHFIND: no nodes are safe!!!")
+            return None, None
+
         # FIND NEAREST NODES TO START AND END
         dist_from_startpoint = np.linalg.norm((smap.points - startpoint), axis=1) - smap.radii
-        start_node_index = np.argmin(dist_from_startpoint)
+        argm = np.argmin(dist_from_startpoint[safe_nodes_mask])
+        # start_node_index = np.argmin(dist_from_startpoint)
+        start_node_index = np.arange(smap.radii.size)[safe_nodes_mask][argm]
 
         # ONLY CONSIDER GOAL POINTS IN THE SAME CONNECTIVITY REGION
         dist_from_endpoint = np.linalg.norm((smap.points - endpoint), axis=1) - smap.radii
-        end_node_index = np.argmin(dist_from_endpoint)
+        argm = np.argmin(dist_from_endpoint[safe_nodes_mask])
+        # end_node_index = np.argmin(dist_from_endpoint)
+        end_node_index = np.arange(smap.radii.size)[safe_nodes_mask][argm]
+
+        # CHECK IF GOAL ITSELF IS SAFE
+        if -dist_from_startpoint[end_node_index] > min_safe_dist or dist_from_endpoint[end_node_index] > 0: 
+            print("PATHFIND: goal is unsafe!")
+            return None, None
 
         if(dist_from_startpoint[start_node_index] > maxdist_to_graph or dist_from_endpoint[end_node_index] > maxdist_to_graph):
             print("PATHFIND: start or end too far form graph!")

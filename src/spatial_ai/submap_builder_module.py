@@ -624,6 +624,8 @@ class SubmapBuilderModule:
             # FILTER PTS - CHECK THAT THE MAX DIST IS NOT BEHIND THE OBSTACLE MESH BY RAYCASTING
             ray_hit_pts, index_ray, index_tri = obstacle_mesh.ray.intersects_location(
             ray_origins=np.zeros(sampling_pts.shape).T, ray_directions=sampling_pts.T)
+            # TODO - figure out why some rays maybe dont hit?
+            n_sampled = ray_hit_pts.shape[0]
 
             # MAKE THEM BE IN RAND POSITION BETWEEN CAM AND MESH HIT POSITION, UP TO MAX Z (TODO-rename to dist from Z)
             # ray_hit_dists = np.linalg.norm(ray_hit_pts, axis=1)
