@@ -1,0 +1,51 @@
+marker_scale: 0.5
+
+platform: "bluefox_uav_gazebo"
+
+local_mapping:
+  using_external_slam_pts: True
+  verbose_submap_construction: False
+
+  keyframe_dist_thr: 4
+  slam_filtering_enabled: False
+
+  smap_fragmentation_dist: 2000
+  n_sphere_samples_per_update: 300
+  carryover_dist: 4
+  max_sphere_sampling_z : 20
+
+  surfel_resolution: 0.3
+  frontier_resolution: 1.5
+
+  min_sphere_rad: 0.3
+
+  fcu_frame: 'uav1/fcu'
+  img_topic: '/uav1/vio/camera/image_raw'
+  slampoints_topic: '/ov_msckf/points_slam'
+
+  get_camera_calib_from_topic: False
+  camera_calib_topic: '/uav1/vio/camera/camera_info'
+
+local_nav:
+  enabled: True
+  uav_radius: 0.8
+  safety_replanning_trigger_odist: 1.5
+  min_planning_odist: 2
+  max_planning_odist: 8
+  safety_weight: 50
+
+  max_rrt_step_size: 1
+  max_heading_change_per_m: 0.314159 
+  path_abandon_time: 8
+
+  clearing_dist: 1.5
+  rrt_clearing_dist: 3
+  reaching_dist: 1
+  out_path_resolution: 0.5
+
+  local_exploration_radius: 20
+  exploration_goal_blocking_dist: 6
+
+global_nav:
+  enabled: False
+  testing_mchunk_filename: "threeroom_big_to_left_end.pickle"

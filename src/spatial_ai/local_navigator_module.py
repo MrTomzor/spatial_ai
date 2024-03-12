@@ -170,7 +170,7 @@ class LocalNavigatorModule:
     def find_headingpath_astar_smap_frame(self, planning_start_vp, max_comp_time, min_odist, max_odist, goal_vp_smap, constant_heading_states_end = 0):# # #{
         # FIND PATH WITHOUT HEADINGS USING ASTAR ON SMAP
         # TODO
-        raw_pts, path_cost = self.findPathAstarInSubmap(self.mapper.spheremap, planning_start_vp.position, goal_vp_smap.position, maxdist_to_graph=0, min_safe_dist=self.min_planning_odist, max_safe_dist=self.max_planning_odist, safety_weight = self.safety_weight, clearing_dist = self.planning_clearing_dist)
+        raw_pts, path_cost = self.findPathAstarInSubmap(self.mapper.spheremap, planning_start_vp.position, goal_vp_smap.position, maxdist_to_graph_start=self.planning_clearing_dist ,maxdist_to_graph_end=self.goal_blocking_dist/2, min_safe_dist=self.min_planning_odist, max_safe_dist=self.max_planning_odist, safety_weight = self.safety_weight, clearing_dist = self.planning_clearing_dist)
         if raw_pts is None:
             return None, None, None
         n_pts = raw_pts.shape[0]
@@ -674,7 +674,7 @@ class LocalNavigatorModule:
 
     # # #}
 
-    def findPathAstarInSubmap(self, smap, startpoint, endpoint, maxdist_to_graph=10, min_safe_dist=0.5, max_safe_dist=3, safety_weight=1, check_end_safety=False, clearing_dist=0):# # #{
+    def findPathAstarInSubmap(self, smap, startpoint, endpoint, maxdist_to_graph_start=0,maxdist_to_graph_end=10, min_safe_dist=0.5, max_safe_dist=3, safety_weight=1, check_end_safety=False, clearing_dist=0):# # #{
         print("PATHFIND: STARTING, FROM TO:")
         print(startpoint)
         print(endpoint)
@@ -705,7 +705,7 @@ class LocalNavigatorModule:
         dist_from_startpoint = np.linalg.norm((smap.points - startpoint), axis=1) - smap.radii
 
         # SET NODES IN CLEARING DIST TO BE SAFE AS WELL (SO CAN START FROM THEM)
-        safe_nodes_mask[dist_from_startpoint < clearing_dist] = True
+        # safe_nodes_mask[dist_from_startpoint < clearing_dist] = True
 
         argm = np.argmin(dist_from_startpoint[safe_nodes_mask])
         # start_node_index = np.argmin(dist_from_startpoint)
@@ -716,7 +716,7 @@ class LocalNavigatorModule:
             print("PATHFIND: goal is unsafe!")
             return None, None
 
-        if(dist_from_startpoint[start_node_index] > maxdist_to_graph or dist_from_endpoint[end_node_index] > maxdist_to_graph):
+        if(dist_from_startpoint[start_node_index] > maxdist_to_graph_start or dist_from_endpoint[end_node_index] > maxdist_to_graph_end):
             print("PATHFIND: start or end too far form graph!")
             print(dist_from_startpoint[start_node_index])
             print(dist_from_endpoint[end_node_index])
@@ -833,7 +833,7 @@ class LocalNavigatorModule:
                     T_smap_origin_to_fcu = np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin) @ T_global_to_fcu
                     pos_fcu_in_global_frame = T_global_to_fcu[:3, 3]
 
-                    path_home_pts, path_cost = self.findPathAstarInSubmap(self.mapper.spheremap, T_smap_origin_to_fcu[:3, 3].T, np.zeros((3,1)).T, maxdist_to_graph=10, min_safe_dist=self.min_planning_odist, max_safe_dist=self.max_planning_odist, safety_weight = self.safety_weight)  
+                    path_home_pts, path_cost = self.findPathAstarInSubmap(self.mapper.spheremap, T_smap_origin_to_fcu[:3, 3].T, np.zeros((3,1)).T,maxdist_to_graph_start=self.planning_clearing_dist, maxdist_to_graph_end=10, min_safe_dist=self.min_planning_odist, max_safe_dist=self.max_planning_odist, safety_weight = self.safety_weight)  
                     path_home_pts = transformPoints(path_home_pts, self.mapper.spheremap.T_global_to_own_origin)
 
                     rm = NavRoadmap(path_home_pts)
