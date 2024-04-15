@@ -32,10 +32,12 @@ local_nav:
   path_abandon_time: 2
 
   clearing_dist: 1.5
+  rrt_clearing_dist: 3
   reaching_dist: 0.5
   out_path_resolution: 0.5
 
   local_exploration_radius: 20
+  exploration_goal_blocking_dist: 3
 
 global_nav:
   enabled: False
