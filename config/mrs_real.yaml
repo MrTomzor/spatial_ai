@@ -3,10 +3,10 @@ marker_scale: 0.5
 platform: "bluefox_uav_gazebo"
 
 local_mapping:
-  using_external_slam_pts: True
+  using_external_slam_pts: False
   verbose_submap_construction: False
 
-  keyframe_dist_thr: 4
+  keyframe_dist_thr: 1.5
   slam_filtering_enabled: False
 
   smap_fragmentation_dist: 2000
@@ -20,11 +20,11 @@ local_mapping:
   min_sphere_rad: 0.3
 
   fcu_frame: 'uav25/fcu'
-  img_topic: '/uav25/bluefox_vio_front/image_raw'
+  img_topic: '/uav25/bluefox_vio_front/image_raw/'
   slampoints_topic: '/uav25/ov_msckf/points_slam'
 
   get_camera_calib_from_topic: False
-  camera_calib_topic: '/uav1/vio/camera/camera_info'
+  camera_info_topic: '/uav25/bluefox_vio_front/camera_info'
 
 local_nav:
   enabled: True

@@ -90,10 +90,37 @@ class KeyFrame:# # #{
 class FireSLAMModule:
     # CORE
 
-    def __init__(self, w, h, K, camera_frame_id, odom_orig_frame_id, tf_listener, image_sub_topic=None, standalone_mode = False ):# # #{
-        self.width = w
-        self.height = h
-        self.K = K
+    def __init__(self, w, h, K, camera_frame_id, odom_orig_frame_id, tf_listener, camera_info = None, image_sub_topic=None, standalone_mode = False ):# # #{
+
+        if not camera_info is None:
+            self.width = camera_info.width
+            self.height = camera_info.height
+            self.K = np.reshape(camera_info.K, (3,3))
+            self.distortion_coeffs =  np.array(camera_info.D)
+            # self.distortion_coeffs[0] *= 1
+            # self.distortion_coeffs[1] *= 1
+            # self.distortion_coeffs[2] *= 3
+            # self.distortion_coeffs[3] *= 2
+
+            # FUNKE, EQUIDISTANT
+            # intrinsics: [221.01292402 220.90655859 381.87430745 227.72045365] #fu, fv, cu, cv
+            # self.distortion_coeffs = np.array([-0.24006028,  0.03866184, -0.00146516,  0.00067817])
+            # self.K = np.reshape(np.array([221.01292402, 0, 381.87430745,0, 220.90655859, 227.72045365, 0, 0, 1]), (3,3)) #fu, fv, cu, cv
+
+            # CISARAK
+            # K: [217.09030731481513, 0.0, 391.34523065933536, 0.0, 217.09030731481513, 220.41892147142084, 0.0, 0.0, 1.0]
+            # self.distortion_coeffs =  np.array([[0.007849599795381143, -0.0428506202709645, 0.04404368320767509, -0.020526488829380334, 0.0]])
+            #data: [-0.020526488829380334, 0.04404368320767509, -0.0428506202709645, 0.007849599795381143, 0.0]
+
+            # CUSTOM
+            # self.distortion_coeffs =  np.array([[-0.5, 0, 0, 0, 0.0]])
+        else:
+            self.width = w
+            self.height = h
+            self.K = K
+            self.distortion_coeffs  = None
+
+
         self.camera_frame_id = camera_frame_id
         self.odom_orig_frame_id = odom_orig_frame_id
         self.image_sub_topic = image_sub_topic
@@ -152,11 +179,9 @@ class FireSLAMModule:
         if self.standalone_mode:
             self.sub_cam = rospy.Subscriber(self.image_sub_topic, Image, self.image_callback, queue_size=10)
 
-        # self.K = np.array([, 644.5958939934509, 400.0503960299562, 300.5824096896595]).reshape((3,3))
         self.imu_to_cam_T = np.array( [[0, -1, 0, 0], [0, 0, -1, 0], [1, 0, 0, 0], [0.0, 0.0, 0.0, 1.0]])
         print("IMUTOCAM", self.imu_to_cam_T)
 
-        # self.K = np.array([642.8495341420769, 644.5958939934509, 400.0503960299562, 300.5824096896595]).reshape((3,3))
         self.P = np.zeros((3,4))
         self.P[:3, :3] = self.K
         print(self.P)
@@ -199,7 +224,7 @@ class FireSLAMModule:
         self.last_tried_landmarks_pxs = None
 
         self.trueX, self.trueY, self.trueZ = 0, 0, 0
-        self.detector = cv2.FastFeatureDetector_create(threshold=30, nonmaxSuppression=True)
+        self.detector = cv2.FastFeatureDetector_create(threshold=50, nonmaxSuppression=True)
 
         self.tracking_colors = np.random.randint(0, 255, (100, 3)) 
 
@@ -376,6 +401,34 @@ class FireSLAMModule:
         # print(trans)
 
         img = self.bridge.imgmsg_to_cv2(msg, "bgr8")
+
+
+        # new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(K, D, (1280, 720), np.eye(3), balance=1, new_size=(3400, 1912), fov_scale=1)
+        # map1, map2 = cv2.fisheye.initUndistortRectifyMap(K, D, np.eye(3), new_K, (3400, 1912), cv2.CV_16SC2)
+        # dst = cv2.remap(img, map1[575:1295, 23:3119, :], map2[575:1295, 23:3119], interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+
+        D = self.distortion_coeffs[:4]
+        print(D.shape)
+        wh = (self.width,self.height)
+        new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(self.K, D, wh, np.eye(3), balance=1, new_size=wh, fov_scale=1)
+        map1, map2 = cv2.fisheye.initUndistortRectifyMap(self.K, D, np.eye(3), new_K, wh, cv2.CV_16SC2)
+        dst = cv2.remap(img, map1[:, :, :], map2, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+        img = dst
+
+
+        # newcameramtx, roi = cv2.getOptimalNewCameraMatrix(self.K, self.distortion_coeffs, (self.width,self.height), 1, (self.width,self.height))
+        # dst = cv2.undistort(img, self.K, self.distortion_coeffs, None, newcameramtx)
+        # print("DISTORTION")
+        # print(img.shape)
+        # print(roi)
+        # # crop the image
+        # x, y, w, h = roi
+        # print(dst.shape)
+        # # dst = dst[y:y+h, x:x+w]
+        # # print(dst.shape)
+        # # cv.imwrite('calibresult.png', dst)
+
+        # self.track_vis_pub.publish(self.bridge.cv2_to_imgmsg(dst, "bgr8"))
 
         comp_start_time = rospy.get_rostime()
 
@@ -681,7 +734,7 @@ class FireSLAMModule:
 
             comp_time = time.time() - comp_start_time
             print("computation time: " + str((comp_time) * 1000) +  " ms")
-            self.track_vis_pub.publish(self.bridge.cv2_to_imgmsg(self.visualize_tracking(), "bgr8"))
+        self.track_vis_pub.publish(self.bridge.cv2_to_imgmsg(self.visualize_tracking(), "bgr8"))
 
         # VISUALIZE FEATURES
 

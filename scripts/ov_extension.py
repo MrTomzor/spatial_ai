@@ -18,7 +18,7 @@ from spatial_ai.submap_builder_module import *
 from spatial_ai.local_navigator_module import *
 from spatial_ai.global_navigator_module import *
 
-from sensor_msgs.msg import Image, CompressedImage, PointCloud2
+from sensor_msgs.msg import Image, CompressedImage, PointCloud2, CameraInfo
 import sensor_msgs.point_cloud2 as pc2
 import mrs_msgs.msg
 import std_msgs.msg
@@ -237,10 +237,18 @@ class NavNode:
         print("T_imu(fcu)_to_cam")
         print(self.T_imu_to_cam)
 
-        # --INITIALIZE MODULES
+        # WAIT FOR CAMERA INFO
+        self.camera_info = None
+        self.camera_info_topic = rospy.get_param("local_mapping/camera_info_topic")
+        self.sub_camera_info = rospy.Subscriber(self.camera_info_topic, CameraInfo, self.camera_info_callback, queue_size=10)
+        print("WAITING FOR CAMERA INFO")
+        while self.camera_info is None:
+            print("WAITING FOR CAMERA INFO AT TOPIC " + self.camera_info_topic)
+            time.sleep(0.1)
 
+        # --INITIALIZE MODULES
         # FIRESLAM
-        self.fire_slam_module = FireSLAMModule(self.width, self.height, self.K, self.camera_frame, self.odom_frame, self.tf_listener)
+        self.fire_slam_module = FireSLAMModule(self.width, self.height, self.K, self.camera_frame, self.odom_frame, self.tf_listener, self.camera_info)
 
         # SUBMAP BUILDER
         self.submap_builder_input_mutex = threading.Lock()
@@ -284,6 +292,12 @@ class NavNode:
         return EmptySrvResponse()# # #}
 
     # --SUBSCRIBE CALLBACKS
+
+    def camera_info_callback(self, msg):
+        if not self.camera_info is None:
+            return
+        print("OBTAINED CAMERA INFO")
+        self.camera_info = msg
 
     def planning_loop_iter(self, event):# # #{
         print("PLANNING ITER")
