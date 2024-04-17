@@ -225,25 +225,28 @@ class LocalNavigatorModule:
         prev_pt = planning_start_vp.position
         prev_heading = planning_start_vp.heading
 
-        for i in range(n_pts):
-            dirvec = (raw_pts[i] - prev_pt).flatten()
+        for i in range(n_pts-1):
+            dirvec = (raw_pts[i+1] - raw_pts[i]).flatten()
             dist = np.linalg.norm(dirvec)
 
             # CLAMP
             front_heading = np.arctan2(dirvec[1], dirvec[0])
-            # heading_dif = np.unwrap(np.array(front_heading).flatten() - np.array(prev_heading).flatten()) 
-            heading_dif = hdif(np.array(front_heading).flatten() - np.array(prev_heading).flatten()) 
 
-            max_allowed_heading_change = self.max_heading_change_per_m * dist
-            if np.abs(heading_dif) > max_allowed_heading_change:
-                # front_flight_headings[i] = np.unwrap(prev_heading + max_allowed_heading_change * np.sign(heading_dif))
-                front_flight_headings[i] = hdif(prev_heading + max_allowed_heading_change * np.sign(heading_dif))
+            # heading_dif = hdif(np.array(front_heading).flatten() - np.array(prev_heading).flatten()) 
+            # max_allowed_heading_change = self.max_heading_change_per_m * dist
+            # if np.abs(heading_dif) > max_allowed_heading_change:
+            #     # front_flight_headings[i] = np.unwrap(prev_heading + max_allowed_heading_change * np.sign(heading_dif))
+            #     front_flight_headings[i] = hdif(prev_heading + max_allowed_heading_change * np.sign(heading_dif))
+
+            front_flight_headings[i] = front_heading
 
 
             prev_pt = raw_pts[i]
             prev_heading = front_flight_headings[i]
+        if front_flight_headings.size > 1:
+            front_flight_headings[-1] = front_flight_headings[-2]
 
-        # IF NO ALIGNING AT END NEEDED, JUST FLY
+        # IF NO ALIGNING AT END NEEDED, JUST FLY IN DIRECTION OF FRONT-FLIGHT
         if not goal_vp_smap.use_heading:
             final_pts = raw_pts
             final_headings = front_flight_headings.flatten()
@@ -291,6 +294,7 @@ class LocalNavigatorModule:
         for i in range(turning_start_idx+1, n_pts):
             # heading_dif_to_goal = np.unwrap(goal_heading - prev_heading)
             heading_dif_to_goal = hdif(goal_heading - prev_heading)
+            print("HDIF TO GOAL: " + str(heading_dif_to_goal))
 
             # CLOSE ENOUGH
             dist = np.linalg.norm(raw_pts[i] - prev_pt)
