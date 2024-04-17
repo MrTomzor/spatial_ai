@@ -78,7 +78,7 @@ class ExplorationGoal:
 class LocalNavigatorModule:
     def __init__(self, mapper, ptraj_topic, output_path_topic):# # #{
 
-        self.main_state = 'exploring'
+        self.main_state = "idle"
 
         self.mapper = mapper
         self.odom_frame = mapper.odom_frame
@@ -96,6 +96,11 @@ class LocalNavigatorModule:
         self.global_path_planning_vis_pub = rospy.Publisher('path_planning_vis_global', MarkerArray, queue_size=10)
         self.unsorted_vis_pub = rospy.Publisher('unsorted_markers', MarkerArray, queue_size=10)
         self.exploration_goals_vis_pub = rospy.Publisher('exploration_goals', MarkerArray, queue_size=10)
+
+        # SERVICES
+        self.setstate_idle_srv = rospy.Service("navigation/setstate_idle", EmptySrv, self.setstate_idle)
+        self.setstate_homing_srv = rospy.Service("navigation/setstate_homing", EmptySrv, self.setstate_homing)
+        self.setstate_exploring_srv = rospy.Service("navigation/setstate_exploring", EmptySrv, self.setstate_exploring)
 
         # PARAMS
         self.planning_enabled = rospy.get_param("local_nav/enabled")
@@ -172,6 +177,19 @@ class LocalNavigatorModule:
         self.frontier_visibility_dist = 15
         
         # # #}
+
+    # --SERVICES
+    def setstate_exploring(self, req):# # #{
+        self.main_state = "exploring"
+        return EmptySrvResponse()# # #}
+
+    def setstate_idle(self, req):# # #{
+        self.main_state = "idle"
+        return EmptySrvResponse()# # #}
+
+    def setstate_homing(self, req):# # #{
+        self.main_state = "homing"
+        return EmptySrvResponse()# # #}
 
     # --PLANNING CORE
 
