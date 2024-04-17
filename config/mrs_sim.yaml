@@ -24,7 +24,7 @@ local_mapping:
   slampoints_topic: '/ov_msckf/points_slam'
 
   get_camera_calib_from_topic: False
-  camera_calib_topic: '/uav1/vio/camera/camera_info'
+  camera_info_topic: '/uav1/vio/camera/camera_info'
 
 local_nav:
   enabled: True

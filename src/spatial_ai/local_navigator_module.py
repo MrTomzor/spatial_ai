@@ -807,6 +807,7 @@ class LocalNavigatorModule:
 # # #}
 
     def planning_loop_iter(self):# # #{
+        # TODO - service to toggle this
         if not self.planning_enabled:
             return
 
