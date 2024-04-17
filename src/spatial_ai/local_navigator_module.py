@@ -1475,19 +1475,22 @@ class LocalNavigatorModule:
         current_vp_smap_frame = Viewpoint(T=T_smap_origin_to_fcu) 
         current_vp_global_frame = Viewpoint(T=T_global_to_fcu) 
 
+
+        # TODO - MARK NEARBY VPS AS VISITED
+        is_blocked, by_who = self.isViewpointBlockedByExplorationGoals(current_vp_global_frame)
+        if not is_blocked:
+            print("NOT ADDING ANY EXPLORATION GOAL OBSERVATIONS, NONE NEARBY")
+        else:
+            for i in range(by_who.size):
+                by_who[i].num_observations += 1
+                print("ADDING EXPLORATION GOAL OBSERVATION")
+
         if self.roadmap_navigation_failed:
             print("ROADMAP NAV TO EXPLORATION GLOBAL GOAL FAILED")
             self.stop_following_roadmap_and_stop()
             return
 
         elif self.roadmap_navigation_success:
-            # TODO - MARK NEARBY VPS AS VISITED
-            is_blocked, by_who = self.isViewpointBlockedByExplorationGoals(current_vp_global_frame)
-            if not is_blocked:
-                print("WARN!!! SUCCESSFUL NAV BUT NO EXPLO GOALS HERE!!")
-            else:
-                for i in range(by_who.size):
-                    by_who[i].num_observations += 1
             self.roadmap = None
 
 
