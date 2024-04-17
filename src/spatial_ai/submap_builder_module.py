@@ -476,13 +476,15 @@ class SubmapBuilderModule:
                     
                     # DETERMINE PTS THAT HAVE BEEN MEASURED FROM UP CLOSE AND NOW FALL INTO FOV
                     contained_surfels_minmeas_dists = self.spheremap.surfel_minmeas_dists[contained_surfels_mask]
-                    protected_contained_surfels_mask = contained_surfels_dists > 1.3 * contained_surfels_minmeas_dists 
+                    protected_contained_surfels_mask = contained_surfels_dists > 1.1 * contained_surfels_minmeas_dists 
                     if np.any(protected_contained_surfels_mask):
                         nondeleted_visible_surfels = surfel_points_in_camframe[contained_surfels_mask, :][protected_contained_surfels_mask, :]
 
                     deleted_surfels_idxs = contained_surfels_idxs[np.logical_not(protected_contained_surfels_mask)]
+                    # TODO - delete only if SOMEHOW DEEP in the MESH!
+
                     surfel_deletion_mask = np.full(self.spheremap.surfel_points.shape[0], False)
-                    surfel_deletion_mask[deleted_surfels_idxs] = True # TODO - change
+                    surfel_deletion_mask[deleted_surfels_idxs] = True
 
                     keep_mask = np.logical_not(surfel_deletion_mask)
                     self.spheremap.surfel_points = self.spheremap.surfel_points[keep_mask]

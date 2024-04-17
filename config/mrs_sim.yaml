@@ -46,6 +46,18 @@ local_nav:
   local_exploration_radius: 20
   exploration_goal_blocking_dist: 10
 
+exploration_safety_area:
+  enabled: False
+
+  x_min: -10
+  x_max: 10
+
+  y_min: -10
+  y_max: 10
+
+  z_min: -1
+  z_max: 8
+
 global_nav:
   enabled: False
   testing_mchunk_filename: "threeroom_big_to_left_end.pickle"

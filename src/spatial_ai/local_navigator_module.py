@@ -112,6 +112,14 @@ class LocalNavigatorModule:
         self.rrt_planning_clearing_dist = rospy.get_param("local_nav/rrt_clearing_dist")
         self.output_path_resolution = rospy.get_param("local_nav/out_path_resolution")
 
+        self.safety_area_enabled = rospy.get_param("exploration_safety_area/enabled")
+        self.safety_area_x_min = rospy.get_param("exploration_safety_area/x_min")
+        self.safety_area_x_max = rospy.get_param("exploration_safety_area/x_max")
+        self.safety_area_y_min = rospy.get_param("exploration_safety_area/y_min")
+        self.safety_area_y_max = rospy.get_param("exploration_safety_area/y_max")
+        self.safety_area_z_min = rospy.get_param("exploration_safety_area/z_min")
+        self.safety_area_z_max = rospy.get_param("exploration_safety_area/z_max")
+
 
         # PREDICTED TRAJ
         self.sub_predicted_trajectory = rospy.Subscriber(ptraj_topic, mrs_msgs.msg.MpcPredictionFullState, self.predicted_trajectory_callback, queue_size=10000)
@@ -1416,6 +1424,17 @@ class LocalNavigatorModule:
                 is_blocked, by_who = self.isViewpointBlockedByExplorationGoals(frontier_vps[i])
                 if is_blocked:
                     continue
+
+                if self.safety_area_enabled:
+                    vp_pos = frontier_vps[i].position
+                    if vp_pos[0] > self.safety_area_x_max or vp_pos[0] < self.safety_area_x_min:
+                        continue
+                    if vp_pos[1] > self.safety_area_y_max or vp_pos[1] < self.safety_area_y_min:
+                        continue
+                    if vp_pos[2] > self.safety_area_z_max or vp_pos[2] < self.safety_area_z_min:
+                        continue
+
+
                 new_goal = ExplorationGoal(frontier_vps[i])
                 if self.exploration_goals is None:
                     self.exploration_goals = np.array([new_goal], dtype=object)
