@@ -27,6 +27,11 @@ windows:
       panes:
         # - waitForOdometry; rosrun spatial_ai ov_extension.py
         - waitForOffboard; sleep 15; roslaunch spatial_ai mrs_openvins_explore.launch
+  - exploration_start:
+      layout: tiled
+      panes:
+        # - waitForOdometry; rosrun spatial_ai ov_extension.py
+        - waitForOffboard; sleep 22; rosservice call /navigation/setstate_exploring
   - VINS:
       layout: tiled
       panes:
