@@ -6,7 +6,7 @@ local_mapping:
   using_external_slam_pts: False
   verbose_submap_construction: False
 
-  keyframe_dist_thr: 1.5
+  keyframe_dist_thr: 1
   slam_filtering_enabled: False
 
   smap_fragmentation_dist: 2000

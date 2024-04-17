@@ -95,7 +95,7 @@ class FireSLAMModule:
         if not camera_info is None:
             self.width = camera_info.width
             self.height = camera_info.height
-            self.K = np.reshape(camera_info.K, (3,3))
+            self.cam_info_K = np.reshape(camera_info.K, (3,3))
             self.distortion_coeffs =  np.array(camera_info.D)
             # self.distortion_coeffs[0] *= 1
             # self.distortion_coeffs[1] *= 1
@@ -135,7 +135,7 @@ class FireSLAMModule:
         # LKPARAMS
         self.lk_params = dict(winSize  = (31, 31),
                          maxLevel = 3,
-                         criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01))
+                         criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 50, 0.01))
 
         self.bridge = CvBridge()
         self.prev_image = None
@@ -182,10 +182,6 @@ class FireSLAMModule:
         self.imu_to_cam_T = np.array( [[0, -1, 0, 0], [0, 0, -1, 0], [1, 0, 0, 0], [0.0, 0.0, 0.0, 1.0]])
         print("IMUTOCAM", self.imu_to_cam_T)
 
-        self.P = np.zeros((3,4))
-        self.P[:3, :3] = self.K
-        print(self.P)
-
         self.triang_vis_px1 = []
         self.triang_vis_px2 = []
         self.triang_vis_d = []
@@ -224,7 +220,7 @@ class FireSLAMModule:
         self.last_tried_landmarks_pxs = None
 
         self.trueX, self.trueY, self.trueZ = 0, 0, 0
-        self.detector = cv2.FastFeatureDetector_create(threshold=50, nonmaxSuppression=True)
+        self.detector = cv2.FastFeatureDetector_create(threshold=60, nonmaxSuppression=True)
 
         self.tracking_colors = np.random.randint(0, 255, (100, 3)) 
 
@@ -280,6 +276,8 @@ class FireSLAMModule:
         deletion_ids = []
 
         n_culled = 0
+        # center_deltas = active_pix - np.array([center_x, center_y])
+        # active_mags = np.linalg.norm(center_deltas, axis = 1)
 
         # FIND THE IDXS OF THE ACTIV IDS WHICH TO DELETE, AND ACCUMULATE NEW POINT POSITIONS TO INIT
         for xx in range(wbins):
@@ -288,7 +286,9 @@ class FireSLAMModule:
                 ul = np.array([xx * self.tracking_bin_width , yy * self.tracking_bin_width])  
                 lr = np.array([ul[0] + self.tracking_bin_width , ul[1] + self.tracking_bin_width]) 
 
-                inidx = np.all(np.logical_and(ul <= active_pix, active_pix <= lr), axis=1)
+                inside_bin = np.logical_and(ul <= active_pix, active_pix <= lr)
+                inidx = np.all(inside_bin, axis=1)
+
                 # print(inidx)
                 inside_points = []
                 inside_ids = []
@@ -410,8 +410,14 @@ class FireSLAMModule:
         D = self.distortion_coeffs[:4]
         print(D.shape)
         wh = (self.width,self.height)
-        new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(self.K, D, wh, np.eye(3), balance=1, new_size=wh, fov_scale=1)
-        map1, map2 = cv2.fisheye.initUndistortRectifyMap(self.K, D, np.eye(3), new_K, wh, cv2.CV_16SC2)
+        new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(self.cam_info_K, D, wh, np.eye(3), balance=1, new_size=wh, fov_scale=1)
+        self.K = new_K
+        print("NEW K")
+        print(new_K)
+        self.P = np.zeros((3,4))
+        self.P[:3, :3] = self.K
+
+        map1, map2 = cv2.fisheye.initUndistortRectifyMap(self.cam_info_K, D, np.eye(3), new_K, wh, cv2.CV_16SC2)
         dst = cv2.remap(img, map1[:, :, :], map2, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
         img = dst
 
@@ -466,8 +472,15 @@ class FireSLAMModule:
             # print(px_ref.shape)
             # print(px_ref)
             kp2, st, err = cv2.calcOpticalFlowPyrLK(self.last_frame, self.new_frame, px_ref, None, **self.lk_params)  #shape: [k,2] [k,1] [k,1]
-
             st = st.reshape(st.shape[0])
+
+            # FILTER TOO FAR AWAY FROM CENTER (FOR FISHEYE)
+            center_x = self.width/2
+            center_y = self.height * 0.7
+            center_deltas = kp2 - np.array([center_x, center_y])
+            center_dists = np.linalg.norm(center_deltas, axis=1)
+            max_center_dist = self.width * 0.23
+            st[center_dists > max_center_dist] = 0
             # kp1 = px_ref[st == 1]
             # kp2 = kp2[st == 1]
 
@@ -525,9 +538,8 @@ class FireSLAMModule:
                 kfi = self.keyframe_idx-1
                 dst_pts = np.array([[self.tracked_2d_points[i].current_pos[0], self.tracked_2d_points[i].current_pos[1]] for i in ransacable_ids])
                 src_pts = np.array([[self.tracked_2d_points[i].keyframe_observations[kfi][0], self.tracked_2d_points[i].keyframe_observations[kfi][1]] for i in ransacable_ids])
-                # M, mask = cv2.findEssentialMat(src_pts, dst_pts, self.K, threshold=3)
-                # [M, mask] = cv2.findEssentialMat(src_pts, dst_pts,'CameraMatrix', self.K, 'Confidence', 0.9, 'Threshold', 2)
-                M, mask = cv2.findEssentialMat(src_pts, dst_pts, self.K, threshold=1, prob=0.9)
+                # M, mask = cv2.findEssentialMat(src_pts, dst_pts, self.K, threshold=1, prob=0.9)
+                M, mask = cv2.findEssentialMat(src_pts, dst_pts, self.K, threshold=1, prob=0.99)
                 mask = mask.flatten() == 1
                 inlier_pt_ids = np.array(ransacable_ids)[mask]
 
@@ -602,8 +614,8 @@ class FireSLAMModule:
                 new_kf.inlier_pt_ids = inlier_pt_ids
                 self.coherent_visual_odom_len += 1
 
-                if self.coherent_visual_odom_len > 20:
-                    self.coherent_visual_odom_len = 20
+                if self.coherent_visual_odom_len > 1:
+                    self.coherent_visual_odom_len = 1
 
                 # SCALING FACTOR OF CURRENT VISUAL ODOM TO SCALED ODOM
                 reversed_metric_traj_rel_to_current_odom = []
@@ -734,7 +746,7 @@ class FireSLAMModule:
 
             comp_time = time.time() - comp_start_time
             print("computation time: " + str((comp_time) * 1000) +  " ms")
-        self.track_vis_pub.publish(self.bridge.cv2_to_imgmsg(self.visualize_tracking(), "bgr8"))
+            self.track_vis_pub.publish(self.bridge.cv2_to_imgmsg(self.visualize_tracking(), "bgr8"))
 
         # VISUALIZE FEATURES
 
