@@ -258,8 +258,8 @@ class NavNode:
         self.submap_builder_module = SubmapBuilderModule(self.width, self.height, self.K, self.camera_frame, self.odom_frame,self.fcu_frame, self.tf_listener, self.T_imu_to_cam, self.T_fcu_to_imu)
 
         # LOCAL NAVIGATOR
-        ptraj_topic = '/uav1/control_manager/mpc_tracker/prediction_full_state'
-        output_path_topic = '/uav1/trajectory_generation/path'
+        ptraj_topic = '/uav25/control_manager/mpc_tracker/prediction_full_state'
+        output_path_topic = '/uav25/trajectory_generation/path'
         self.local_navigator_module = LocalNavigatorModule(self.submap_builder_module, ptraj_topic, output_path_topic)
 
         # GLOBAL NAVIGATOR
