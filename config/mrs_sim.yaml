@@ -34,7 +34,7 @@ local_nav:
   max_planning_odist: 8
   safety_weight: 50
 
-  max_rrt_step_size: 1
+  max_rrt_step_size: 0.8
   max_heading_change_per_m: 0.314159 
   path_abandon_time: 8
 
@@ -44,7 +44,7 @@ local_nav:
   out_path_resolution: 0.5
 
   local_exploration_radius: 20
-  exploration_goal_blocking_dist: 10
+  exploration_goal_blocking_dist: 7
 
 exploration_safety_area:
   enabled: False

@@ -79,6 +79,7 @@ class LocalNavigatorModule:
     def __init__(self, mapper, ptraj_topic, output_path_topic):# # #{
 
         self.main_state = "idle"
+        self.min_vp_frontier_val = 3
 
         self.mapper = mapper
         self.odom_frame = mapper.odom_frame
@@ -606,7 +607,8 @@ class LocalNavigatorModule:
                         visible_pts_mask = getVisiblePoints(frontier_points_in_camframe, frontier_normals_in_camframe, np.pi/2, self.frontier_visibility_dist, w, h, K, verbose=False)
                         n_visible = np.sum(visible_pts_mask)
                         print("N VISIBLE FRONTIERS: " + str(n_visible))
-                        if n_visible > 0:
+                        if n_visible >= self.min_vp_frontier_val:
+                            # TODO param
                             # heads_values[i] = n_visible * 100 # VALUE OF FRONTIERS
                             # heads_values[i] = startdist * 100 # VALUE OF DIST FROM CUR POS
                             current_fcu_in_global = T_global_to_fcu[:3, 3].reshape((1,3))
@@ -1355,7 +1357,7 @@ class LocalNavigatorModule:
 
             # CHECK IF GOAL STILL HAS SOME FRONTIERS, OTHERWISE DELETW
             frontier_val = self.getViewpointFrontierValue(goal.viewpoint)
-            if frontier_val == 0:
+            if frontier_val < self.min_vp_frontier_val:
                 goal_delete_mask[i] = True
                 print("DELETING GOAL VP BECAUSE NO VISIBLE FRONTIERS")
                 continue
@@ -1436,6 +1438,7 @@ class LocalNavigatorModule:
     # # #}
 
     def tryAddingGoalsNearby(self, planning_start_vp, search_dist=30, planning_time=0.3):# # #{
+        print("SEARCHING FOR NEARBY GOALS IN DIST: " + str(search_dist))
 
         frontier_vps = self.find_paths_rrt_smap_frame(planning_start_vp, max_comp_time = planning_time, min_odist = self.min_planning_odist, max_odist = self.max_planning_odist, max_step_size = self.path_step_size, max_spread_dist = search_dist, mode = 'find_goals')
         n_added = 0
@@ -1488,9 +1491,12 @@ class LocalNavigatorModule:
         if self.roadmap_navigation_failed:
             print("ROADMAP NAV TO EXPLORATION GLOBAL GOAL FAILED")
             self.stop_following_roadmap_and_stop()
+            self.tryAddingGoalsNearby(current_vp_smap_frame, search_dist = 10, planning_time = 0.2)
             return
 
         elif self.roadmap_navigation_success:
+
+            self.tryAddingGoalsNearby(current_vp_smap_frame, search_dist = 10, planning_time = 0.2)
             self.roadmap = None
 
 
