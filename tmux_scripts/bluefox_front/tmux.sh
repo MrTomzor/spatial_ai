@@ -19,7 +19,7 @@ MAIN_DIR=~/"bag_files"
 
 # the project name
 # * is used to define folder name in ~/$MAIN_DIR
-PROJECT_NAME=open_vins
+PROJECT_NAME=mrs_open_vins_core_realworld_bluefox_front
 
 # the name of the TMUX session
 # * can be used for attaching as 'tmux a -t <session name>'
@@ -47,11 +47,9 @@ input=(
 '
   'OpenVins' 'waitForHw; roslaunch mrs_open_vins_core realworld_bluefox_front.launch
 '
-  'Navigation' 'waitForControl; roslaunch spatial_ai mrs_openvins_explore_real.launch
+  'Navigation' 'waitForTakeoff; roslaunch spatial_ai mrs_openvins_explore_real.launch
 '
   'StartExploring' 'rosservice call /navigation/setstate_exploring'
-  'Ouster' 'waitForHw; roslaunch ouster_ros uav.launch
-'
   'AutoStart' 'waitForHw; roslaunch mrs_uav_autostart automatic_start.launch
 '
 # do NOT modify the command list below
