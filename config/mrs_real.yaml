@@ -17,11 +17,19 @@ local_mapping:
   surfel_resolution: 0.3
   frontier_resolution: 1.5
 
-  min_sphere_rad: 0.3
+  min_sphere_rad: 2
 
   fcu_frame: 'uav25/fcu'
+
+  # odom_frame: 'global' #OPENVINS
+  # slampoints_topic: '/uav25/ov_msckf/points_slam' #OPENVINS
+  # camera_frame: 'cam0' #OPENVINS
+
+  odom_frame: 'uav25/fixed_origin' #MINS
+  slampoints_topic: '/uav25/mins/cam/slam' #MINS
+  camera_frame: 'uav25/mins_cam0' #MINS
+
   img_topic: '/uav25/bluefox_vio_front/image_raw/'
-  slampoints_topic: '/uav25/ov_msckf/points_slam'
 
   get_camera_calib_from_topic: False
   camera_info_topic: '/uav25/bluefox_vio_front/camera_info'
@@ -45,6 +53,9 @@ local_nav:
 
   local_exploration_radius: 20
   exploration_goal_blocking_dist: 5
+
+  predicted_trajectory_topic: '/uav25/control_manager/mpc_tracker/prediction_full_state'
+  output_path_topic: '/uav25/trajectory_generation/path'
 
 exploration_safety_area:
   enabled: False
