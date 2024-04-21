@@ -106,6 +106,7 @@ class KeyFrame:
 # #{ class NavNode:
 class NavNode:
     def __init__(self):# # #{
+        print("INITIALIZING")
         self.node_initialized = False
         self.node_offline = False
         self.bridge = CvBridge()
@@ -228,6 +229,9 @@ class NavNode:
 
         # GET IMU TO CAM TRANSFORM
         # TODO - maybe not for tello?
+        print("WAITING FOR TRANSFORM BETWEEN FCU AND CAMERA")
+        print(self.fcu_frame)
+        print(self.camera_frame)
         self.tf_listener.waitForTransform(self.fcu_frame, self.camera_frame, rospy.Time(), rospy.Duration(4.0))
         (trans, rotation) = self.tf_listener.lookupTransform(self.fcu_frame, self.camera_frame, rospy.Time(0))
         rotation_matrix = tfs.quaternion_matrix(rotation)

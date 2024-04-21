@@ -20,11 +20,13 @@ local_mapping:
   min_sphere_rad: 0.3
 
   fcu_frame: 'uav25/fcu'
-  odom_frame: 'global'
-  camera_frame: 'cam0'
+  # odom_frame: 'global' #OPENVINS
+  odom_frame: 'uav25/fixed_origin' #MINS
+  camera_frame: 'uav25/mins_cam0'
 
   img_topic: '/uav25/bluefox_vio_front/image_raw/'
-  slampoints_topic: '/uav25/ov_msckf/points_slam'
+  # slampoints_topic: '/uav25/ov_msckf/points_slam' #OPENVINS
+  slampoints_topic: '/uav25/mins/cam/slam' #MINS
 
   get_camera_calib_from_topic: False
   camera_info_topic: '/uav25/bluefox_vio_front/camera_info'
