@@ -17,7 +17,7 @@ local_mapping:
   surfel_resolution: 0.3
   frontier_resolution: 1.5
 
-  min_sphere_rad: 0.3
+  min_sphere_rad: 2
 
   fcu_frame: 'uav1/fcu'
   odom_frame: 'global'
