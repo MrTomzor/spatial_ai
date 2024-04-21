@@ -175,7 +175,7 @@ class LocalNavigatorModule:
         self.goal_blocking_dist = rospy.get_param("local_nav/exploration_goal_blocking_dist")
         self.goal_blocking_angle = np.pi/3
         self.goal_max_obsvs = 1
-        self.frontier_visibility_dist = 15
+        self.frontier_visibility_dist = rospy.get_param("local_nav/frontier_visibility_dist")
         
         # # #}
 

@@ -57,6 +57,8 @@ local_nav:
   predicted_trajectory_topic: '/uav25/control_manager/mpc_tracker/prediction_full_state'
   output_path_topic: '/uav25/trajectory_generation/path'
 
+  frontier_visibility_dist: 8
+
 exploration_safety_area:
   enabled: False
 
