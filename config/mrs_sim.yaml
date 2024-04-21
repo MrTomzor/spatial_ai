@@ -20,6 +20,9 @@ local_mapping:
   min_sphere_rad: 0.3
 
   fcu_frame: 'uav1/fcu'
+  odom_frame: 'global'
+  camera_frame: 'cam0'
+
   img_topic: '/uav1/vio/camera/image_raw'
   slampoints_topic: '/ov_msckf/points_slam'
 
@@ -45,6 +48,9 @@ local_nav:
 
   local_exploration_radius: 20
   exploration_goal_blocking_dist: 7
+
+  predicted_trajectory_topic: '/uav1/control_manager/mpc_tracker/prediction_full_state'
+  output_path_topic: '/uav1/trajectory_generation/path'
 
 exploration_safety_area:
   enabled: False

@@ -183,8 +183,8 @@ class NavNode:
             self.odom_topic = '/ov_msckf/odomimu'
             self.imu_frame = 'imu'
             self.fcu_frame = rospy.get_param("local_mapping/fcu_frame")
-            self.camera_frame = 'cam0'
-            self.odom_frame = 'global'
+            self.camera_frame = rospy.get_param("local_mapping/camera_frame")
+            self.odom_frame = rospy.get_param("local_mapping/odom_frame")
             # self.marker_scale = 0.5
 
             # # Get the transform
@@ -258,8 +258,8 @@ class NavNode:
         self.submap_builder_module = SubmapBuilderModule(self.width, self.height, self.K, self.camera_frame, self.odom_frame,self.fcu_frame, self.tf_listener, self.T_imu_to_cam, self.T_fcu_to_imu)
 
         # LOCAL NAVIGATOR
-        ptraj_topic = '/uav25/control_manager/mpc_tracker/prediction_full_state'
-        output_path_topic = '/uav25/trajectory_generation/path'
+        ptraj_topic = rospy.get_param("local_nav/predicted_trajectory_topic")
+        output_path_topic = rospy.get_param("local_nav/output_path_topic")
         self.local_navigator_module = LocalNavigatorModule(self.submap_builder_module, ptraj_topic, output_path_topic)
 
         # GLOBAL NAVIGATOR
