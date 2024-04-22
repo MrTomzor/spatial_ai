@@ -53,10 +53,19 @@ import sys
 # # #}
 
 class SubmapBuilderModule:
-    def __init__(self, w, h, K, camera_frame_id, odom_orig_frame_id, fcu_frame, tf_listener, T_imu_to_cam, T_fcu_to_imu ):# # #{
+    def __init__(self, w, h, K, camera_frame_id, odom_orig_frame_id, fcu_frame, tf_listener, T_imu_to_cam, T_fcu_to_imu, camera_info = None):# # #{
         self.width = w
         self.height = h
         self.K = K
+
+        if not camera_info is None:
+            self.width = camera_info.width
+            self.height = camera_info.height
+            self.cam_info_K = np.reshape(camera_info.K, (3,3))
+            self.distortion_coeffs =  np.array(camera_info.D)[:4]
+
+            self.new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(self.cam_info_K, self.distortion_coeffs, (w, h), np.eye(3), balance=1, new_size=(w, h), fov_scale=1)
+
         self.camera_frame = camera_frame_id
         self.odom_frame = odom_orig_frame_id
         self.fcu_frame = fcu_frame
@@ -95,6 +104,7 @@ class SubmapBuilderModule:
         self.runtimes_pub = rospy.Publisher('spheremap_runtimes', mrs_msgs.msg.Float64ArrayStamped, queue_size=10)
 
         # VIS PUB
+        self.assumed_freespace_vis_pub = rospy.Publisher('assumed_freespace_points', MarkerArray, queue_size=10)
         self.spheremap_outline_pub = rospy.Publisher('spheres', MarkerArray, queue_size=10)
         self.spheremap_freespace_pub = rospy.Publisher('spheremap_freespace', MarkerArray, queue_size=10)
         self.freespace_polyhedron_pub = rospy.Publisher('visible_freespace_poly', MarkerArray, queue_size=10)
@@ -129,6 +139,14 @@ class SubmapBuilderModule:
         self.max_sphere_update_dist = rospy.get_param("local_mapping/max_sphere_sampling_z")
         self.visual_kf_addition_heading = 3.14159 /2
         self.visual_kf_addition_dist = 2
+
+        # LOAD FAKE FREESPACE POINTS
+        self.ff_dist = 5
+        self.ff_pts_W = 10
+        self.ff_pts_H = 10
+        self.init_fake_freespace_pts();
+        self.ff_pose_buffer = []
+        self.max_ff_buffer_len = 20
         
         # # #}
 
@@ -136,6 +154,8 @@ class SubmapBuilderModule:
 
     def camera_update_iter(self, msg, slam_ids = None):# # #{
         runtime_data = []
+
+        self.fake_freespace_update()
 
         # Add new visual keyframe if enough distance has been traveled# # #{
         with ScopedLock(self.spheremap_mutex):
@@ -778,6 +798,64 @@ class SubmapBuilderModule:
                 print("SPHEREMAP visualization time: " + str((comp_time) * 1000) +  " ms")
 # # #}
 
+    def fake_freespace_update(self):
+        print("FAKE FREESPACE")
+        self.visualize_fake_freespace_pts()
+        # T_odom_to_cam = lookupTransformAsMatrix(self.fcu_frame, self.mapper.camera_frame, self.tf_listener) @ T_fcu_to_cam 
+
+        T_odom_to_cam = lookupTransformAsMatrix(self.odom_frame, self.camera_frame, self.tf_listener)
+
+        should_add_pose_to_buffer = False
+
+        last_pose_trans_dif = None
+        last_pose_angle_dif = None
+
+        min_trans_dif = 0.2
+        min_angle_dif = np.pi / 4
+
+        if len(self.ff_pose_buffer) > 0:
+            prev_T = self.ff_pose_buffer[-1]
+            trans_dif = np.linalg.norm(T_odom_to_cam[:3,3] - prev_T[:3, 3])
+            dotprod = np.dot(T_odom_to_cam[:3,2], prev_T[:3,2])
+            angle_dif = np.arccos(dotprod)
+
+            if trans_dif > min_trans_dif or angle_dif > min_angle_dif:
+                should_add_pose_to_buffer = True
+        else:
+            should_add_pose_to_buffer = True
+
+
+        # DECIDE IF ADD THIS POSE
+        if should_add_pose_to_buffer:
+            print("ADDING POSE, BUFFERLEN: " + str(len(self.ff_pose_buffer)))
+            self.ff_pose_buffer.append(T_odom_to_cam)
+            if len(self.ff_pose_buffer) > self.max_ff_buffer_len:
+                self.ff_pose_buffer.pop(0)
+                
+
+
+    def init_fake_freespace_pts(self):
+        trim = 0.3
+
+        xstart = trim* self.width
+        xstep = (1-2*trim) * self.width / self.ff_pts_W
+        ystart = trim* self.height
+        ystep = (1-2*trim) * self.height / self.ff_pts_H
+
+        n_pts = self.ff_pts_H * self.ff_pts_W
+
+        out = np.zeros((n_pts, 3))
+
+        pts_2d = np.array([[xstart + x * xstep, ystart + y * ystep] for x in range(self.ff_pts_W) for y in range(self.ff_pts_H)])
+        # print("SHAPE")
+        # print(pts_2d.shape)
+        sampling_pts = np.concatenate((pts_2d.T, np.full((1, n_pts), 1)))
+        invK = np.linalg.inv(self.new_K)
+        self.egocentric_ff_pts = (invK @ sampling_pts).T
+        self.egocentric_ff_pts = self.ff_dist * (self.egocentric_ff_pts / np.linalg.norm(self.egocentric_ff_pts, axis = 1).reshape((n_pts, 1)))
+        self.ff_pts_active = np.full((n_pts,1), False).flatten()
+        
+
     # UTILS
 
     def saveEpisodeFull(self, req):# # #{
@@ -811,6 +889,39 @@ class SubmapBuilderModule:
         return res_pts, res_headings# # #}
 
     # VISUALIZE
+
+    def visualize_fake_freespace_pts(self):# # #{
+        marker_array = MarkerArray()
+
+        ms = self.marker_scale
+        marker = Marker()
+        marker.header.frame_id = self.camera_frame  # Adjust the frame_id as needed
+        marker.type = Marker.POINTS
+        marker.action = Marker.ADD
+        marker.pose.orientation.w = 1.0
+        # marker.scale.x = 1.2  # Adjust the size of the points
+        # marker.scale.y = 1.2
+        marker.scale.x = ms *2.2  # Adjust the size of the points
+        marker.scale.y = ms *2.2
+        marker.color.a = 1
+        marker.color.r = 0
+        marker.color.g = 1
+        marker.color.b = 0
+
+        # marker.id = marker_id
+        # marker_id += 1
+
+        # Convert the 3D points to Point messages
+        spts = self.egocentric_ff_pts
+        n_pts = spts.shape[0]
+        points_msg = [Point(x=spts[i, 0], y=spts[i, 1], z=spts[i, 2]) for i in range(n_pts)]
+        marker.points = points_msg
+        marker_array.markers.append(marker)
+
+        # TODO - colors based on activity!
+
+        self.assumed_freespace_vis_pub.publish(marker_array)
+# # #}
 
     def visualize_episode_submaps(self):# # #{
         marker_array = MarkerArray()

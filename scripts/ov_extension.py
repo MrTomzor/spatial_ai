@@ -259,7 +259,7 @@ class NavNode:
         self.submap_builder_input_pcl = None
         self.submap_builder_input_point_ids = None
 
-        self.submap_builder_module = SubmapBuilderModule(self.width, self.height, self.K, self.camera_frame, self.odom_frame,self.fcu_frame, self.tf_listener, self.T_imu_to_cam, self.T_fcu_to_imu)
+        self.submap_builder_module = SubmapBuilderModule(self.width, self.height, self.K, self.camera_frame, self.odom_frame,self.fcu_frame, self.tf_listener, self.T_imu_to_cam, self.T_fcu_to_imu, self.camera_info)
 
         # LOCAL NAVIGATOR
         ptraj_topic = rospy.get_param("local_nav/predicted_trajectory_topic")
