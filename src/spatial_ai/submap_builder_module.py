@@ -30,6 +30,7 @@ import cv2
 import numpy as np
 import time
 from visualization_msgs.msg import Marker, MarkerArray
+from std_msgs.msg import ColorRGBA
 from geometry_msgs.msg import Point
 from sensor_msgs.msg import PointCloud
 from geometry_msgs.msg import Point32
@@ -146,7 +147,7 @@ class SubmapBuilderModule:
         self.ff_pts_H = 10
         self.init_fake_freespace_pts();
         self.ff_pose_buffer = []
-        self.max_ff_buffer_len = 20
+        self.max_ff_buffer_len = 10
         
         # # #}
 
@@ -831,29 +832,80 @@ class SubmapBuilderModule:
             self.ff_pose_buffer.append(T_odom_to_cam)
             if len(self.ff_pose_buffer) > self.max_ff_buffer_len:
                 self.ff_pose_buffer.pop(0)
+        else:
+            return
+
+        bufferlen = len(self.ff_pose_buffer)
+        n_pts = self.egocentric_ff_pts.shape[0]
+        if bufferlen < 2:
+            return
+
+        visibility_mask = np.full((bufferlen, n_pts), False)
+
+        # GO THRU ALL PREV POSES N CHECK IF "TRACKED" AND HOW MUCH TRANSLATION/PARALLAX
+        # ll_corner = np.array([0, 0])
+        # ur_corner = np.array([self.width, self.height])
+
+        ll_corner = np.array([self.ff_trim*self.width, self.ff_trim*self.height])
+        ur_corner = np.array([(1 - self.ff_trim) * self.width, (1 - self.ff_trim) * self.height])
+
+        for i in range(len(self.ff_pose_buffer) - 1):
+            # T_relative = np.linalg.inv(T_odom_to_cam) @ self.ff_pose_buffer[i]
+
+            T_relative = np.linalg.inv(self.ff_pose_buffer[i]) @ T_odom_to_cam
+
+            print("T relative dist: " + str(np.linalg.norm(T_relative[:3,3])))
+            translated_pts = transformPoints(self.egocentric_ff_pts, T_relative)
+            print("CUR PTS:")
+            print(self.egocentric_ff_pts[0, :])
+            print("PREV PTS:")
+            print(translated_pts[0, :])
+
+            print(translated_pts.shape)
+            pixpos_there = getPixelPositions(translated_pts.T, self.new_K)
+            print("PIXPOS PTS:")
+            print(pixpos_there[0, :])
+
+            in_img = np.all(np.logical_and(pixpos_there <= ur_corner, pixpos_there >= ll_corner), axis = 1)
+            print("N pts in img: " + str(np.sum(in_img)))
+            visibility_mask[i, :] = in_img
+        # print(visibility_mask)
+        vis_lengths = np.sum(visibility_mask, axis = 0).flatten()
+        # print(vis_lengths)
+        self.ff_points_active_mask = vis_lengths == bufferlen - 1
+
+        print("N ACTIVE: " + str(np.sum(self.ff_points_active_mask)))
                 
 
 
     def init_fake_freespace_pts(self):
-        trim = 0.3
+        self.ff_trim = 0.3
 
-        xstart = trim* self.width
-        xstep = (1-2*trim) * self.width / self.ff_pts_W
-        ystart = trim* self.height
-        ystep = (1-2*trim) * self.height / self.ff_pts_H
+        xstart = self.ff_trim* self.width
+        xstep = (1-2*self.ff_trim) * self.width / self.ff_pts_W
+        ystart = self.ff_trim* self.height
+        ystep = (1-2*self.ff_trim) * self.height / self.ff_pts_H
 
-        n_pts = self.ff_pts_H * self.ff_pts_W
 
-        out = np.zeros((n_pts, 3))
 
-        pts_2d = np.array([[xstart + x * xstep, ystart + y * ystep] for x in range(self.ff_pts_W) for y in range(self.ff_pts_H)])
+        pts_2d = np.array([[xstart + x * xstep, ystart + y * ystep] for x in range(self.ff_pts_W+1) for y in range(self.ff_pts_H+1)])
+        n_pts = pts_2d.shape[0]
+
+        print("KOCKA")
+        # print(pts_2d)
+        print("KOCKA")
+        print(pts_2d[0, :])
+        print(pts_2d[-1, :])
         # print("SHAPE")
         # print(pts_2d.shape)
         sampling_pts = np.concatenate((pts_2d.T, np.full((1, n_pts), 1)))
         invK = np.linalg.inv(self.new_K)
         self.egocentric_ff_pts = (invK @ sampling_pts).T
+        print(self.egocentric_ff_pts[0, :])
+        print(self.egocentric_ff_pts[-1, :])
         self.egocentric_ff_pts = self.ff_dist * (self.egocentric_ff_pts / np.linalg.norm(self.egocentric_ff_pts, axis = 1).reshape((n_pts, 1)))
-        self.ff_pts_active = np.full((n_pts,1), False).flatten()
+
+        self.ff_points_active_mask = np.full((n_pts,1), False).flatten()
         
 
     # UTILS
@@ -919,6 +971,11 @@ class SubmapBuilderModule:
         marker_array.markers.append(marker)
 
         # TODO - colors based on activity!
+        for i in range(self.egocentric_ff_pts.shape[0]):
+            clr = ColorRGBA(r=0.0, g=0.0, b=0.0, a=0.5)
+            if self.ff_points_active_mask[i]:
+                clr = ColorRGBA(r=0.0, g=1.0, b=0.0, a=1.0)
+            marker.colors.append(clr)
 
         self.assumed_freespace_vis_pub.publish(marker_array)
 # # #}
