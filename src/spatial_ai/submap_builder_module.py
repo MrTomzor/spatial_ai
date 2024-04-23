@@ -110,7 +110,7 @@ class SubmapBuilderModule:
         self.assumed_freespace_vis_pub = rospy.Publisher('assumed_freespace_points', MarkerArray, queue_size=10)
         self.spheremap_outline_pub = rospy.Publisher('spheres', MarkerArray, queue_size=10)
         self.spheremap_freespace_pub = rospy.Publisher('spheremap_freespace', MarkerArray, queue_size=10)
-        self.freespace_polyhedron_pub = rospy.Publisher('visible_freespace_poly', MarkerArray, queue_size=10)
+        self.freespace_polyhedron_pub = rospy.Publisher('AAA/visible_freespace_poly', MarkerArray, queue_size=10)
 
         self.recent_submaps_vis_pub = rospy.Publisher('recent_submaps_vis', MarkerArray, queue_size=10)
         self.path_planning_vis_pub = rospy.Publisher('path_planning_vis', MarkerArray, queue_size=10)
@@ -118,7 +118,7 @@ class SubmapBuilderModule:
         self.unsorted_vis_pub = rospy.Publisher('unsorted_markers', MarkerArray, queue_size=10)
 
         # self.kp_pub = rospy.Publisher('tracked_features_img', Image, queue_size=1)
-        self.depth_pub = rospy.Publisher('estim_depth_img', Image, queue_size=1)
+        self.polygon_debug_pub = rospy.Publisher('polygon_debug', Image, queue_size=1)
         self.marker_pub = rospy.Publisher('/vo_odom', Marker, queue_size=10)
 
 
@@ -145,8 +145,8 @@ class SubmapBuilderModule:
 
         # LOAD FAKE FREESPACE POINTS
         self.ff_dist = 5
-        self.ff_pts_W = 10
-        self.ff_pts_H = 10
+        self.ff_pts_W = 3
+        self.ff_pts_H = 3
         self.init_fake_freespace_pts();
         self.ff_pose_buffer = []
         self.max_ff_buffer_len = 10
@@ -350,45 +350,92 @@ class SubmapBuilderModule:
             if not slam_ids is None:
                 positive_z_slam_ids = slam_ids[positive_z_mask]
 
-            if np.any(self.ff_points_active_mask):
-                print("ADDING FAKE FREESPACE PTS THAT DO NOT LIE IN CURRENT DATA")
-                positive_z_points  = np.concatenate((positive_z_points  , self.egocentric_ff_pts[self.ff_points_active_mask, :].T), axis = 1)
 
 
 
-            pixpos = getPixelPositions(positive_z_points, self.K)
+
+            visible_obstacle_pts = positive_z_points
+            pixpos = getPixelPositions(visible_obstacle_pts, self.K)
+            # print("OBSTACLE MESH PROJECTED PIXPOS:")
+            # print(pixpos)
 
             # COMPUTE DELAUNAY TRIANG OF VISIBLE SLAM POINTS
-            if positive_z_points.shape[1] < 4:
+            if visible_obstacle_pts.shape[1] < 4:
                 if self.verbose_submap_construction:
                     print("NOT ENAUGH PTS FOR DELAUNAY!")
                 return
             if self.verbose_submap_construction:
                 print("HAVE DELAUNAY:")
             tri = Delaunay(pixpos)
+            self.polygon_debug_pub.publish(self.bridge.cv2_to_imgmsg(self.visualize_polygon(pixpos, tri), "bgr8"))
 
-            # CONSTRUCT OBSTACLE MESH
-            obstacle_mesh = trimesh.Trimesh(vertices=positive_z_points.T, faces = tri.simplices)
 
             # CONSTRUCT POLYGON OF PIXPOSs OF VISIBLE SLAM PTS
             hull2d = ConvexHull(pixpos)
 
+            # print("OBSTACLE POLYGON HULL:")
+            # print(hull2d.points)
+
             if self.verbose_submap_construction:
                 print("POLY")
-            img_polygon = geometry.Polygon(hull2d.points)
+            # visible_obstacle_pts_polygon = geometry.Polygon(hull2d.points) # MUST BE ORDERED PROPERLY!!!
+            visible_obstacle_pts_polygon = geometry.Polygon(pixpos[hull2d.vertices, :]) # MUST BE ORDERED PROPERLY!!!
+            print("POLY VALS")
+            print(visible_obstacle_pts_polygon.area)
+            print(visible_obstacle_pts_polygon.is_valid)
             hull2d_idxs = hull2d.vertices
 
-            fovmesh_pts = positive_z_points
-            orig_pts = np.zeros((3, 1))
-            fovmesh_pts_with_orig = copy.deepcopy(fovmesh_pts)
-            fovmesh_pts_with_orig = np.concatenate((fovmesh_pts, orig_pts), axis=1)
-            zero_pt_index = fovmesh_pts_with_orig.shape[1] - 1
+            # CONSTRUCT OBSTACLE MESH
+            obstacle_mesh = trimesh.Trimesh(vertices=positive_z_points.T, faces = tri.simplices)
 
             # CONSTRUCT FOV MESH (of visible pts and current cam origin)
+            # BY DEFAULT THE MESH PTS ARE JUS TTHE VISIBLE PTS (and origin added later)
             fullmesh_pts = positive_z_points
 
+            # GET ACTIVATED AND USABLE FAKE FREESPACE PTS
+            added_ff_pts = None
+            if np.any(self.ff_points_active_mask):
+                # positive_z_points  = np.concatenate((positive_z_points, self.egocentric_ff_pts[self.ff_points_active_mask, :].T), axis = 1)
+                pixpos_ff_pts = getPixelPositions(self.egocentric_ff_pts.T, self.K)
+                # print("PIXPOS")
+                # print(pixpos_ff_pts)
+                inhull = np.array([visible_obstacle_pts_polygon.contains(geometry.Point(pixpos_ff_pts[i, 0], pixpos_ff_pts[i, 1])) for i in range(pixpos_ff_pts.shape[0])])
+                # print("CONTAINS CENTER?:")
+                # print(visible_obstacle_pts_polygon.contains(geometry.Point(self.width/2, self.height/2)))
+                # print(inhull.shape)
+
+                # outside_hull_mask = np.full(self.ff_points_active_mask.shape, True)
+                outside_hull_mask = np.logical_not(inhull)
+                # print(inhull)
+                # print(outside_hull_mask .shape)
+                # outside_hull_mask[inhull] = False
+
+                print("N FAKE PTS OUTSIDE OF HULL: " + str(np.sum(outside_hull_mask)))
+                # active_ff_pts = self.egocentric_ff_pts[self.ff_points_active_mask, :].T
+                addition_mask = np.logical_and(self.ff_points_active_mask, outside_hull_mask)
+                added_ff_pts = self.egocentric_ff_pts[addition_mask, :].T
+
+                print("PIXPOS ACTIVE AND OUTSIDE HULL:")
+                print(pixpos_ff_pts[addition_mask, :])
+
+                self.faked_pixpos_lastframe = pixpos_ff_pts[addition_mask, :]
+
+            # ADD THEM IF SOME CAN BE ADDED
+            if not added_ff_pts is None:
+                print("ADDING " + str(added_ff_pts.shape[1]) + " FAKE FREESPACE PTS THAT DO NOT LIE IN CURRENT VISIBLE PT POLYGON")
+                fullmesh_pts = np.concatenate((fullmesh_pts, added_ff_pts), axis = 1)
+                # RECOMPUTE HULL 
+                pixpos = getPixelPositions(fullmesh_pts, self.K)
+                tri = Delaunay(pixpos)
+                # CONSTRUCT POLYGON OF PIXPOSs OF VISIBLE SLAM PTS
+                hull2d = ConvexHull(pixpos)
+                hull2d_idxs = hull2d.vertices
+
+
+
+            # ADD ORIGIN PT
+            orig_pts = np.zeros((3,1))
             fullmesh_pts = np.concatenate((fullmesh_pts, orig_pts), axis=1)
-            # fullmesh_zero_pt_index = fovmesh_pts_with_orig.shape[1] - 1
             fullmesh_zero_pt_index = fullmesh_pts.shape[1] - 1
             new_simplices = [[hull2d_idxs[i], hull2d_idxs[i+1], fullmesh_zero_pt_index] for i in range(len(hull2d_idxs) - 1)]
             new_simplices.append([hull2d_idxs[len(hull2d_idxs)-1], hull2d_idxs[0], fullmesh_zero_pt_index])
@@ -441,8 +488,8 @@ class SubmapBuilderModule:
                 bbx.pos = np.zeros((1,3))
                 bbx.axes = np.eye(3)
                 # GET MIN AND MAX BY MIN AND MAX POLYHEDRON PTS + MAX RADIUS
-                bbx_min = np.min(fovmesh_pts_with_orig.T, axis=0).reshape((1,3))
-                bbx_max = np.max(fovmesh_pts_with_orig.T, axis=0).reshape((1,3))
+                bbx_min = np.min(fullmesh_pts.T, axis=0).reshape((1,3))
+                bbx_max = np.max(fullmesh_pts.T, axis=0).reshape((1,3))
                 bbx.minmaxvals = np.concatenate((bbx_min, bbx_max), axis = 0)
                 bbx_for_surfel_deletion = copy.deepcopy(bbx)
                 bbx.expand(self.spheremap.max_radius)
@@ -534,7 +581,7 @@ class SubmapBuilderModule:
                         # print("ADDING NONDELTED PTS: " + str(nondeleted_visible_surfels.shape[0]))
                         # TODO fix
                         # visible_points = np.append(visible_old_points, nondeleted_visible_surfels, axis=0)
-                        fovmesh_pts = np.concatenate((fovmesh_pts.T, nondeleted_visible_surfels), axis=0).T
+                        visible_obstacle_pts = np.concatenate((visible_obstacle_pts .T, nondeleted_visible_surfels), axis=0).T
                     worked_sphere_idxs = worked_sphere_idxs
                     # print("N WORKED SPHERE IDXS:")
                     # print(worked_sphere_idxs.size)
@@ -560,7 +607,7 @@ class SubmapBuilderModule:
                     if self.verbose_submap_construction:
                         print("PART 0.5 - signed distance: " + str((old_update_dt ) * 1000) +  " ms")
 
-                    pt_distmatrix = scipy.spatial.distance_matrix(visible_old_points, fovmesh_pts.T)
+                    pt_distmatrix = scipy.spatial.distance_matrix(visible_old_points, visible_obstacle_pts .T)
                     old_spheres_obs_dists = np.min(pt_distmatrix, axis = 1)
                     upperbound_combined = np.minimum( np.minimum(old_spheres_fov_dists, old_spheres_obs_dists), self.spheremap.max_allowed_radius)
 
@@ -631,7 +678,7 @@ class SubmapBuilderModule:
             sampling_pts = sampling_pts * [self.width, self.height]
 
             # CHECK THE SAMPLING DIRS ARE INSIDE THE 2D CONVEX HULL OF 3D POINTS
-            inhull = np.array([img_polygon.contains(geometry.Point(p[0], p[1])) for p in sampling_pts])
+            inhull = np.array([visible_obstacle_pts_polygon.contains(geometry.Point(p[0], p[1])) for p in sampling_pts])
             if not np.any(inhull):
                 if self.verbose_submap_construction:
                     print("NONE IN HULL")
@@ -902,10 +949,14 @@ class SubmapBuilderModule:
         print("N VISIBLE: " + str(np.sum(passed_visibility)))
         print("N PARALLAX-OK: " + str(np.sum(passed_parallax)))
         print("N ACTIVE: " + str(np.sum(self.ff_points_active_mask)))
+
+        self.ff_points_active_mask = np.full((n_pts,1), True).flatten()
                 # # #}
 
     # def init_fake_freespace_pts(self):# #{
     def init_fake_freespace_pts(self):
+
+        self.faked_pixpos_lastframe = None
         self.ff_trim = 0.2
 
         xstart = self.ff_trim* self.width
@@ -917,6 +968,9 @@ class SubmapBuilderModule:
 
         pts_2d = np.array([[xstart + x * xstep, ystart + y * ystep] for x in range(self.ff_pts_W+1) for y in range(self.ff_pts_H+1)])
         n_pts = pts_2d.shape[0]
+
+        print("INIT FAKE FSPACE PTS:")
+        print(pts_2d)
 
         print("KOCKA")
         # print(pts_2d)
@@ -1050,8 +1104,11 @@ class SubmapBuilderModule:
         self.spheremap_freespace_pub.publish(marker_array)
 # # #}
     
-    def visualize_depth(self, pixpos, tri):# # #{
-        rgb = np.repeat(copy.deepcopy(self.new_frame)[:, :, np.newaxis], 3, axis=2)
+    def visualize_polygon(self, pixpos, tri):# # #{
+        # rgb = np.repeat(copy.deepcopy(self.new_frame)[:, :, np.newaxis], 3, axis=2)
+        # rgb = np.zeros((self.new_frame.shape[0], self.new_frame.shape[1], 3), dtype=np.uint8)
+        rgb = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+
 
         for i in range(len(tri.simplices)):
             a = pixpos[tri.simplices[i][0], :].astype(int)
@@ -1061,6 +1118,13 @@ class SubmapBuilderModule:
             rgb = cv2.line(rgb, (a[0], a[1]), (b[0], b[1]), (255, 0, 0), 3)
             rgb = cv2.line(rgb, (a[0], a[1]), (c[0], c[1]), (255, 0, 0), 3)
             rgb = cv2.line(rgb, (c[0], c[1]), (b[0], b[1]), (255, 0, 0), 3)
+
+        if not self.faked_pixpos_lastframe is None:
+            for i in range(self.faked_pixpos_lastframe.shape[0]):
+                x = int(self.faked_pixpos_lastframe[i, 0])
+                y = int(self.faked_pixpos_lastframe[i, 1])
+                rgb = cv2.circle(rgb, (x, y), 5, 
+                               (0, 255, 0), -1) 
 
         res = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         return res
