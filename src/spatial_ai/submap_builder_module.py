@@ -54,18 +54,20 @@ import sys
 # # #}
 
 class SubmapBuilderModule:
-    def __init__(self, w, h, K, camera_frame_id, odom_orig_frame_id, fcu_frame, tf_listener, T_imu_to_cam, T_fcu_to_imu, camera_info = None):# # #{
+    def __init__(self, w, h, K, camera_frame_id, odom_orig_frame_id, fcu_frame, tf_listener, T_imu_to_cam, T_fcu_to_imu, camera_info = None, is_cam_info_undistorted = False):# # #{
         self.width = w
         self.height = h
         self.K = K
+        self.new_K = K
 
         if not camera_info is None:
-            self.width = camera_info.width
-            self.height = camera_info.height
-            self.cam_info_K = np.reshape(camera_info.K, (3,3))
-            self.distortion_coeffs =  np.array(camera_info.D)[:4]
+            if not is_cam_info_undistorted:
+                self.width = camera_info.width
+                self.height = camera_info.height
+                self.cam_info_K = np.reshape(camera_info.K, (3,3))
+                self.distortion_coeffs =  np.array(camera_info.D)[:4]
 
-            self.new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(self.cam_info_K, self.distortion_coeffs, (w, h), np.eye(3), balance=1, new_size=(w, h), fov_scale=1)
+                self.new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(self.cam_info_K, self.distortion_coeffs, (w, h), np.eye(3), balance=1, new_size=(w, h), fov_scale=1)
 
         self.camera_frame = camera_frame_id
         self.odom_frame = odom_orig_frame_id
@@ -342,9 +344,17 @@ class SubmapBuilderModule:
 
             positive_z_mask = transformed[2, :] > 0
             positive_z_points = transformed[:, positive_z_mask]
+            pts_for_surfel_addition_tmp = positive_z_points  #SAVE JUST THE MEASURED ONES FOR SURFEL ADDITION
+
             positive_z_slam_ids = None
             if not slam_ids is None:
                 positive_z_slam_ids = slam_ids[positive_z_mask]
+
+            if np.any(self.ff_points_active_mask):
+                print("ADDING FAKE FREESPACE PTS THAT DO NOT LIE IN CURRENT DATA")
+                positive_z_points  = np.concatenate((positive_z_points  , self.egocentric_ff_pts[self.ff_points_active_mask, :].T), axis = 1)
+
+
 
             pixpos = getPixelPositions(positive_z_points, self.K)
 
@@ -376,8 +386,10 @@ class SubmapBuilderModule:
 
             # CONSTRUCT FOV MESH (of visible pts and current cam origin)
             fullmesh_pts = positive_z_points
+
             fullmesh_pts = np.concatenate((fullmesh_pts, orig_pts), axis=1)
-            fullmesh_zero_pt_index = fovmesh_pts_with_orig.shape[1] - 1
+            # fullmesh_zero_pt_index = fovmesh_pts_with_orig.shape[1] - 1
+            fullmesh_zero_pt_index = fullmesh_pts.shape[1] - 1
             new_simplices = [[hull2d_idxs[i], hull2d_idxs[i+1], fullmesh_zero_pt_index] for i in range(len(hull2d_idxs) - 1)]
             new_simplices.append([hull2d_idxs[len(hull2d_idxs)-1], hull2d_idxs[0], fullmesh_zero_pt_index])
             fullmesh_simplices = np.concatenate((tri.simplices, new_simplices), axis=0)
@@ -385,8 +397,6 @@ class SubmapBuilderModule:
             fov_mesh = trimesh.Trimesh(vertices=fullmesh_pts.T, faces = fullmesh_simplices, use_embree = True)
             fov_mesh_query = trimesh.proximity.ProximityQuery(fov_mesh)
 
-            # CONSTRUCT OBSTACLE POINT MESH AND QUERY
-            obstacle_mesh_query = trimesh.proximity.ProximityQuery(obstacle_mesh)
             # # #}
 
             # SAMPLE NEW FRONTIERS ALONG THE VISIBLE FREESPACE MESH# #{
@@ -398,7 +408,6 @@ class SubmapBuilderModule:
                 # fr_samples2, fr_face_indices2 = trimesh.sample.sample_surface_even(obstacle_mesh, 50)
                 fr_samples = np.concatenate((fr_samples, fr_samples2))
                 # print(fr_samples.shape)
-                # fr_sample_odists = obstacle_mesh_query.signed_distance(fr_samples)
                 # fr_samples = fr_samples[fr_sample_odists > -0.1, :]
                 # print(fr_samples.shape)
 
@@ -674,7 +683,6 @@ class SubmapBuilderModule:
 
             # TRY ADDING NEW SPHERES AT SAMPLED POSITIONS
             new_spheres_fov_dists = np.abs(fov_mesh_query.signed_distance(sampling_pts.T))
-            # new_spheres_obs_dists = np.abs(obstacle_mesh_query.signed_distance(sampling_pts.T))
             # print(sampling_pts.T.shape)
             # print(self.spheremap.surfel_points.shape)
             # pt_distmatrix = scipy.spatial.distance_matrix(sampling_pts.T, self.spheremap.surfel_points)
@@ -766,7 +774,9 @@ class SubmapBuilderModule:
 
             positive_z_points = positive_z_points.T
             # pts_for_surfel_addition = positive_z_points[positive_z_points[:, 2] < max_sphere_update_dist]
-            pts_for_surfel_addition = positive_z_points[np.linalg.norm(positive_z_points, axis=1) < max_sphere_update_dist]
+            # pts_for_surfel_addition = positive_z_points[np.linalg.norm(positive_z_points, axis=1) < max_sphere_update_dist]
+            pts_for_surfel_addition_tmp = pts_for_surfel_addition_tmp.T
+            pts_for_surfel_addition = pts_for_surfel_addition_tmp[np.linalg.norm(pts_for_surfel_addition_tmp, axis=1) < max_sphere_update_dist]
             visible_pts_in_spheremap_frame = transformPoints(pts_for_surfel_addition, T_orig_to_current_cam)
             self.spheremap.updateSurfels(T_orig_to_current_cam, visible_pts_in_spheremap_frame , pixpos, tri.simplices, self.surfel_resolution, positive_z_slam_ids)
 
@@ -799,6 +809,7 @@ class SubmapBuilderModule:
                 print("SPHEREMAP visualization time: " + str((comp_time) * 1000) +  " ms")
 # # #}
 
+    # def fake_freespace_update(self):# #{
     def fake_freespace_update(self):
         print("FAKE FREESPACE")
         self.visualize_fake_freespace_pts()
@@ -850,7 +861,7 @@ class SubmapBuilderModule:
         ll_corner = np.array([self.ff_trim*self.width, self.ff_trim*self.height])
         ur_corner = np.array([(1 - self.ff_trim) * self.width, (1 - self.ff_trim) * self.height])
 
-        min_parallax = np.pi / 10
+        min_parallax = np.pi / 12
 
         for i in range(len(self.ff_pose_buffer) - 1):
             # T_relative = np.linalg.inv(T_odom_to_cam) @ self.ff_pose_buffer[i]
@@ -891,11 +902,11 @@ class SubmapBuilderModule:
         print("N VISIBLE: " + str(np.sum(passed_visibility)))
         print("N PARALLAX-OK: " + str(np.sum(passed_parallax)))
         print("N ACTIVE: " + str(np.sum(self.ff_points_active_mask)))
-                
+                # # #}
 
-
+    # def init_fake_freespace_pts(self):# #{
     def init_fake_freespace_pts(self):
-        self.ff_trim = 0.3
+        self.ff_trim = 0.2
 
         xstart = self.ff_trim* self.width
         xstep = (1-2*self.ff_trim) * self.width / self.ff_pts_W
@@ -922,7 +933,7 @@ class SubmapBuilderModule:
         self.egocentric_ff_pts = self.ff_dist * (self.egocentric_ff_pts / np.linalg.norm(self.egocentric_ff_pts, axis = 1).reshape((n_pts, 1)))
 
         self.ff_points_active_mask = np.full((n_pts,1), False).flatten()
-        
+        # # #}
 
     # UTILS
 
