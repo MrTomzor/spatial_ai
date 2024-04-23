@@ -850,7 +850,7 @@ class SubmapBuilderModule:
         ll_corner = np.array([self.ff_trim*self.width, self.ff_trim*self.height])
         ur_corner = np.array([(1 - self.ff_trim) * self.width, (1 - self.ff_trim) * self.height])
 
-        min_parallax = np.pi / 8
+        min_parallax = np.pi / 10
 
         for i in range(len(self.ff_pose_buffer) - 1):
             # T_relative = np.linalg.inv(T_odom_to_cam) @ self.ff_pose_buffer[i]
@@ -860,7 +860,7 @@ class SubmapBuilderModule:
             # print("T relative dist: " + str(np.linalg.norm(T_relative[:3,3])))
             translated_pts = transformPoints(self.egocentric_ff_pts, T_relative)
 
-            dot_product = np.sum(self.egocentric_ff_pts * translated_pts, axis=1)
+            dot_product = np.sum(self.egocentric_ff_pts * (self.egocentric_ff_pts + T_relative[:3,3]), axis=1)
             norms = np.linalg.norm(self.egocentric_ff_pts, axis=1) * np.linalg.norm(translated_pts, axis=1)
             cos_theta = dot_product / norms
             # angles = np.arccos(np.clip(cos_theta, -1.0, 1.0))
@@ -886,6 +886,7 @@ class SubmapBuilderModule:
         passed_visibility = vis_lengths == bufferlen - 1
         passed_parallax = np.sum(parallax_mask, axis = 0).flatten() > 0
         self.ff_points_active_mask = np.logical_and(passed_visibility, passed_parallax)
+        # self.ff_points_active_mask = passed_parallax
 
         print("N VISIBLE: " + str(np.sum(passed_visibility)))
         print("N PARALLAX-OK: " + str(np.sum(passed_parallax)))
