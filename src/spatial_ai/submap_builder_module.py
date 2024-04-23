@@ -841,6 +841,7 @@ class SubmapBuilderModule:
             return
 
         visibility_mask = np.full((bufferlen, n_pts), False)
+        parallax_mask = np.full((bufferlen, n_pts), False)
 
         # GO THRU ALL PREV POSES N CHECK IF "TRACKED" AND HOW MUCH TRANSLATION/PARALLAX
         # ll_corner = np.array([0, 0])
@@ -849,31 +850,45 @@ class SubmapBuilderModule:
         ll_corner = np.array([self.ff_trim*self.width, self.ff_trim*self.height])
         ur_corner = np.array([(1 - self.ff_trim) * self.width, (1 - self.ff_trim) * self.height])
 
+        min_parallax = np.pi / 8
+
         for i in range(len(self.ff_pose_buffer) - 1):
             # T_relative = np.linalg.inv(T_odom_to_cam) @ self.ff_pose_buffer[i]
 
             T_relative = np.linalg.inv(self.ff_pose_buffer[i]) @ T_odom_to_cam
 
-            print("T relative dist: " + str(np.linalg.norm(T_relative[:3,3])))
+            # print("T relative dist: " + str(np.linalg.norm(T_relative[:3,3])))
             translated_pts = transformPoints(self.egocentric_ff_pts, T_relative)
-            print("CUR PTS:")
-            print(self.egocentric_ff_pts[0, :])
-            print("PREV PTS:")
-            print(translated_pts[0, :])
 
-            print(translated_pts.shape)
+            dot_product = np.sum(self.egocentric_ff_pts * translated_pts, axis=1)
+            norms = np.linalg.norm(self.egocentric_ff_pts, axis=1) * np.linalg.norm(translated_pts, axis=1)
+            cos_theta = dot_product / norms
+            # angles = np.arccos(np.clip(cos_theta, -1.0, 1.0))
+            angles = np.arccos(cos_theta)
+            parallax_mask[i, :] = np.abs(angles) >= min_parallax
+
+            # print("CUR PTS:")
+            # print(self.egocentric_ff_pts[0, :])
+            # print("PREV PTS:")
+            # print(translated_pts[0, :])
+
+            # print(translated_pts.shape)
             pixpos_there = getPixelPositions(translated_pts.T, self.new_K)
-            print("PIXPOS PTS:")
-            print(pixpos_there[0, :])
+            # print("PIXPOS PTS:")
+            # print(pixpos_there[0, :])
 
             in_img = np.all(np.logical_and(pixpos_there <= ur_corner, pixpos_there >= ll_corner), axis = 1)
-            print("N pts in img: " + str(np.sum(in_img)))
+            # print("N pts in img: " + str(np.sum(in_img)))
             visibility_mask[i, :] = in_img
         # print(visibility_mask)
         vis_lengths = np.sum(visibility_mask, axis = 0).flatten()
         # print(vis_lengths)
-        self.ff_points_active_mask = vis_lengths == bufferlen - 1
+        passed_visibility = vis_lengths == bufferlen - 1
+        passed_parallax = np.sum(parallax_mask, axis = 0).flatten() > 0
+        self.ff_points_active_mask = np.logical_and(passed_visibility, passed_parallax)
 
+        print("N VISIBLE: " + str(np.sum(passed_visibility)))
+        print("N PARALLAX-OK: " + str(np.sum(passed_parallax)))
         print("N ACTIVE: " + str(np.sum(self.ff_points_active_mask)))
                 
 
