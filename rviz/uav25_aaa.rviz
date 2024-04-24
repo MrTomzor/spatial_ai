@@ -250,7 +250,7 @@ Visualization Manager:
               Marker Topic: /uav25/control_manager/trajectory_original/markers
               Name: Markers
               Namespaces:
-                {}
+                "": true
               Queue Size: 100
               Value: true
           Enabled: true
@@ -374,7 +374,7 @@ Visualization Manager:
               Marker Topic: /uav25/control_manager/mpc_tracker/trajectory_processed/markers
               Name: Markers
               Namespaces:
-                {}
+                "": true
               Queue Size: 100
               Value: true
           Enabled: true
@@ -388,7 +388,9 @@ Visualization Manager:
           Marker Topic: /uav25/trajectory_generation/markers/final
           Name: final
           Namespaces:
-            {}
+            markers/final_lines: true
+            markers/final_points: true
+            markers/final_triangles: true
           Queue Size: 100
           Value: true
         - Class: rviz/MarkerArray
@@ -396,7 +398,9 @@ Visualization Manager:
           Marker Topic: /uav25/trajectory_generation/markers/original
           Name: original
           Namespaces:
-            {}
+            markers/original_lines: true
+            markers/original_points: true
+            markers/original_triangles: true
           Queue Size: 100
           Value: true
       Enabled: true
@@ -477,7 +481,7 @@ Visualization Manager:
       Color: 0; 0; 0
       Color Transformer: FlatColor
       Decay Time: 0
-      Enabled: false
+      Enabled: true
       Invert Rainbow: false
       Max Color: 255; 255; 255
       Min Color: 0; 0; 0
@@ -492,13 +496,13 @@ Visualization Manager:
       Unreliable: false
       Use Fixed Frame: true
       Use rainbow: true
-      Value: false
+      Value: true
     - Class: rviz/MarkerArray
       Enabled: true
       Marker Topic: /AAA/spheremap_freespace
       Name: MarkerArray
       Namespaces:
-        {}
+        "": true
       Queue Size: 100
       Value: true
     - Class: rviz/MarkerArray
@@ -514,7 +518,7 @@ Visualization Manager:
       Marker Topic: /AAA/spheres
       Name: MarkerArray
       Namespaces:
-        {}
+        "": true
       Queue Size: 100
       Value: true
     - Class: rviz/Image
@@ -545,6 +549,22 @@ Visualization Manager:
         {}
       Queue Size: 100
       Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /AAA/unsorted_markers
+      Name: MarkerArray
+      Namespaces:
+        {}
+      Queue Size: 100
+      Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /AAA/assumed_freespace_points
+      Name: MarkerArray
+      Namespaces:
+        "": true
+      Queue Size: 100
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 255; 255; 255
@@ -573,7 +593,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/ThirdPersonFollower
-      Distance: 30.22551155090332
+      Distance: 25.134258270263672
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -581,17 +601,17 @@ Visualization Manager:
         Value: false
       Field of View: 0.7853981852531433
       Focal Point:
-        X: -0.9605188369750977
-        Y: 2.8660435676574707
-        Z: -1.6787595086498186e-05
+        X: 5.810051441192627
+        Y: 28.043472290039062
+        Z: -8.748983236728236e-05
       Focal Shape Fixed Size: false
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.9947954416275024
+      Pitch: 0.9047960042953491
       Target Frame: global
-      Yaw: 2.492248773574829
+      Yaw: 4.867620944976807
     Saved: ~
 Window Geometry:
   Displays:

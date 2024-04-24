@@ -34,6 +34,11 @@ local_mapping:
   get_camera_calib_from_topic: False
   camera_info_topic: '/uav25/bluefox_vio_front/camera_info'
 
+  fake_freespace_pts_enabled: True
+  fake_freespace_pts_dist: 8
+  fake_freespace_min_parallax: 0.1
+  fake_freespace_pts_always_active: False #DANGEROUS
+
 local_nav:
   enabled: True
   uav_radius: 0.8

@@ -144,8 +144,13 @@ class SubmapBuilderModule:
         self.visual_kf_addition_heading = 3.14159 /2
         self.visual_kf_addition_dist = 2
 
+        self.fake_freespace_pts_enabled = rospy.get_param("local_mapping/fake_freespace_pts_enabled")
+        self.ff_points_always_active = rospy.get_param("local_mapping/fake_freespace_pts_always_active")
+
+
         # LOAD FAKE FREESPACE POINTS
-        self.ff_dist = 10
+        self.ff_dist = rospy.get_param("local_mapping/fake_freespace_pts_dist")
+        self.ff_min_parallax = rospy.get_param("local_mapping/fake_freespace_min_parallax")
         self.ff_pts_W = 5
         self.ff_pts_H = 5
         self.init_fake_freespace_pts();
@@ -392,7 +397,7 @@ class SubmapBuilderModule:
 
             # GET ACTIVATED AND USABLE FAKE FREESPACE PTS
             added_ff_pts = None
-            if np.any(self.ff_points_active_mask):
+            if np.any(self.ff_points_active_mask) and self.fake_freespace_pts_enabled:
                 # positive_z_points  = np.concatenate((positive_z_points, self.egocentric_ff_pts[self.ff_points_active_mask, :].T), axis = 1)
                 pixpos_ff_pts = getPixelPositions(self.egocentric_ff_pts.T, self.K)
                 inhull = np.array([visible_obstacle_pts_polygon.contains(geometry.Point(pixpos_ff_pts[i, 0], pixpos_ff_pts[i, 1])) for i in range(pixpos_ff_pts.shape[0])])
@@ -867,7 +872,7 @@ class SubmapBuilderModule:
         last_pose_trans_dif = None
         last_pose_angle_dif = None
 
-        min_trans_dif = 0.2
+        min_trans_dif = 0.3
         min_angle_dif = np.pi / 4
 
         if len(self.ff_pose_buffer) > 0:
@@ -906,7 +911,8 @@ class SubmapBuilderModule:
         ll_corner = np.array([self.ff_trim*self.width, self.ff_trim*self.height])
         ur_corner = np.array([(1 - self.ff_trim) * self.width, (1 - self.ff_trim) * self.height])
 
-        min_parallax = np.pi / 12
+        # min_parallax = np.pi / 12
+        min_parallax = self.ff_min_parallax 
 
         for i in range(len(self.ff_pose_buffer) - 1):
             # T_relative = np.linalg.inv(T_odom_to_cam) @ self.ff_pose_buffer[i]
@@ -941,14 +947,15 @@ class SubmapBuilderModule:
         # print(vis_lengths)
         passed_visibility = vis_lengths == bufferlen - 1
         passed_parallax = np.sum(parallax_mask, axis = 0).flatten() > 0
-        self.ff_points_active_mask = np.logical_and(passed_visibility, passed_parallax)
-        # self.ff_points_active_mask = passed_parallax
+        # self.ff_points_active_mask = np.logical_and(passed_visibility, passed_parallax)
+        self.ff_points_active_mask = passed_parallax
 
         print("N VISIBLE: " + str(np.sum(passed_visibility)))
         print("N PARALLAX-OK: " + str(np.sum(passed_parallax)))
         print("N ACTIVE: " + str(np.sum(self.ff_points_active_mask)))
 
-        self.ff_points_active_mask = np.full((n_pts,1), True).flatten()
+        if self.ff_points_always_active:
+            self.ff_points_active_mask = np.full((n_pts,1), True).flatten()
                 # # #}
 
     # def init_fake_freespace_pts(self):# #{
