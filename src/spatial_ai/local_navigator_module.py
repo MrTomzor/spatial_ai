@@ -79,7 +79,7 @@ class LocalNavigatorModule:
     def __init__(self, mapper, ptraj_topic, output_path_topic):# # #{
 
         self.main_state = "idle"
-        self.min_vp_frontier_val = 3
+        self.min_vp_frontier_val = rospy.get_param("local_nav/min_num_frontiers_per_goal")
 
         self.mapper = mapper
         self.odom_frame = mapper.odom_frame
@@ -92,11 +92,13 @@ class LocalNavigatorModule:
         self.path_for_trajectory_generator_pub = rospy.Publisher(output_path_topic, mrs_msgs.msg.Path, queue_size=10)
 
         # VIS PUB
-        self.path_planning_vis_pub = rospy.Publisher('path_planning_vis', MarkerArray, queue_size=10)
-        self.roadmap_vis_pub = rospy.Publisher('roadmap', MarkerArray, queue_size=10)
-        self.global_path_planning_vis_pub = rospy.Publisher('path_planning_vis_global', MarkerArray, queue_size=10)
-        self.unsorted_vis_pub = rospy.Publisher('unsorted_markers', MarkerArray, queue_size=10)
-        self.exploration_goals_vis_pub = rospy.Publisher('exploration_goals', MarkerArray, queue_size=10)
+        # vis_prefix = "AAA/"
+        vis_prefix = ""
+        self.path_planning_vis_pub = rospy.Publisher(vis_prefix + 'path_planning_vis', MarkerArray, queue_size=10)
+        self.roadmap_vis_pub = rospy.Publisher(vis_prefix +'roadmap', MarkerArray, queue_size=10)
+        self.global_path_planning_vis_pub = rospy.Publisher(vis_prefix +'path_planning_vis_global', MarkerArray, queue_size=10)
+        self.unsorted_vis_pub = rospy.Publisher(vis_prefix +'unsorted_markers', MarkerArray, queue_size=10)
+        self.exploration_goals_vis_pub = rospy.Publisher(vis_prefix +'exploration_goals', MarkerArray, queue_size=10)
 
         # SERVICES
         self.setstate_idle_srv = rospy.Service("navigation/setstate_idle", EmptySrv, self.setstate_idle)
@@ -1407,9 +1409,9 @@ class LocalNavigatorModule:
         return NavRoadmap(global_pts, global_headings)
     # # #}
 
-    def isViewpointBlockedByExplorationGoals(self, vp):# # #{
+    def isViewpointBlockedByExplorationGoals(self, vp, only_unobsv=False):# # #{
         if self.exploration_goals is None:
-            return False, None
+            return False, None, None
 
         explo_points = np.array([goal.viewpoint.position for goal in self.exploration_goals])
         explo_headings = np.array([goal.viewpoint.heading for goal in self.exploration_goals]).flatten()
@@ -1428,12 +1430,15 @@ class LocalNavigatorModule:
         headingfailed = np.abs(heading_difs) < self.goal_blocking_angle
 
         blocking_mask = np.logical_and(distfailed, headingfailed)
+        if only_unobsv:
+            unobsv = np.array([goal.num_observations == 0 for goal in self.exploration_goals]).flatten()
+            blocking_mask = np.logical_and(blocking_mask, unobsv)
 
         if not np.any(blocking_mask):
-            return False, None
+            return False, None, None
 
         blocking_goals = self.exploration_goals[blocking_mask]
-        return True, blocking_goals
+        return True, blocking_goals, blocking_mask 
 
     # # #}
 
@@ -1446,7 +1451,7 @@ class LocalNavigatorModule:
         if len(frontier_vps ) > 0:
             n_added = 0
             for i in range(len(frontier_vps)):
-                is_blocked, by_who = self.isViewpointBlockedByExplorationGoals(frontier_vps[i])
+                is_blocked, by_who, _ = self.isViewpointBlockedByExplorationGoals(frontier_vps[i])
                 if is_blocked:
                     continue
 
@@ -1480,13 +1485,30 @@ class LocalNavigatorModule:
 
 
         # TODO - MARK NEARBY VPS AS VISITED
-        is_blocked, by_who = self.isViewpointBlockedByExplorationGoals(current_vp_global_frame)
+        # is_blocked, by_who = self.isViewpointBlockedByExplorationGoals(current_vp_global_frame)
+        # if not is_blocked:
+        #     print("NOT ADDING ANY EXPLORATION GOAL OBSERVATIONS, NONE NEARBY")
+        # else:
+        #     for i in range(by_who.size):
+        #         by_who[i].num_observations += 1
+        #         print("ADDING EXPLORATION GOAL OBSERVATION")
+
+        is_blocked, by_who, blocking_mask = self.isViewpointBlockedByExplorationGoals(current_vp_global_frame, True)
         if not is_blocked:
-            print("NOT ADDING ANY EXPLORATION GOAL OBSERVATIONS, NONE NEARBY")
+            # print("NOT ADDING ANY EXPLORATION GOAL OBSERVATIONS, NONE NEARBY")
+            pass
         else:
-            for i in range(by_who.size):
-                by_who[i].num_observations += 1
-                print("ADDING EXPLORATION GOAL OBSERVATION")
+            print("REMOVING BLOCKED VPS: " + str(np.sum(blocking_mask)))
+            # REMOVE THE BLOCKED
+            self.exploration_goals = self.exploration_goals[np.logical_not(blocking_mask)]
+            # ADD VP WITH OBSERVATION AT CURRENT POSE
+            new_goal = ExplorationGoal(current_vp_global_frame)
+            new_goal.num_observations = self.goal_max_obsvs
+
+            if self.exploration_goals is None:
+                self.exploration_goals = np.array([new_goal], dtype=object)
+            else:
+                self.exploration_goals = np.concatenate((self.exploration_goals, np.array([new_goal], dtype=object)))
 
         if self.roadmap_navigation_failed:
             print("ROADMAP NAV TO EXPLORATION GLOBAL GOAL FAILED")

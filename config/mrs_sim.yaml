@@ -29,6 +29,13 @@ local_mapping:
   get_camera_calib_from_topic: False
   camera_info_topic: '/uav1/vio/camera/camera_info'
 
+  fake_freespace_pts_enabled: True
+  fake_freespace_pts_dist: 10
+  fake_freespace_min_parallax: 0.1
+  fake_freespace_pts_always_active: False #DANGEROUS if True
+  fake_freespace_ignore_tracking: False #DANGEROUS if True
+  fake_freespace_tracking_buffer_len: 10
+
 local_nav:
   enabled: True
   uav_radius: 0.8
@@ -53,15 +60,16 @@ local_nav:
   output_path_topic: '/uav1/trajectory_generation/path'
 
   frontier_visibility_dist: 15
+  min_num_frontiers_per_goal: 5
 
 exploration_safety_area:
-  enabled: False
+  enabled: True
 
-  x_min: -10
-  x_max: 10
+  x_min: -1000
+  x_max: 1000
 
-  y_min: -10
-  y_max: 10
+  y_min: -1000
+  y_max: 1000
 
   z_min: -1
   z_max: 8

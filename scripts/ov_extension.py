@@ -154,6 +154,7 @@ class NavNode:
         self.marker_scale = rospy.get_param("marker_scale")
         self.using_external_slam_pts = rospy.get_param("local_mapping/using_external_slam_pts")
 
+        self.is_cam_info_undistorted = False
         if self.robot_platform == "hardnav_underwater":
             # UNITY
             self.K = np.array([642.8495341420769, 0, 400, 0, 644.5958939934509, 300, 0, 0, 1]).reshape((3,3))
@@ -186,6 +187,7 @@ class NavNode:
             self.fcu_frame = rospy.get_param("local_mapping/fcu_frame")
             self.camera_frame = rospy.get_param("local_mapping/camera_frame")
             self.odom_frame = rospy.get_param("local_mapping/odom_frame")
+            self.is_cam_info_undistorted = True
             # self.marker_scale = 0.5
 
             # # Get the transform
@@ -259,7 +261,7 @@ class NavNode:
         self.submap_builder_input_pcl = None
         self.submap_builder_input_point_ids = None
 
-        self.submap_builder_module = SubmapBuilderModule(self.width, self.height, self.K, self.camera_frame, self.odom_frame,self.fcu_frame, self.tf_listener, self.T_imu_to_cam, self.T_fcu_to_imu)
+        self.submap_builder_module = SubmapBuilderModule(self.width, self.height, self.K, self.camera_frame, self.odom_frame,self.fcu_frame, self.tf_listener, self.T_imu_to_cam, self.T_fcu_to_imu, self.camera_info, self.is_cam_info_undistorted)
 
         # LOCAL NAVIGATOR
         ptraj_topic = rospy.get_param("local_nav/predicted_trajectory_topic")

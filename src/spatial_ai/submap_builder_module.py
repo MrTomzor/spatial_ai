@@ -30,6 +30,7 @@ import cv2
 import numpy as np
 import time
 from visualization_msgs.msg import Marker, MarkerArray
+from std_msgs.msg import ColorRGBA
 from geometry_msgs.msg import Point
 from sensor_msgs.msg import PointCloud
 from geometry_msgs.msg import Point32
@@ -53,10 +54,21 @@ import sys
 # # #}
 
 class SubmapBuilderModule:
-    def __init__(self, w, h, K, camera_frame_id, odom_orig_frame_id, fcu_frame, tf_listener, T_imu_to_cam, T_fcu_to_imu ):# # #{
+    def __init__(self, w, h, K, camera_frame_id, odom_orig_frame_id, fcu_frame, tf_listener, T_imu_to_cam, T_fcu_to_imu, camera_info = None, is_cam_info_undistorted = False):# # #{
         self.width = w
         self.height = h
         self.K = K
+        self.new_K = K
+
+        if not camera_info is None:
+            if not is_cam_info_undistorted:
+                self.width = camera_info.width
+                self.height = camera_info.height
+                self.cam_info_K = np.reshape(camera_info.K, (3,3))
+                self.distortion_coeffs =  np.array(camera_info.D)[:4]
+
+                self.new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(self.cam_info_K, self.distortion_coeffs, (w, h), np.eye(3), balance=1, new_size=(w, h), fov_scale=1)
+
         self.camera_frame = camera_frame_id
         self.odom_frame = odom_orig_frame_id
         self.fcu_frame = fcu_frame
@@ -92,20 +104,23 @@ class SubmapBuilderModule:
         # self.return_home_srv = rospy.Service("home", EmptySrv, self.return_home)
 
         # DATA PUB
-        self.runtimes_pub = rospy.Publisher('spheremap_runtimes', mrs_msgs.msg.Float64ArrayStamped, queue_size=10)
+        # vis_prefix = "AAA/"
+        vis_prefix = ""
+        self.runtimes_pub = rospy.Publisher(vis_prefix + 'spheremap_runtimes', mrs_msgs.msg.Float64ArrayStamped, queue_size=10)
 
         # VIS PUB
-        self.spheremap_outline_pub = rospy.Publisher('spheres', MarkerArray, queue_size=10)
-        self.spheremap_freespace_pub = rospy.Publisher('spheremap_freespace', MarkerArray, queue_size=10)
-        self.freespace_polyhedron_pub = rospy.Publisher('visible_freespace_poly', MarkerArray, queue_size=10)
+        self.assumed_freespace_vis_pub = rospy.Publisher(vis_prefix + 'assumed_freespace_points', MarkerArray, queue_size=10)
+        self.spheremap_outline_pub = rospy.Publisher(vis_prefix + 'spheres', MarkerArray, queue_size=10)
+        self.spheremap_freespace_pub = rospy.Publisher(vis_prefix + 'spheremap_freespace', MarkerArray, queue_size=10)
+        self.freespace_polyhedron_pub = rospy.Publisher(vis_prefix + 'visible_freespace_poly', MarkerArray, queue_size=10)
 
-        self.recent_submaps_vis_pub = rospy.Publisher('recent_submaps_vis', MarkerArray, queue_size=10)
-        self.path_planning_vis_pub = rospy.Publisher('path_planning_vis', MarkerArray, queue_size=10)
-        self.visual_similarity_vis_pub = rospy.Publisher('visual_similarity_vis', MarkerArray, queue_size=10)
-        self.unsorted_vis_pub = rospy.Publisher('unsorted_markers', MarkerArray, queue_size=10)
+        self.recent_submaps_vis_pub = rospy.Publisher(vis_prefix + 'recent_submaps_vis', MarkerArray, queue_size=10)
+        self.path_planning_vis_pub = rospy.Publisher(vis_prefix + 'path_planning_vis', MarkerArray, queue_size=10)
+        self.visual_similarity_vis_pub = rospy.Publisher(vis_prefix + 'visual_similarity_vis', MarkerArray, queue_size=10)
+        self.unsorted_vis_pub = rospy.Publisher(vis_prefix + 'unsorted_markers', MarkerArray, queue_size=10)
 
         # self.kp_pub = rospy.Publisher('tracked_features_img', Image, queue_size=1)
-        self.depth_pub = rospy.Publisher('estim_depth_img', Image, queue_size=1)
+        self.polygon_debug_pub = rospy.Publisher('polygon_debug', Image, queue_size=1)
         self.marker_pub = rospy.Publisher('/vo_odom', Marker, queue_size=10)
 
 
@@ -129,6 +144,20 @@ class SubmapBuilderModule:
         self.max_sphere_update_dist = rospy.get_param("local_mapping/max_sphere_sampling_z")
         self.visual_kf_addition_heading = 3.14159 /2
         self.visual_kf_addition_dist = 2
+
+        self.fake_freespace_pts_enabled = rospy.get_param("local_mapping/fake_freespace_pts_enabled")
+        self.ff_points_always_active = rospy.get_param("local_mapping/fake_freespace_pts_always_active")
+        self.ff_points_ignore_tracking = rospy.get_param("local_mapping/fake_freespace_ignore_tracking")
+
+
+        # LOAD FAKE FREESPACE POINTS
+        self.ff_dist = rospy.get_param("local_mapping/fake_freespace_pts_dist")
+        self.ff_min_parallax = rospy.get_param("local_mapping/fake_freespace_min_parallax")
+        self.ff_pts_W = 5
+        self.ff_pts_H = 5
+        self.init_fake_freespace_pts();
+        self.ff_pose_buffer = []
+        self.max_ff_buffer_len = rospy.get_param("local_mapping/fake_freespace_tracking_buffer_len")
         
         # # #}
 
@@ -136,6 +165,8 @@ class SubmapBuilderModule:
 
     def camera_update_iter(self, msg, slam_ids = None):# # #{
         runtime_data = []
+
+        self.fake_freespace_update()
 
         # Add new visual keyframe if enough distance has been traveled# # #{
         with ScopedLock(self.spheremap_mutex):
@@ -321,42 +352,89 @@ class SubmapBuilderModule:
 
             positive_z_mask = transformed[2, :] > 0
             positive_z_points = transformed[:, positive_z_mask]
+            pts_for_surfel_addition_tmp = positive_z_points  #SAVE JUST THE MEASURED ONES FOR SURFEL ADDITION
+
             positive_z_slam_ids = None
             if not slam_ids is None:
                 positive_z_slam_ids = slam_ids[positive_z_mask]
 
-            pixpos = getPixelPositions(positive_z_points, self.K)
+
+
+
+
+            visible_obstacle_pts = positive_z_points
+            pixpos = getPixelPositions(visible_obstacle_pts, self.K)
+            # print("OBSTACLE MESH PROJECTED PIXPOS:")
+            # print(pixpos)
 
             # COMPUTE DELAUNAY TRIANG OF VISIBLE SLAM POINTS
-            if positive_z_points.shape[1] < 4:
+            if visible_obstacle_pts.shape[1] < 4:
                 if self.verbose_submap_construction:
                     print("NOT ENAUGH PTS FOR DELAUNAY!")
                 return
             if self.verbose_submap_construction:
                 print("HAVE DELAUNAY:")
             tri = Delaunay(pixpos)
+            self.polygon_debug_pub.publish(self.bridge.cv2_to_imgmsg(self.visualize_polygon(pixpos, tri), "bgr8"))
 
-            # CONSTRUCT OBSTACLE MESH
-            obstacle_mesh = trimesh.Trimesh(vertices=positive_z_points.T, faces = tri.simplices)
 
             # CONSTRUCT POLYGON OF PIXPOSs OF VISIBLE SLAM PTS
             hull2d = ConvexHull(pixpos)
 
+            # print("OBSTACLE POLYGON HULL:")
+            # print(hull2d.points)
+
             if self.verbose_submap_construction:
                 print("POLY")
-            img_polygon = geometry.Polygon(hull2d.points)
+            visible_obstacle_pts_polygon = geometry.Polygon(pixpos[hull2d.vertices, :]) # MUST BE ORDERED PROPERLY!!!
+            extended_pts_polygon = visible_obstacle_pts_polygon 
             hull2d_idxs = hull2d.vertices
 
-            fovmesh_pts = positive_z_points
-            orig_pts = np.zeros((3, 1))
-            fovmesh_pts_with_orig = copy.deepcopy(fovmesh_pts)
-            fovmesh_pts_with_orig = np.concatenate((fovmesh_pts, orig_pts), axis=1)
-            zero_pt_index = fovmesh_pts_with_orig.shape[1] - 1
+            # CONSTRUCT OBSTACLE MESH
+            extended_obstacle_mesh = trimesh.Trimesh(vertices=positive_z_points.T, faces = tri.simplices)
 
             # CONSTRUCT FOV MESH (of visible pts and current cam origin)
+            # BY DEFAULT THE MESH PTS ARE JUS TTHE VISIBLE PTS (and origin added later)
             fullmesh_pts = positive_z_points
+
+            # GET ACTIVATED AND USABLE FAKE FREESPACE PTS
+            added_ff_pts = None
+            if np.any(self.ff_points_active_mask) and self.fake_freespace_pts_enabled:
+                # positive_z_points  = np.concatenate((positive_z_points, self.egocentric_ff_pts[self.ff_points_active_mask, :].T), axis = 1)
+                pixpos_ff_pts = getPixelPositions(self.egocentric_ff_pts.T, self.K)
+                inhull = np.array([visible_obstacle_pts_polygon.contains(geometry.Point(pixpos_ff_pts[i, 0], pixpos_ff_pts[i, 1])) for i in range(pixpos_ff_pts.shape[0])])
+
+                outside_hull_mask = np.logical_not(inhull)
+
+                addition_mask = np.logical_and(self.ff_points_active_mask, outside_hull_mask)
+                added_ff_pts = self.egocentric_ff_pts[addition_mask, :].T
+
+                # print("PIXPOS ACTIVE AND OUTSIDE HULL:")
+                # print(pixpos_ff_pts[addition_mask, :])
+
+                self.faked_pixpos_lastframe = pixpos_ff_pts[addition_mask, :]
+
+            # ADD THEM IF SOME CAN BE ADDED
+            if not added_ff_pts is None:
+                # print("ADDING " + str(added_ff_pts.shape[1]) + " FAKE FREESPACE PTS THAT DO NOT LIE IN CURRENT VISIBLE PT POLYGON")
+                fullmesh_pts = np.concatenate((fullmesh_pts, added_ff_pts), axis = 1)
+                # RECOMPUTE HULL 
+                pixpos = getPixelPositions(fullmesh_pts, self.K)
+                tri = Delaunay(pixpos)
+                # CONSTRUCT POLYGON OF PIXPOSs OF VISIBLE SLAM PTS
+                hull2d = ConvexHull(pixpos)
+                hull2d_idxs = hull2d.vertices
+                extended_pts_polygon = geometry.Polygon(pixpos[hull2d.vertices, :]) # MUST BE ORDERED PROPERLY!!!
+
+                # CONSTRUCT OBSTACLE MESH
+                extended_obstacle_mesh = trimesh.Trimesh(vertices=fullmesh_pts.T, faces = tri.simplices)
+
+
+
+            # ADD ORIGIN PT
+            orig_pts = np.zeros((3,1))
             fullmesh_pts = np.concatenate((fullmesh_pts, orig_pts), axis=1)
-            fullmesh_zero_pt_index = fovmesh_pts_with_orig.shape[1] - 1
+            fullmesh_zero_pt_index = fullmesh_pts.shape[1] - 1
             new_simplices = [[hull2d_idxs[i], hull2d_idxs[i+1], fullmesh_zero_pt_index] for i in range(len(hull2d_idxs) - 1)]
             new_simplices.append([hull2d_idxs[len(hull2d_idxs)-1], hull2d_idxs[0], fullmesh_zero_pt_index])
             fullmesh_simplices = np.concatenate((tri.simplices, new_simplices), axis=0)
@@ -364,8 +442,6 @@ class SubmapBuilderModule:
             fov_mesh = trimesh.Trimesh(vertices=fullmesh_pts.T, faces = fullmesh_simplices, use_embree = True)
             fov_mesh_query = trimesh.proximity.ProximityQuery(fov_mesh)
 
-            # CONSTRUCT OBSTACLE POINT MESH AND QUERY
-            obstacle_mesh_query = trimesh.proximity.ProximityQuery(obstacle_mesh)
             # # #}
 
             # SAMPLE NEW FRONTIERS ALONG THE VISIBLE FREESPACE MESH# #{
@@ -377,7 +453,6 @@ class SubmapBuilderModule:
                 # fr_samples2, fr_face_indices2 = trimesh.sample.sample_surface_even(obstacle_mesh, 50)
                 fr_samples = np.concatenate((fr_samples, fr_samples2))
                 # print(fr_samples.shape)
-                # fr_sample_odists = obstacle_mesh_query.signed_distance(fr_samples)
                 # fr_samples = fr_samples[fr_sample_odists > -0.1, :]
                 # print(fr_samples.shape)
 
@@ -411,8 +486,8 @@ class SubmapBuilderModule:
                 bbx.pos = np.zeros((1,3))
                 bbx.axes = np.eye(3)
                 # GET MIN AND MAX BY MIN AND MAX POLYHEDRON PTS + MAX RADIUS
-                bbx_min = np.min(fovmesh_pts_with_orig.T, axis=0).reshape((1,3))
-                bbx_max = np.max(fovmesh_pts_with_orig.T, axis=0).reshape((1,3))
+                bbx_min = np.min(fullmesh_pts.T, axis=0).reshape((1,3))
+                bbx_max = np.max(fullmesh_pts.T, axis=0).reshape((1,3))
                 bbx.minmaxvals = np.concatenate((bbx_min, bbx_max), axis = 0)
                 bbx_for_surfel_deletion = copy.deepcopy(bbx)
                 bbx.expand(self.spheremap.max_radius)
@@ -464,10 +539,16 @@ class SubmapBuilderModule:
                     # print(contained_surfels_mask .shape)
                     # contained_surfels_mask[surfels_in_bbx_idxs] = contained_surfels_mask
                     
-                    # contained_surfels_mask = fov_mesh.contains(surfel_points_in_camframe)
                     contained_surfels_mask[surfels_in_bbx_idxs] = fov_mesh.contains(surfel_points_in_camframe[surfels_in_bbx_idxs, :])
+
+                    # CHECK IF THE SURFELS PROJECT TO HULL FORMED BY ONLY OBSTACLE PTS (dont delete pts with fake freespace!)
+                    pixpos = getPixelPositions(surfel_points_in_camframe[surfels_in_bbx_idxs, :].T, self.K)
+                    inhull = np.array([visible_obstacle_pts_polygon.contains(geometry.Point(pixpos[i, 0], pixpos[i, 1])) for i in range(pixpos.shape[0])])
+                    contained_surfels_mask[surfels_in_bbx_idxs] = np.logical_and(contained_surfels_mask[surfels_in_bbx_idxs], inhull)
+
                     contained_surfels_idxs = np.where(contained_surfels_mask)[0]
                     contained_surfels_dists = np.linalg.norm(surfel_points_in_camframe[contained_surfels_mask, :], axis = 1)
+
 
                     old_update_dt = time.time() - interm_time2
                     interm_time2 = time.time()
@@ -504,7 +585,7 @@ class SubmapBuilderModule:
                         # print("ADDING NONDELTED PTS: " + str(nondeleted_visible_surfels.shape[0]))
                         # TODO fix
                         # visible_points = np.append(visible_old_points, nondeleted_visible_surfels, axis=0)
-                        fovmesh_pts = np.concatenate((fovmesh_pts.T, nondeleted_visible_surfels), axis=0).T
+                        visible_obstacle_pts = np.concatenate((visible_obstacle_pts .T, nondeleted_visible_surfels), axis=0).T
                     worked_sphere_idxs = worked_sphere_idxs
                     # print("N WORKED SPHERE IDXS:")
                     # print(worked_sphere_idxs.size)
@@ -530,7 +611,7 @@ class SubmapBuilderModule:
                     if self.verbose_submap_construction:
                         print("PART 0.5 - signed distance: " + str((old_update_dt ) * 1000) +  " ms")
 
-                    pt_distmatrix = scipy.spatial.distance_matrix(visible_old_points, fovmesh_pts.T)
+                    pt_distmatrix = scipy.spatial.distance_matrix(visible_old_points, visible_obstacle_pts .T)
                     old_spheres_obs_dists = np.min(pt_distmatrix, axis = 1)
                     upperbound_combined = np.minimum( np.minimum(old_spheres_fov_dists, old_spheres_obs_dists), self.spheremap.max_allowed_radius)
 
@@ -601,7 +682,8 @@ class SubmapBuilderModule:
             sampling_pts = sampling_pts * [self.width, self.height]
 
             # CHECK THE SAMPLING DIRS ARE INSIDE THE 2D CONVEX HULL OF 3D POINTS
-            inhull = np.array([img_polygon.contains(geometry.Point(p[0], p[1])) for p in sampling_pts])
+            # inhull = np.array([visible_obstacle_pts_polygon.contains(geometry.Point(p[0], p[1])) for p in sampling_pts])
+            inhull = np.array([extended_pts_polygon.contains(geometry.Point(p[0], p[1])) for p in sampling_pts])
             if not np.any(inhull):
                 if self.verbose_submap_construction:
                     print("NONE IN HULL")
@@ -621,7 +703,7 @@ class SubmapBuilderModule:
             # rand_z[rand_z > max_sphere_update_dist] = max_sphere_update_dist
 
             # FILTER PTS - CHECK THAT THE MAX DIST IS NOT BEHIND THE OBSTACLE MESH BY RAYCASTING
-            ray_hit_pts, index_ray, index_tri = obstacle_mesh.ray.intersects_location(
+            ray_hit_pts, index_ray, index_tri = extended_obstacle_mesh.ray.intersects_location(
             ray_origins=np.zeros(sampling_pts.shape).T, ray_directions=sampling_pts.T)
             # TODO - figure out why some rays maybe dont hit?
             n_sampled = ray_hit_pts.shape[0]
@@ -653,7 +735,6 @@ class SubmapBuilderModule:
 
             # TRY ADDING NEW SPHERES AT SAMPLED POSITIONS
             new_spheres_fov_dists = np.abs(fov_mesh_query.signed_distance(sampling_pts.T))
-            # new_spheres_obs_dists = np.abs(obstacle_mesh_query.signed_distance(sampling_pts.T))
             # print(sampling_pts.T.shape)
             # print(self.spheremap.surfel_points.shape)
             # pt_distmatrix = scipy.spatial.distance_matrix(sampling_pts.T, self.spheremap.surfel_points)
@@ -745,7 +826,9 @@ class SubmapBuilderModule:
 
             positive_z_points = positive_z_points.T
             # pts_for_surfel_addition = positive_z_points[positive_z_points[:, 2] < max_sphere_update_dist]
-            pts_for_surfel_addition = positive_z_points[np.linalg.norm(positive_z_points, axis=1) < max_sphere_update_dist]
+            # pts_for_surfel_addition = positive_z_points[np.linalg.norm(positive_z_points, axis=1) < max_sphere_update_dist]
+            pts_for_surfel_addition_tmp = pts_for_surfel_addition_tmp.T
+            pts_for_surfel_addition = pts_for_surfel_addition_tmp[np.linalg.norm(pts_for_surfel_addition_tmp, axis=1) < max_sphere_update_dist]
             visible_pts_in_spheremap_frame = transformPoints(pts_for_surfel_addition, T_orig_to_current_cam)
             self.spheremap.updateSurfels(T_orig_to_current_cam, visible_pts_in_spheremap_frame , pixpos, tri.simplices, self.surfel_resolution, positive_z_slam_ids)
 
@@ -777,6 +860,151 @@ class SubmapBuilderModule:
             if self.verbose_submap_construction:
                 print("SPHEREMAP visualization time: " + str((comp_time) * 1000) +  " ms")
 # # #}
+
+    # def fake_freespace_update(self):# #{
+    def fake_freespace_update(self):
+        print("FAKE FREESPACE")
+        self.visualize_fake_freespace_pts()
+        # T_odom_to_cam = lookupTransformAsMatrix(self.fcu_frame, self.mapper.camera_frame, self.tf_listener) @ T_fcu_to_cam 
+
+        T_odom_to_cam = lookupTransformAsMatrix(self.odom_frame, self.camera_frame, self.tf_listener)
+
+        should_add_pose_to_buffer = False
+
+        last_pose_trans_dif = None
+        last_pose_angle_dif = None
+
+        min_trans_dif = 0.3
+        min_angle_dif = np.pi / 4
+
+        if len(self.ff_pose_buffer) > 0:
+            prev_T = self.ff_pose_buffer[-1]
+            trans_dif = np.linalg.norm(T_odom_to_cam[:3,3] - prev_T[:3, 3])
+            dotprod = np.dot(T_odom_to_cam[:3,2], prev_T[:3,2])
+            angle_dif = np.arccos(dotprod)
+
+            if trans_dif > min_trans_dif or angle_dif > min_angle_dif:
+                should_add_pose_to_buffer = True
+        else:
+            should_add_pose_to_buffer = True
+
+
+        # DECIDE IF ADD THIS POSE
+        if should_add_pose_to_buffer:
+            # print("ADDING POSE, BUFFERLEN: " + str(len(self.ff_pose_buffer)))
+            self.ff_pose_buffer.append(T_odom_to_cam)
+            if len(self.ff_pose_buffer) > self.max_ff_buffer_len:
+                self.ff_pose_buffer.pop(0)
+        else:
+            return
+
+        bufferlen = len(self.ff_pose_buffer)
+        n_pts = self.egocentric_ff_pts.shape[0]
+        if bufferlen < 2:
+            return
+
+        visibility_mask = np.full((bufferlen, n_pts), False)
+        parallax_mask = np.full((bufferlen, n_pts), False)
+
+        # GO THRU ALL PREV POSES N CHECK IF "TRACKED" AND HOW MUCH TRANSLATION/PARALLAX
+        # ll_corner = np.array([0, 0])
+        # ur_corner = np.array([self.width, self.height])
+
+        ll_corner = np.array([self.ff_trim*self.width, self.ff_trim*self.height])
+        ur_corner = np.array([(1 - self.ff_trim) * self.width, (1 - self.ff_trim) * self.height])
+
+        # min_parallax = np.pi / 12
+        min_parallax = self.ff_min_parallax 
+
+        for i in range(len(self.ff_pose_buffer) - 1):
+            # T_relative = np.linalg.inv(T_odom_to_cam) @ self.ff_pose_buffer[i]
+
+            T_relative = np.linalg.inv(self.ff_pose_buffer[i]) @ T_odom_to_cam
+
+            # print("T relative dist: " + str(np.linalg.norm(T_relative[:3,3])))
+            translated_pts = transformPoints(self.egocentric_ff_pts, T_relative)
+
+            dot_product = np.sum(self.egocentric_ff_pts * (self.egocentric_ff_pts + T_relative[:3,3]), axis=1)
+            norms = np.linalg.norm(self.egocentric_ff_pts, axis=1) * np.linalg.norm(translated_pts, axis=1)
+            cos_theta = dot_product / norms
+            # angles = np.arccos(np.clip(cos_theta, -1.0, 1.0))
+            angles = np.arccos(cos_theta)
+            parallax_mask[i, :] = np.abs(angles) >= min_parallax
+
+            # print("CUR PTS:")
+            # print(self.egocentric_ff_pts[0, :])
+            # print("PREV PTS:")
+            # print(translated_pts[0, :])
+
+            # print(translated_pts.shape)
+            pixpos_there = getPixelPositions(translated_pts.T, self.new_K)
+            # print("PIXPOS PTS:")
+            # print(pixpos_there[0, :])
+
+            in_img = np.all(np.logical_and(pixpos_there <= ur_corner, pixpos_there >= ll_corner), axis = 1)
+            # print("N pts in img: " + str(np.sum(in_img)))
+            visibility_mask[i, :] = in_img
+        # print(visibility_mask)
+        vis_lengths = np.sum(visibility_mask, axis = 0).flatten()
+        # print(vis_lengths)
+        passed_visibility = vis_lengths == bufferlen - 1
+
+        if self.ff_points_ignore_tracking:
+            passed_parallax = np.sum(parallax_mask, axis = 0).flatten() > 0
+            self.ff_points_active_mask = passed_parallax
+        else:
+            # self.ff_points_active_mask = np.logical_and(passed_visibility, passed_parallax)
+
+            self.ff_points_active_mask = np.full((n_pts,1), False).flatten()
+            for i in range(n_pts):
+                vis_len = np.argmax(np.logical_not(visibility_mask[:, i]).flatten()) #first idx at which visibility is false
+                if vis_len == 0:
+                    continue
+                self.ff_points_active_mask[i] = np.any(parallax_mask[:vis_len, i])
+
+        # print("N VISIBLE: " + str(np.sum(passed_visibility)))
+        # print("N PARALLAX-OK: " + str(np.sum(passed_parallax)))
+        print("N ACTIVE: " + str(np.sum(self.ff_points_active_mask)))
+
+        if self.ff_points_always_active:
+            self.ff_points_active_mask = np.full((n_pts,1), True).flatten()
+                # # #}
+
+    # def init_fake_freespace_pts(self):# #{
+    def init_fake_freespace_pts(self):
+
+        self.faked_pixpos_lastframe = None
+        self.ff_trim = 0.2
+
+        xstart = self.ff_trim* self.width
+        xstep = (1-2*self.ff_trim) * self.width / self.ff_pts_W
+        ystart = self.ff_trim* self.height
+        ystep = (1-2*self.ff_trim) * self.height / self.ff_pts_H
+
+
+
+        pts_2d = np.array([[xstart + x * xstep, ystart + y * ystep] for x in range(self.ff_pts_W+1) for y in range(self.ff_pts_H+1)])
+        n_pts = pts_2d.shape[0]
+
+        print("INIT FAKE FSPACE PTS:")
+        print(pts_2d)
+
+        print("KOCKA")
+        # print(pts_2d)
+        print("KOCKA")
+        print(pts_2d[0, :])
+        print(pts_2d[-1, :])
+        # print("SHAPE")
+        # print(pts_2d.shape)
+        sampling_pts = np.concatenate((pts_2d.T, np.full((1, n_pts), 1)))
+        invK = np.linalg.inv(self.new_K)
+        self.egocentric_ff_pts = (invK @ sampling_pts).T
+        print(self.egocentric_ff_pts[0, :])
+        print(self.egocentric_ff_pts[-1, :])
+        self.egocentric_ff_pts = self.ff_dist * (self.egocentric_ff_pts / np.linalg.norm(self.egocentric_ff_pts, axis = 1).reshape((n_pts, 1)))
+
+        self.ff_points_active_mask = np.full((n_pts,1), False).flatten()
+        # # #}
 
     # UTILS
 
@@ -811,6 +1039,44 @@ class SubmapBuilderModule:
         return res_pts, res_headings# # #}
 
     # VISUALIZE
+
+    def visualize_fake_freespace_pts(self):# # #{
+        marker_array = MarkerArray()
+
+        ms = self.marker_scale
+        marker = Marker()
+        marker.header.frame_id = self.camera_frame  # Adjust the frame_id as needed
+        marker.type = Marker.POINTS
+        marker.action = Marker.ADD
+        marker.pose.orientation.w = 1.0
+        # marker.scale.x = 1.2  # Adjust the size of the points
+        # marker.scale.y = 1.2
+        marker.scale.x = ms *2.2  # Adjust the size of the points
+        marker.scale.y = ms *2.2
+        marker.color.a = 1
+        marker.color.r = 0
+        marker.color.g = 1
+        marker.color.b = 0
+
+        # marker.id = marker_id
+        # marker_id += 1
+
+        # Convert the 3D points to Point messages
+        spts = self.egocentric_ff_pts
+        n_pts = spts.shape[0]
+        points_msg = [Point(x=spts[i, 0], y=spts[i, 1], z=spts[i, 2]) for i in range(n_pts)]
+        marker.points = points_msg
+        marker_array.markers.append(marker)
+
+        # TODO - colors based on activity!
+        for i in range(self.egocentric_ff_pts.shape[0]):
+            clr = ColorRGBA(r=0.0, g=0.0, b=0.0, a=0.5)
+            if self.ff_points_active_mask[i]:
+                clr = ColorRGBA(r=0.0, g=1.0, b=0.0, a=1.0)
+            marker.colors.append(clr)
+
+        self.assumed_freespace_vis_pub.publish(marker_array)
+# # #}
 
     def visualize_episode_submaps(self):# # #{
         marker_array = MarkerArray()
@@ -855,8 +1121,11 @@ class SubmapBuilderModule:
         self.spheremap_freespace_pub.publish(marker_array)
 # # #}
     
-    def visualize_depth(self, pixpos, tri):# # #{
-        rgb = np.repeat(copy.deepcopy(self.new_frame)[:, :, np.newaxis], 3, axis=2)
+    def visualize_polygon(self, pixpos, tri):# # #{
+        # rgb = np.repeat(copy.deepcopy(self.new_frame)[:, :, np.newaxis], 3, axis=2)
+        # rgb = np.zeros((self.new_frame.shape[0], self.new_frame.shape[1], 3), dtype=np.uint8)
+        rgb = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+
 
         for i in range(len(tri.simplices)):
             a = pixpos[tri.simplices[i][0], :].astype(int)
@@ -866,6 +1135,13 @@ class SubmapBuilderModule:
             rgb = cv2.line(rgb, (a[0], a[1]), (b[0], b[1]), (255, 0, 0), 3)
             rgb = cv2.line(rgb, (a[0], a[1]), (c[0], c[1]), (255, 0, 0), 3)
             rgb = cv2.line(rgb, (c[0], c[1]), (b[0], b[1]), (255, 0, 0), 3)
+
+        if not self.faked_pixpos_lastframe is None:
+            for i in range(self.faked_pixpos_lastframe.shape[0]):
+                x = int(self.faked_pixpos_lastframe[i, 0])
+                y = int(self.faked_pixpos_lastframe[i, 1])
+                rgb = cv2.circle(rgb, (x, y), 5, 
+                               (0, 255, 0), -1) 
 
         res = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         return res
