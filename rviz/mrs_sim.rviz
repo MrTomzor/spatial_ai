@@ -289,7 +289,7 @@ Visualization Manager:
               Marker Topic: /uav1/control_manager/trajectory_original/markers
               Name: Markers
               Namespaces:
-                "": true
+                {}
               Queue Size: 100
               Value: true
           Enabled: true
@@ -413,7 +413,7 @@ Visualization Manager:
               Marker Topic: /uav1/control_manager/mpc_tracker/trajectory_processed/markers
               Name: Markers
               Namespaces:
-                "": true
+                {}
               Queue Size: 100
               Value: true
           Enabled: true
@@ -427,9 +427,7 @@ Visualization Manager:
           Marker Topic: /uav1/trajectory_generation/markers/final
           Name: final
           Namespaces:
-            markers/final_lines: true
-            markers/final_points: true
-            markers/final_triangles: true
+            {}
           Queue Size: 100
           Value: true
         - Class: rviz/MarkerArray
@@ -437,9 +435,7 @@ Visualization Manager:
           Marker Topic: /uav1/trajectory_generation/markers/original
           Name: original
           Namespaces:
-            markers/original_lines: true
-            markers/original_points: true
-            markers/original_triangles: true
+            {}
           Queue Size: 100
           Value: true
       Enabled: true
@@ -461,7 +457,6 @@ Visualization Manager:
       Marker Topic: /path_planning_vis
       Name: PLANNING
       Namespaces:
-        path: true
         rrt: true
       Queue Size: 100
       Value: true
@@ -522,7 +517,7 @@ Visualization Manager:
       Marker Topic: /exploration_goals
       Name: EXPLORATION GOALS
       Namespaces:
-        "": true
+        {}
       Queue Size: 100
       Value: true
     - Class: rviz/MarkerArray
@@ -530,7 +525,7 @@ Visualization Manager:
       Marker Topic: /roadmap
       Name: ROADMAP
       Namespaces:
-        path: true
+        {}
       Queue Size: 100
       Value: true
     - Class: rviz/MarkerArray
@@ -538,7 +533,7 @@ Visualization Manager:
       Marker Topic: /path_planning_vis_global
       Name: GLOBAL PLANNING
       Namespaces:
-        path: true
+        {}
       Queue Size: 100
       Value: true
     - Class: rviz/MarkerArray
@@ -552,6 +547,14 @@ Visualization Manager:
     - Class: rviz/MarkerArray
       Enabled: true
       Marker Topic: /unsorted_markers
+      Name: MarkerArray
+      Namespaces:
+        {}
+      Queue Size: 100
+      Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /assumed_freespace_points
       Name: MarkerArray
       Namespaces:
         "": true
@@ -598,7 +601,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 55.0876579284668
+      Distance: 48.47713851928711
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -606,9 +609,9 @@ Visualization Manager:
         Value: false
       Field of View: 0.7853981852531433
       Focal Point:
-        X: -3.3542072772979736
-        Y: 4.286559104919434
-        Z: -1.6979702711105347
+        X: -7.955580711364746
+        Y: 0.22962802648544312
+        Z: 1.2418941259384155
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false

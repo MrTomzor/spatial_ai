@@ -147,6 +147,7 @@ class SubmapBuilderModule:
 
         self.fake_freespace_pts_enabled = rospy.get_param("local_mapping/fake_freespace_pts_enabled")
         self.ff_points_always_active = rospy.get_param("local_mapping/fake_freespace_pts_always_active")
+        self.ff_points_ignore_tracking = rospy.get_param("local_mapping/fake_freespace_ignore_tracking")
 
 
         # LOAD FAKE FREESPACE POINTS
@@ -156,7 +157,7 @@ class SubmapBuilderModule:
         self.ff_pts_H = 5
         self.init_fake_freespace_pts();
         self.ff_pose_buffer = []
-        self.max_ff_buffer_len = 10
+        self.max_ff_buffer_len = rospy.get_param("local_mapping/fake_freespace_tracking_buffer_len")
         
         # # #}
 
@@ -947,13 +948,22 @@ class SubmapBuilderModule:
         vis_lengths = np.sum(visibility_mask, axis = 0).flatten()
         # print(vis_lengths)
         passed_visibility = vis_lengths == bufferlen - 1
-        passed_parallax = np.sum(parallax_mask, axis = 0).flatten() > 0
-        # self.ff_points_active_mask = np.logical_and(passed_visibility, passed_parallax)
-        self.ff_points_active_mask = passed_parallax
-        # TODO - fix visibility
 
-        print("N VISIBLE: " + str(np.sum(passed_visibility)))
-        print("N PARALLAX-OK: " + str(np.sum(passed_parallax)))
+        if self.ff_points_ignore_tracking:
+            passed_parallax = np.sum(parallax_mask, axis = 0).flatten() > 0
+            self.ff_points_active_mask = passed_parallax
+        else:
+            # self.ff_points_active_mask = np.logical_and(passed_visibility, passed_parallax)
+
+            self.ff_points_active_mask = np.full((n_pts,1), False).flatten()
+            for i in range(n_pts):
+                vis_len = np.argmax(np.logical_not(visibility_mask[:, i]).flatten()) #first idx at which visibility is false
+                if vis_len == 0:
+                    continue
+                self.ff_points_active_mask[i] = np.any(parallax_mask[:vis_len, i])
+
+        # print("N VISIBLE: " + str(np.sum(passed_visibility)))
+        # print("N PARALLAX-OK: " + str(np.sum(passed_parallax)))
         print("N ACTIVE: " + str(np.sum(self.ff_points_active_mask)))
 
         if self.ff_points_always_active:

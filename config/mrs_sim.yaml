@@ -32,7 +32,9 @@ local_mapping:
   fake_freespace_pts_enabled: True
   fake_freespace_pts_dist: 10
   fake_freespace_min_parallax: 0.1
-  fake_freespace_pts_always_active: False #DANGEROUS
+  fake_freespace_pts_always_active: False #DANGEROUS if True
+  fake_freespace_ignore_tracking: False #DANGEROUS if True
+  fake_freespace_tracking_buffer_len: 10
 
 local_nav:
   enabled: True
