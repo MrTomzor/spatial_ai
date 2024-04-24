@@ -92,7 +92,8 @@ class LocalNavigatorModule:
         self.path_for_trajectory_generator_pub = rospy.Publisher(output_path_topic, mrs_msgs.msg.Path, queue_size=10)
 
         # VIS PUB
-        vis_prefix = "AAA/"
+        # vis_prefix = "AAA/"
+        vis_prefix = ""
         self.path_planning_vis_pub = rospy.Publisher(vis_prefix + 'path_planning_vis', MarkerArray, queue_size=10)
         self.roadmap_vis_pub = rospy.Publisher(vis_prefix +'roadmap', MarkerArray, queue_size=10)
         self.global_path_planning_vis_pub = rospy.Publisher(vis_prefix +'path_planning_vis_global', MarkerArray, queue_size=10)

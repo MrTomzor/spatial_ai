@@ -104,7 +104,8 @@ class SubmapBuilderModule:
         # self.return_home_srv = rospy.Service("home", EmptySrv, self.return_home)
 
         # DATA PUB
-        vis_prefix = "AAA/"
+        # vis_prefix = "AAA/"
+        vis_prefix = ""
         self.runtimes_pub = rospy.Publisher(vis_prefix + 'spheremap_runtimes', mrs_msgs.msg.Float64ArrayStamped, queue_size=10)
 
         # VIS PUB
@@ -949,6 +950,7 @@ class SubmapBuilderModule:
         passed_parallax = np.sum(parallax_mask, axis = 0).flatten() > 0
         # self.ff_points_active_mask = np.logical_and(passed_visibility, passed_parallax)
         self.ff_points_active_mask = passed_parallax
+        # TODO - fix visibility
 
         print("N VISIBLE: " + str(np.sum(passed_visibility)))
         print("N PARALLAX-OK: " + str(np.sum(passed_parallax)))
