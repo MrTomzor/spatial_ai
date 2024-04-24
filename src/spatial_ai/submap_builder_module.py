@@ -379,11 +379,7 @@ class SubmapBuilderModule:
 
             if self.verbose_submap_construction:
                 print("POLY")
-            # visible_obstacle_pts_polygon = geometry.Polygon(hull2d.points) # MUST BE ORDERED PROPERLY!!!
             visible_obstacle_pts_polygon = geometry.Polygon(pixpos[hull2d.vertices, :]) # MUST BE ORDERED PROPERLY!!!
-            print("POLY VALS")
-            print(visible_obstacle_pts_polygon.area)
-            print(visible_obstacle_pts_polygon.is_valid)
             hull2d_idxs = hull2d.vertices
 
             # CONSTRUCT OBSTACLE MESH
@@ -398,26 +394,15 @@ class SubmapBuilderModule:
             if np.any(self.ff_points_active_mask):
                 # positive_z_points  = np.concatenate((positive_z_points, self.egocentric_ff_pts[self.ff_points_active_mask, :].T), axis = 1)
                 pixpos_ff_pts = getPixelPositions(self.egocentric_ff_pts.T, self.K)
-                # print("PIXPOS")
-                # print(pixpos_ff_pts)
                 inhull = np.array([visible_obstacle_pts_polygon.contains(geometry.Point(pixpos_ff_pts[i, 0], pixpos_ff_pts[i, 1])) for i in range(pixpos_ff_pts.shape[0])])
-                # print("CONTAINS CENTER?:")
-                # print(visible_obstacle_pts_polygon.contains(geometry.Point(self.width/2, self.height/2)))
-                # print(inhull.shape)
 
-                # outside_hull_mask = np.full(self.ff_points_active_mask.shape, True)
                 outside_hull_mask = np.logical_not(inhull)
-                # print(inhull)
-                # print(outside_hull_mask .shape)
-                # outside_hull_mask[inhull] = False
 
-                print("N FAKE PTS OUTSIDE OF HULL: " + str(np.sum(outside_hull_mask)))
-                # active_ff_pts = self.egocentric_ff_pts[self.ff_points_active_mask, :].T
                 addition_mask = np.logical_and(self.ff_points_active_mask, outside_hull_mask)
                 added_ff_pts = self.egocentric_ff_pts[addition_mask, :].T
 
-                print("PIXPOS ACTIVE AND OUTSIDE HULL:")
-                print(pixpos_ff_pts[addition_mask, :])
+                # print("PIXPOS ACTIVE AND OUTSIDE HULL:")
+                # print(pixpos_ff_pts[addition_mask, :])
 
                 self.faked_pixpos_lastframe = pixpos_ff_pts[addition_mask, :]
 
