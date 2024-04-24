@@ -380,6 +380,7 @@ class SubmapBuilderModule:
             if self.verbose_submap_construction:
                 print("POLY")
             visible_obstacle_pts_polygon = geometry.Polygon(pixpos[hull2d.vertices, :]) # MUST BE ORDERED PROPERLY!!!
+            extended_pts_polygon = visible_obstacle_pts_polygon 
             hull2d_idxs = hull2d.vertices
 
             # CONSTRUCT OBSTACLE MESH
@@ -416,6 +417,7 @@ class SubmapBuilderModule:
                 # CONSTRUCT POLYGON OF PIXPOSs OF VISIBLE SLAM PTS
                 hull2d = ConvexHull(pixpos)
                 hull2d_idxs = hull2d.vertices
+                extended_pts_polygon = geometry.Polygon(pixpos[hull2d.vertices, :]) # MUST BE ORDERED PROPERLY!!!
 
                 # CONSTRUCT OBSTACLE MESH
                 extended_obstacle_mesh = trimesh.Trimesh(vertices=fullmesh_pts.T, faces = tri.simplices)
@@ -530,10 +532,16 @@ class SubmapBuilderModule:
                     # print(contained_surfels_mask .shape)
                     # contained_surfels_mask[surfels_in_bbx_idxs] = contained_surfels_mask
                     
-                    # contained_surfels_mask = fov_mesh.contains(surfel_points_in_camframe)
                     contained_surfels_mask[surfels_in_bbx_idxs] = fov_mesh.contains(surfel_points_in_camframe[surfels_in_bbx_idxs, :])
+
+                    # CHECK IF THE SURFELS PROJECT TO HULL FORMED BY ONLY OBSTACLE PTS (dont delete pts with fake freespace!)
+                    pixpos = getPixelPositions(surfel_points_in_camframe[surfels_in_bbx_idxs, :].T, self.K)
+                    inhull = np.array([visible_obstacle_pts_polygon.contains(geometry.Point(pixpos[i, 0], pixpos[i, 1])) for i in range(pixpos.shape[0])])
+                    contained_surfels_mask[surfels_in_bbx_idxs] = np.logical_and(contained_surfels_mask[surfels_in_bbx_idxs], inhull)
+
                     contained_surfels_idxs = np.where(contained_surfels_mask)[0]
                     contained_surfels_dists = np.linalg.norm(surfel_points_in_camframe[contained_surfels_mask, :], axis = 1)
+
 
                     old_update_dt = time.time() - interm_time2
                     interm_time2 = time.time()
@@ -667,7 +675,8 @@ class SubmapBuilderModule:
             sampling_pts = sampling_pts * [self.width, self.height]
 
             # CHECK THE SAMPLING DIRS ARE INSIDE THE 2D CONVEX HULL OF 3D POINTS
-            inhull = np.array([visible_obstacle_pts_polygon.contains(geometry.Point(p[0], p[1])) for p in sampling_pts])
+            # inhull = np.array([visible_obstacle_pts_polygon.contains(geometry.Point(p[0], p[1])) for p in sampling_pts])
+            inhull = np.array([extended_pts_polygon.contains(geometry.Point(p[0], p[1])) for p in sampling_pts])
             if not np.any(inhull):
                 if self.verbose_submap_construction:
                     print("NONE IN HULL")
