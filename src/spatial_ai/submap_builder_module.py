@@ -104,18 +104,19 @@ class SubmapBuilderModule:
         # self.return_home_srv = rospy.Service("home", EmptySrv, self.return_home)
 
         # DATA PUB
-        self.runtimes_pub = rospy.Publisher('spheremap_runtimes', mrs_msgs.msg.Float64ArrayStamped, queue_size=10)
+        vis_prefix = "AAA/"
+        self.runtimes_pub = rospy.Publisher(vis_prefix + 'spheremap_runtimes', mrs_msgs.msg.Float64ArrayStamped, queue_size=10)
 
         # VIS PUB
-        self.assumed_freespace_vis_pub = rospy.Publisher('assumed_freespace_points', MarkerArray, queue_size=10)
-        self.spheremap_outline_pub = rospy.Publisher('spheres', MarkerArray, queue_size=10)
-        self.spheremap_freespace_pub = rospy.Publisher('spheremap_freespace', MarkerArray, queue_size=10)
-        self.freespace_polyhedron_pub = rospy.Publisher('AAA/visible_freespace_poly', MarkerArray, queue_size=10)
+        self.assumed_freespace_vis_pub = rospy.Publisher(vis_prefix + 'assumed_freespace_points', MarkerArray, queue_size=10)
+        self.spheremap_outline_pub = rospy.Publisher(vis_prefix + 'spheres', MarkerArray, queue_size=10)
+        self.spheremap_freespace_pub = rospy.Publisher(vis_prefix + 'spheremap_freespace', MarkerArray, queue_size=10)
+        self.freespace_polyhedron_pub = rospy.Publisher(vis_prefix + 'visible_freespace_poly', MarkerArray, queue_size=10)
 
-        self.recent_submaps_vis_pub = rospy.Publisher('recent_submaps_vis', MarkerArray, queue_size=10)
-        self.path_planning_vis_pub = rospy.Publisher('path_planning_vis', MarkerArray, queue_size=10)
-        self.visual_similarity_vis_pub = rospy.Publisher('visual_similarity_vis', MarkerArray, queue_size=10)
-        self.unsorted_vis_pub = rospy.Publisher('unsorted_markers', MarkerArray, queue_size=10)
+        self.recent_submaps_vis_pub = rospy.Publisher(vis_prefix + 'recent_submaps_vis', MarkerArray, queue_size=10)
+        self.path_planning_vis_pub = rospy.Publisher(vis_prefix + 'path_planning_vis', MarkerArray, queue_size=10)
+        self.visual_similarity_vis_pub = rospy.Publisher(vis_prefix + 'visual_similarity_vis', MarkerArray, queue_size=10)
+        self.unsorted_vis_pub = rospy.Publisher(vis_prefix + 'unsorted_markers', MarkerArray, queue_size=10)
 
         # self.kp_pub = rospy.Publisher('tracked_features_img', Image, queue_size=1)
         self.polygon_debug_pub = rospy.Publisher('polygon_debug', Image, queue_size=1)
@@ -144,9 +145,9 @@ class SubmapBuilderModule:
         self.visual_kf_addition_dist = 2
 
         # LOAD FAKE FREESPACE POINTS
-        self.ff_dist = 5
-        self.ff_pts_W = 3
-        self.ff_pts_H = 3
+        self.ff_dist = 10
+        self.ff_pts_W = 5
+        self.ff_pts_H = 5
         self.init_fake_freespace_pts();
         self.ff_pose_buffer = []
         self.max_ff_buffer_len = 10
@@ -386,7 +387,7 @@ class SubmapBuilderModule:
             hull2d_idxs = hull2d.vertices
 
             # CONSTRUCT OBSTACLE MESH
-            obstacle_mesh = trimesh.Trimesh(vertices=positive_z_points.T, faces = tri.simplices)
+            extended_obstacle_mesh = trimesh.Trimesh(vertices=positive_z_points.T, faces = tri.simplices)
 
             # CONSTRUCT FOV MESH (of visible pts and current cam origin)
             # BY DEFAULT THE MESH PTS ARE JUS TTHE VISIBLE PTS (and origin added later)
@@ -430,6 +431,9 @@ class SubmapBuilderModule:
                 # CONSTRUCT POLYGON OF PIXPOSs OF VISIBLE SLAM PTS
                 hull2d = ConvexHull(pixpos)
                 hull2d_idxs = hull2d.vertices
+
+                # CONSTRUCT OBSTACLE MESH
+                extended_obstacle_mesh = trimesh.Trimesh(vertices=fullmesh_pts.T, faces = tri.simplices)
 
 
 
@@ -698,7 +702,7 @@ class SubmapBuilderModule:
             # rand_z[rand_z > max_sphere_update_dist] = max_sphere_update_dist
 
             # FILTER PTS - CHECK THAT THE MAX DIST IS NOT BEHIND THE OBSTACLE MESH BY RAYCASTING
-            ray_hit_pts, index_ray, index_tri = obstacle_mesh.ray.intersects_location(
+            ray_hit_pts, index_ray, index_tri = extended_obstacle_mesh.ray.intersects_location(
             ray_origins=np.zeros(sampling_pts.shape).T, ray_directions=sampling_pts.T)
             # TODO - figure out why some rays maybe dont hit?
             n_sampled = ray_hit_pts.shape[0]

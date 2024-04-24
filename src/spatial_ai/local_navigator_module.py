@@ -92,11 +92,12 @@ class LocalNavigatorModule:
         self.path_for_trajectory_generator_pub = rospy.Publisher(output_path_topic, mrs_msgs.msg.Path, queue_size=10)
 
         # VIS PUB
-        self.path_planning_vis_pub = rospy.Publisher('path_planning_vis', MarkerArray, queue_size=10)
-        self.roadmap_vis_pub = rospy.Publisher('roadmap', MarkerArray, queue_size=10)
-        self.global_path_planning_vis_pub = rospy.Publisher('path_planning_vis_global', MarkerArray, queue_size=10)
-        self.unsorted_vis_pub = rospy.Publisher('unsorted_markers', MarkerArray, queue_size=10)
-        self.exploration_goals_vis_pub = rospy.Publisher('exploration_goals', MarkerArray, queue_size=10)
+        vis_prefix = "AAA/"
+        self.path_planning_vis_pub = rospy.Publisher(vis_prefix + 'path_planning_vis', MarkerArray, queue_size=10)
+        self.roadmap_vis_pub = rospy.Publisher(vis_prefix +'roadmap', MarkerArray, queue_size=10)
+        self.global_path_planning_vis_pub = rospy.Publisher(vis_prefix +'path_planning_vis_global', MarkerArray, queue_size=10)
+        self.unsorted_vis_pub = rospy.Publisher(vis_prefix +'unsorted_markers', MarkerArray, queue_size=10)
+        self.exploration_goals_vis_pub = rospy.Publisher(vis_prefix +'exploration_goals', MarkerArray, queue_size=10)
 
         # SERVICES
         self.setstate_idle_srv = rospy.Service("navigation/setstate_idle", EmptySrv, self.setstate_idle)
