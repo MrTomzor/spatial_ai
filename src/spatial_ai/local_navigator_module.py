@@ -79,7 +79,7 @@ class LocalNavigatorModule:
     def __init__(self, mapper, ptraj_topic, output_path_topic):# # #{
 
         self.main_state = "idle"
-        self.min_vp_frontier_val = 3
+        self.min_vp_frontier_val = rospy.get_param("local_nav/min_num_frontiers_per_goal")
 
         self.mapper = mapper
         self.odom_frame = mapper.odom_frame

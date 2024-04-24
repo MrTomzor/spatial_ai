@@ -65,6 +65,7 @@ local_nav:
   output_path_topic: '/uav25/trajectory_generation/path'
 
   frontier_visibility_dist: 8
+  min_num_frontiers_per_goal: 3
 
 exploration_safety_area:
   enabled: False
