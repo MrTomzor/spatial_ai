@@ -409,7 +409,7 @@ class SubmapBuilderModule:
 
             # ADD THEM IF SOME CAN BE ADDED
             if not added_ff_pts is None:
-                print("ADDING " + str(added_ff_pts.shape[1]) + " FAKE FREESPACE PTS THAT DO NOT LIE IN CURRENT VISIBLE PT POLYGON")
+                # print("ADDING " + str(added_ff_pts.shape[1]) + " FAKE FREESPACE PTS THAT DO NOT LIE IN CURRENT VISIBLE PT POLYGON")
                 fullmesh_pts = np.concatenate((fullmesh_pts, added_ff_pts), axis = 1)
                 # RECOMPUTE HULL 
                 pixpos = getPixelPositions(fullmesh_pts, self.K)
@@ -884,7 +884,7 @@ class SubmapBuilderModule:
 
         # DECIDE IF ADD THIS POSE
         if should_add_pose_to_buffer:
-            print("ADDING POSE, BUFFERLEN: " + str(len(self.ff_pose_buffer)))
+            # print("ADDING POSE, BUFFERLEN: " + str(len(self.ff_pose_buffer)))
             self.ff_pose_buffer.append(T_odom_to_cam)
             if len(self.ff_pose_buffer) > self.max_ff_buffer_len:
                 self.ff_pose_buffer.pop(0)
