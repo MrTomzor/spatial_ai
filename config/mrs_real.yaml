@@ -35,7 +35,7 @@ local_mapping:
   camera_info_topic: '/uav25/bluefox_vio_front/camera_info'
 
   fake_freespace_pts_enabled: True
-  fake_freespace_pts_dist: 8
+  fake_freespace_pts_dist: 10
   fake_freespace_min_parallax: 0.1
   fake_freespace_pts_always_active: False #DANGEROUS if True
   fake_freespace_ignore_tracking: False #DANGEROUS if True
@@ -44,7 +44,7 @@ local_mapping:
 local_nav:
   enabled: True
   uav_radius: 0.8
-  safety_replanning_trigger_odist: 1.5
+  safety_replanning_trigger_odist: -1.5
   min_planning_odist: 2
   max_planning_odist: 8
   safety_weight: 50
@@ -61,23 +61,23 @@ local_nav:
   local_exploration_radius: 20
   exploration_goal_blocking_dist: 5
 
-  predicted_trajectory_topic: '/uav25/control_manager/mpc_tracker/prediction_full_state'
-  output_path_topic: '/uav25/trajectory_generation/path'
+  predicted_trajectory_topic: 'control_manager/mpc_tracker/prediction_full_state'
+  output_path_topic: 'trajectory_generation/path'
 
   frontier_visibility_dist: 8
   min_num_frontiers_per_goal: 3
 
 exploration_safety_area:
-  enabled: False
+  enabled: True
 
-  x_min: -10
-  x_max: 10
+  x_min: 1
+  x_max: 30
 
-  y_min: -10
-  y_max: 10
+  y_min: -7
+  y_max: 7
 
   z_min: -1
-  z_max: 8
+  z_max: 4
 
 global_nav:
   enabled: False
