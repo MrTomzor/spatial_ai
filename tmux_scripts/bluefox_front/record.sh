@@ -25,6 +25,13 @@ exclude=(
 # Every topic containing "h264"
 # '(.*)h264(.*)'
 
+# '/uav25/ov_msckf/trackhist'
+'(.*)ov_msckf/trackhist'
+'(.*)ov_msckf/pathimu'
+'(.*)ov_msckf/loop_depth'
+'(.*)ov_msckf/loop_depth_colored'
+'(.*)polygon_debug'
+
 '(.*)os_cloud_nodelet(.*)'
 )
 

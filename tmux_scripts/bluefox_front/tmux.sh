@@ -43,17 +43,17 @@ input=(
 '
   'Status' 'waitForHw; roslaunch mrs_uav_status status.launch
 '
-  # 'Core' 'waitForTime; roslaunch mrs_uav_core core.launch platform_config:=`rospack find mrs_uav_deployment`/config/mrs_uav_system/$UAV_TYPE.yaml world_config:=config/world_config.yaml custom_config:=./config/custom_config.yaml network_config:=./config/network_config.yaml
-# '
-  'Core' 'waitForTime; roslaunch mrs_uav_core core.launch platform_config:=`rospack find mrs_uav_deployment`/config/mrs_uav_system/$UAV_TYPE.yaml world_config:=config/world_config.yaml custom_config:=./config/custom_config_mins.yaml network_config:=./config/network_config.yaml
+  'Core' 'waitForTime; roslaunch mrs_uav_core core.launch platform_config:=`rospack find mrs_uav_deployment`/config/mrs_uav_system/$UAV_TYPE.yaml world_config:=config/world_config.yaml custom_config:=./config/custom_config.yaml network_config:=./config/network_config.yaml
 '
-  # 'OpenVins' 'waitForHw; roslaunch mrs_open_vins_core realworld_bluefox_front.launch
+  # 'Core' 'waitForTime; roslaunch mrs_uav_core core.launch platform_config:=`rospack find mrs_uav_deployment`/config/mrs_uav_system/$UAV_TYPE.yaml world_config:=config/world_config.yaml custom_config:=./config/custom_config_mins.yaml network_config:=./config/network_config.yaml
 # '
-  'Mins' 'waitForHw; roslaunch mrs_mins_core realworld_bluefox_front.launch
+  'OpenVins' 'waitForHw; roslaunch mrs_open_vins_core realworld_bluefox_front.launch
 '
+  # 'Mins' 'waitForHw; roslaunch mrs_mins_core realworld_bluefox_front.launch
+# '
   'Navigation' 'waitForControl; roslaunch spatial_ai mrs_openvins_explore_real.launch
 '
-  'StartExploring' 'rosservice call /navigation/setstate_exploring'
+  'StartExploring' 'rosservice call uav25/navigation/setstate_exploring'
   'AutoStart' 'waitForHw; roslaunch mrs_uav_autostart automatic_start.launch
 '
 # do NOT modify the command list below
