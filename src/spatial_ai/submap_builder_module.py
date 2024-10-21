@@ -55,6 +55,7 @@ import sys
 
 class SubmapBuilderModule:
     def __init__(self, w, h, K, camera_frame_id, odom_orig_frame_id, fcu_frame, tf_listener, T_imu_to_cam, T_fcu_to_imu, camera_info = None, is_cam_info_undistorted = False):# # #{
+        self.latest_camera_image = None
 
         # default values for getting from master (TODO - put into parameters or launch files)
         self.width = w
@@ -130,6 +131,7 @@ class SubmapBuilderModule:
 
         # self.kp_pub = rospy.Publisher('tracked_features_img', Image, queue_size=1)
         self.polygon_debug_pub = rospy.Publisher('polygon_debug', Image, queue_size=1)
+        self.polygon_enhanced_debug_pub = rospy.Publisher('polygon_enhanced_debug', Image, queue_size=1)
         self.marker_pub = rospy.Publisher('/vo_odom', Marker, queue_size=10)
 
 
@@ -428,7 +430,7 @@ class SubmapBuilderModule:
                 # print("ADDING " + str(added_ff_pts.shape[1]) + " FAKE FREESPACE PTS THAT DO NOT LIE IN CURRENT VISIBLE PT POLYGON")
                 fullmesh_pts = np.concatenate((fullmesh_pts, added_ff_pts), axis = 1)
                 # RECOMPUTE HULL 
-                pixpos = getPixelPositions(fullmesh_pts, self.K)
+                pixpos = getPixelPositions(fullmesh_pts, self.K, self.distortion_coeffs)
                 tri = Delaunay(pixpos)
                 # CONSTRUCT POLYGON OF PIXPOSs OF VISIBLE SLAM PTS
                 hull2d = ConvexHull(pixpos)
@@ -438,6 +440,8 @@ class SubmapBuilderModule:
                 # CONSTRUCT OBSTACLE MESH
                 extended_obstacle_mesh = trimesh.Trimesh(vertices=fullmesh_pts.T, faces = tri.simplices)
 
+
+                self.polygon_enhanced_debug_pub.publish(self.bridge.cv2_to_imgmsg(self.visualize_polygon(pixpos, tri, True), "bgr8"))
 
 
             # ADD ORIGIN PT
@@ -724,6 +728,8 @@ class SubmapBuilderModule:
 
             # scaling = ray_hit_pts[:,2]
             scaling = np.ones(ray_hit_pts.shape[0])
+            print("DEBUG - ray hit pts shape: ")
+            print(ray_hit_pts.shape)
             hit_dists = np.linalg.norm(ray_hit_pts, axis=1)
             # scaling[ray_hit_pts[:,2] > max_sphere_update_dist] = max_sphere_update_dist
             farmask = hit_dists > max_sphere_update_dist
@@ -1047,6 +1053,11 @@ class SubmapBuilderModule:
 
         return res_pts, res_headings# # #}
 
+    def save_camera_img_for_visualization(self, msg):
+        # self.latest_camera_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
+        np_arr = np.frombuffer(msg.data, np.uint8)
+        self.latest_camera_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
     # VISUALIZE
 
     def visualize_fake_freespace_pts(self):# # #{
@@ -1130,27 +1141,59 @@ class SubmapBuilderModule:
         self.spheremap_freespace_pub.publish(marker_array)
 # # #}
     
-    def visualize_polygon(self, pixpos, tri):# # #{
+    def visualize_polygon(self, pixpos, tri, do_ffs = False):# # #{
         # rgb = np.repeat(copy.deepcopy(self.new_frame)[:, :, np.newaxis], 3, axis=2)
         # rgb = np.zeros((self.new_frame.shape[0], self.new_frame.shape[1], 3), dtype=np.uint8)
         rgb = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+        if not self.latest_camera_image is None:
+            # rgb = self.latest_camera_image
+            # print(self.latest_camera_image.shape)
+            rgb = cv2.cvtColor(self.latest_camera_image, cv2.COLOR_RGB2GRAY)
+            rgb = cv2.cvtColor(rgb, cv2.COLOR_GRAY2RGB)
 
 
+        line_clr = (0, 255, 0)
+        point_clr = (255, 0, 0)
+        ffs_clr = (150, 150, 255)
+        square_side_length = 14
+
+        # LINES
         for i in range(len(tri.simplices)):
             a = pixpos[tri.simplices[i][0], :].astype(int)
             b = pixpos[tri.simplices[i][1], :].astype(int)
             c = pixpos[tri.simplices[i][2], :].astype(int)
 
-            rgb = cv2.line(rgb, (a[0], a[1]), (b[0], b[1]), (255, 0, 0), 3)
-            rgb = cv2.line(rgb, (a[0], a[1]), (c[0], c[1]), (255, 0, 0), 3)
-            rgb = cv2.line(rgb, (c[0], c[1]), (b[0], b[1]), (255, 0, 0), 3)
+            rgb = cv2.line(rgb, (a[0], a[1]), (b[0], b[1]), line_clr, 3)
+            rgb = cv2.line(rgb, (a[0], a[1]), (c[0], c[1]), line_clr, 3)
+            rgb = cv2.line(rgb, (c[0], c[1]), (b[0], b[1]), line_clr, 3)
 
-        if not self.faked_pixpos_lastframe is None:
-            for i in range(self.faked_pixpos_lastframe.shape[0]):
-                x = int(self.faked_pixpos_lastframe[i, 0])
-                y = int(self.faked_pixpos_lastframe[i, 1])
-                rgb = cv2.circle(rgb, (x, y), 5, 
-                               (0, 255, 0), -1) 
+        # POINTS
+        for i in range(len(tri.simplices)):
+            a = pixpos[tri.simplices[i][0], :].astype(int)
+            b = pixpos[tri.simplices[i][1], :].astype(int)
+            c = pixpos[tri.simplices[i][2], :].astype(int)
+
+            for pt in [a,b,c]:
+                x = pt[0]
+                y = pt[1]
+                top_left = (x - square_side_length  // 2, y - square_side_length    // 2)
+                bottom_right = (x + square_side_length   // 2, y + square_side_length     // 2)
+                cv2.rectangle(rgb, top_left, bottom_right, point_clr, -1)
+
+
+        # FAKE FSPACE
+        if do_ffs:
+            if not self.faked_pixpos_lastframe is None:
+                for i in range(self.faked_pixpos_lastframe.shape[0]):
+                    x = int(self.faked_pixpos_lastframe[i, 0])
+                    y = int(self.faked_pixpos_lastframe[i, 1])
+                    # rgb = cv2.circle(rgb, (x, y), 5, 
+                    #                # (0, 255, 0), -1) 
+                    #                ffs_clr, -1) 
+
+                    top_left = (x - square_side_length  // 2, y - square_side_length    // 2)
+                    bottom_right = (x + square_side_length   // 2, y + square_side_length     // 2)
+                    cv2.rectangle(rgb, top_left, bottom_right, ffs_clr, -1)
 
         res = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         return res
