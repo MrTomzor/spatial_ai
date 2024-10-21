@@ -12,6 +12,7 @@ import open3d
 import open3d.t.pipelines.registration as treg
 from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Point
+import cv2
 
 
 # common utils# #{
@@ -48,11 +49,26 @@ class BoundingBox3D:
         )
         return within_limits
 
-def getPixelPositions(pts, K):
+def getPixelPositions(pts, K, distortion_coeffs = None):
     # pts = 3D points u wish to project
-    pixpos = K @ pts 
-    pixpos = pixpos / pixpos[2, :]
-    return pixpos[:2, :].T
+    if distortion_coeffs is None:
+        pixpos = K @ pts 
+        pixpos = pixpos / pixpos[2, :]
+        return pixpos[:2, :].T
+    else:
+        print("USING DISTORTION")
+        # Ensure the points are in the correct shape (N x 3)
+        pts = np.array(pts.T).reshape(-1, 1, 3)
+        
+        # Zero rotation and translation since we're working with points directly in the camera frame
+        rvec = np.zeros((3, 1))  # No rotation (camera frame)
+        tvec = np.zeros((3, 1))  # No translation (camera frame)
+        
+        # Project the 3D points to 2D using the camera matrix and distortion coefficients
+        pixpos, _ = cv2.fisheye.projectPoints(pts, rvec, tvec, K, distortion_coeffs )
+        
+        # Reshape the output to get an N x 2 array of pixel positions
+        return pixpos.reshape(-1, 2)
 
 def getVisiblePoints(pts, normals, max_angle, max_dist, w, h, K, verbose=False, check_normals=True):
     n_pts = pts.shape[0]

@@ -55,6 +55,8 @@ import sys
 
 class SubmapBuilderModule:
     def __init__(self, w, h, K, camera_frame_id, odom_orig_frame_id, fcu_frame, tf_listener, T_imu_to_cam, T_fcu_to_imu, camera_info = None, is_cam_info_undistorted = False):# # #{
+
+        # default values for getting from master (TODO - put into parameters or launch files)
         self.width = w
         self.height = h
         self.K = K
@@ -68,6 +70,13 @@ class SubmapBuilderModule:
                 self.distortion_coeffs =  np.array(camera_info.D)[:4]
 
                 self.new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(self.cam_info_K, self.distortion_coeffs, (w, h), np.eye(3), balance=1, new_size=(w, h), fov_scale=1)
+
+        # TODO - something like " if self.using_disorted_camera and not self.should_undistort"
+        self.distortion_coeffs = np.array([0.019265981371039506, 0.0011428473998276235, -0.0003811659324868097, 6.340084698783884e-05])
+        # self.distortion_coeffs = np.array([0.015,-0.020,0.017,-0.003])
+        # self.distortion_coeffs = np.array([0.037,-0.029,0.019,-0.004])
+
+        # self.dist_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(self.K, self.distortion_coeffs, (w, h), np.eye(3), balance=1, new_size=(w, h), fov_scale=1)
 
         self.camera_frame = camera_frame_id
         self.odom_frame = odom_orig_frame_id
@@ -363,7 +372,7 @@ class SubmapBuilderModule:
 
 
             visible_obstacle_pts = positive_z_points
-            pixpos = getPixelPositions(visible_obstacle_pts, self.K)
+            pixpos = getPixelPositions(visible_obstacle_pts, self.K, self.distortion_coeffs)
             # print("OBSTACLE MESH PROJECTED PIXPOS:")
             # print(pixpos)
 
@@ -401,7 +410,7 @@ class SubmapBuilderModule:
             added_ff_pts = None
             if np.any(self.ff_points_active_mask) and self.fake_freespace_pts_enabled:
                 # positive_z_points  = np.concatenate((positive_z_points, self.egocentric_ff_pts[self.ff_points_active_mask, :].T), axis = 1)
-                pixpos_ff_pts = getPixelPositions(self.egocentric_ff_pts.T, self.K)
+                pixpos_ff_pts = getPixelPositions(self.egocentric_ff_pts.T, self.K, self.distortion_coeffs)
                 inhull = np.array([visible_obstacle_pts_polygon.contains(geometry.Point(pixpos_ff_pts[i, 0], pixpos_ff_pts[i, 1])) for i in range(pixpos_ff_pts.shape[0])])
 
                 outside_hull_mask = np.logical_not(inhull)
