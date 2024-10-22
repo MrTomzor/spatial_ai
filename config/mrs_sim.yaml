@@ -4,7 +4,7 @@ platform: "bluefox_uav_gazebo"
 
 local_mapping:
   using_external_slam_pts: True
-  verbose_submap_construction: False
+  verbose_submap_construction: True
 
   keyframe_dist_thr: 4
   slam_filtering_enabled: False
@@ -39,8 +39,8 @@ local_mapping:
 local_nav:
   enabled: True
   uav_radius: 0.8
-  safety_replanning_trigger_odist: 1.5
-  min_planning_odist: 2
+  safety_replanning_trigger_odist: 1.1
+  min_planning_odist: 1.5
   max_planning_odist: 8
   safety_weight: 50
 

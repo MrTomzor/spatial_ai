@@ -57,15 +57,18 @@ def getPixelPositions(pts, K, distortion_coeffs = None):
         return pixpos[:2, :].T
     else:
         print("USING DISTORTION")
+        print(pts.shape)
         # Ensure the points are in the correct shape (N x 3)
         pts = np.array(pts.T).reshape(-1, 1, 3)
+        print(pts.shape)
         
         # Zero rotation and translation since we're working with points directly in the camera frame
         rvec = np.zeros((3, 1))  # No rotation (camera frame)
         tvec = np.zeros((3, 1))  # No translation (camera frame)
         
         # Project the 3D points to 2D using the camera matrix and distortion coefficients
-        pixpos, _ = cv2.fisheye.projectPoints(pts, rvec, tvec, K, distortion_coeffs )
+        pixpos, _ = cv2.fisheye.projectPoints(pts, rvec, tvec, K, distortion_coeffs)
+        print(pixpos.shape)
         
         # Reshape the output to get an N x 2 array of pixel positions
         return pixpos.reshape(-1, 2)

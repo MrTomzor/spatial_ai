@@ -363,6 +363,11 @@ class SubmapBuilderModule:
 
             positive_z_mask = transformed[2, :] > 0
             positive_z_points = transformed[:, positive_z_mask]
+
+            if not np.any(positive_z_mask):
+                print("WARN - no points coming from SLAM have positive Z in camera frame. ENding update")
+                return
+
             pts_for_surfel_addition_tmp = positive_z_points  #SAVE JUST THE MEASURED ONES FOR SURFEL ADDITION
 
             positive_z_slam_ids = None
@@ -374,6 +379,8 @@ class SubmapBuilderModule:
 
 
             visible_obstacle_pts = positive_z_points
+            print("zpoints shape: ")
+            print(positive_z_points.shape)
             pixpos = getPixelPositions(visible_obstacle_pts, self.K, self.distortion_coeffs)
             # print("OBSTACLE MESH PROJECTED PIXPOS:")
             # print(pixpos)
@@ -727,61 +734,57 @@ class SubmapBuilderModule:
             # ray_hit_dists[ray_hit_dists > max_sphere_update_dist] = max_sphere_update_dist
 
             # scaling = ray_hit_pts[:,2]
-            scaling = np.ones(ray_hit_pts.shape[0])
-            print("DEBUG - ray hit pts shape: ")
-            print(ray_hit_pts.shape)
-            hit_dists = np.linalg.norm(ray_hit_pts, axis=1)
-            # scaling[ray_hit_pts[:,2] > max_sphere_update_dist] = max_sphere_update_dist
-            farmask = hit_dists > max_sphere_update_dist
-            scaling[farmask] = max_sphere_update_dist * np.reciprocal(hit_dists[farmask])
-            # for i in range(scaling.shape[0]):
-            #     if np.random.rand() < 0.1 and hit_dists[i] > 2:
-            #         scaling[i] = 2.0 / hit_dists[i]
-            ray_hit_pts = ray_hit_pts * scaling.reshape((ray_hit_pts.shape[0], 1))
 
-            # scaling = scaling.flatten() / ray_hit_pts[:,2].flatten()
-            # ray_hit_pts =  ray_hit_pts * scaling.reshape((ray_hit_pts.shape[0], 1))
-
-            sampling_pts =  (np.random.rand(n_sampled, 1) * ray_hit_pts).T
-            # TODO - add max sampling dist
-
-
-            orig_3dpt_indices_in_hull = np.unique(hull2d.simplices)
-
-            # TRY ADDING NEW SPHERES AT SAMPLED POSITIONS
-            new_spheres_fov_dists = np.abs(fov_mesh_query.signed_distance(sampling_pts.T))
-            # print(sampling_pts.T.shape)
-            # print(self.spheremap.surfel_points.shape)
-            # pt_distmatrix = scipy.spatial.distance_matrix(sampling_pts.T, self.spheremap.surfel_points)
-            # new_spheres_obs_dists = np.min(pt_distmatrix, axis = 1)
-            # mindists = np.minimum(new_spheres_obs_dists, new_spheres_fov_dists)
-
-            mindists = new_spheres_fov_dists 
-            new_sphere_idxs = mindists > min_rad
-
+            n_spheres_to_add = 0
             n_spheres_before_adding = self.spheremap.points.shape[0]
-            n_spheres_to_add = np.sum(new_sphere_idxs)
-            if self.verbose_submap_construction:
-                print("PUTATIVE SPHERES THAT PASSED FIRST RADIUS CHECKS: " + str(n_spheres_to_add))
-            if n_spheres_to_add == 0:
+            if ray_hit_pts.size == 0:
+                print("WARN: no sphere sampling rays hit obstacle mesh")
+            else:
+                scaling = np.ones(ray_hit_pts.shape[0])
+                hit_dists = np.linalg.norm(ray_hit_pts, axis=1)
+                # scaling[ray_hit_pts[:,2] > max_sphere_update_dist] = max_sphere_update_dist
+                farmask = hit_dists > max_sphere_update_dist
+                scaling[farmask] = max_sphere_update_dist * np.reciprocal(hit_dists[farmask])
+                # for i in range(scaling.shape[0]):
+                #     if np.random.rand() < 0.1 and hit_dists[i] > 2:
+                #         scaling[i] = 2.0 / hit_dists[i]
+                ray_hit_pts = ray_hit_pts * scaling.reshape((ray_hit_pts.shape[0], 1))
+
+                # scaling = scaling.flatten() / ray_hit_pts[:,2].flatten()
+                # ray_hit_pts =  ray_hit_pts * scaling.reshape((ray_hit_pts.shape[0], 1))
+
+                sampling_pts =  (np.random.rand(n_sampled, 1) * ray_hit_pts).T
+                # TODO - add max sampling dist
+
+
+                orig_3dpt_indices_in_hull = np.unique(hull2d.simplices)
+
+                # TRY ADDING NEW SPHERES AT SAMPLED POSITIONS
+                new_spheres_fov_dists = np.abs(fov_mesh_query.signed_distance(sampling_pts.T))
+                # print(sampling_pts.T.shape)
+                # print(self.spheremap.surfel_points.shape)
+                # pt_distmatrix = scipy.spatial.distance_matrix(sampling_pts.T, self.spheremap.surfel_points)
+                # new_spheres_obs_dists = np.min(pt_distmatrix, axis = 1)
+                # mindists = np.minimum(new_spheres_obs_dists, new_spheres_fov_dists)
+
+                mindists = new_spheres_fov_dists 
+                new_sphere_idxs = mindists > min_rad
+
+                n_spheres_to_add = np.sum(new_sphere_idxs)
                 if self.verbose_submap_construction:
-                    print("NO NEW SPHERES TO ADD")
-                self.spheremap.labelSpheresByConnectivity()
-                return
+                    print("PUTATIVE SPHERES THAT PASSED FIRST RADIUS CHECKS: " + str(n_spheres_to_add))
+                if n_spheres_to_add == 0:
+                    if self.verbose_submap_construction:
+                        print("NO NEW SPHERES TO ADD")
+                    self.spheremap.labelSpheresByConnectivity()
+                    return
+                else:
+                    # TRANSFORM POINTS FROM CAM ORIGIN TO SPHEREMAP ORIGIN! - DRAW OUT!
+                    new_sphere_locations_in_spheremap_origin = transformPoints(sampling_pts[:, new_sphere_idxs].T, T_orig_to_current_cam)
 
-            # print(mindists.shape)
-            # print(mindists[new_sphere_idxs].shape)
-
-            # TRANSFORM POINTS FROM CAM ORIGIN TO SPHEREMAP ORIGIN! - DRAW OUT!
-            # new_sphere_locations_in_spheremap_origin = transformPoints(sampling_pts[:, new_sphere_idxs].T, T_orig_to_current_cam)
-            new_sphere_locations_in_spheremap_origin = transformPoints(sampling_pts[:, new_sphere_idxs].T, T_orig_to_current_cam)
-
-            # print(new_sphere_locations_in_spheremap_origin.shape)
-            # print(self.spheremap.points.shape)
-
-            self.spheremap.points = np.concatenate((self.spheremap.points, new_sphere_locations_in_spheremap_origin))
-            self.spheremap.radii = np.concatenate((self.spheremap.radii.flatten(), mindists[new_sphere_idxs].flatten()))
-            self.spheremap.connections = np.concatenate((self.spheremap.connections.flatten(), np.array([None for i in range(n_spheres_to_add)], dtype=object).flatten()))
+                    self.spheremap.points = np.concatenate((self.spheremap.points, new_sphere_locations_in_spheremap_origin))
+                    self.spheremap.radii = np.concatenate((self.spheremap.radii.flatten(), mindists[new_sphere_idxs].flatten()))
+                    self.spheremap.connections = np.concatenate((self.spheremap.connections.flatten(), np.array([None for i in range(n_spheres_to_add)], dtype=object).flatten()))
             # # #}
 
             # ADD SPHERE AT CURRENT POSITION!# #{

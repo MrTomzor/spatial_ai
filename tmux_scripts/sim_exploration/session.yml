@@ -1,4 +1,6 @@
 name: vio_simulation
+socket_name: mrs
+tmux_options: -f /etc/ctu-mrs/tmux.conf
 root: ./
 startup_window: navigation
 pre_window: export UAV_NAME=uav1; export RUN_TYPE=simulation; export UAV_TYPE=f330; export WORLD_NAME=simulation; export SENSORS="garmin_down"
@@ -13,6 +15,7 @@ windows:
         # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_name:=forest gui:=true
         # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_name:=grass_plane gui:=true
         - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/schoolworld.sdf gui:=true
+        # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/flood1.sdf gui:=true
         # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/gazebos_world.sdf gui:=true
         - waitForOdometry; gz camera -c gzclient_camera -f uav1; history -s gz camera -c gzclient_camera -f uav1
 
@@ -34,6 +37,10 @@ windows:
       panes:
         # - waitForOdometry; rosrun spatial_ai ov_extension.py
         - waitForOffboard; sleep 22; rosservice call /navigation/setstate_exploring
+  - start_maneuver:
+      layout: tiled
+      panes:
+        - waitForOffboard; sleep 22; rosrun spatial_ai goforward2m.sh
   - VINS:
       layout: tiled
       panes:

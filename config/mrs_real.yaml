@@ -29,7 +29,7 @@ local_mapping:
   # slampoints_topic: '/uav25/mins/cam/slam' #MINS
   # camera_frame: 'uav25/mins_cam0' #MINS
 
-  img_topic: '/uav25/bluefox_vio_front/image_raw/'
+  img_topic: '/uav25/bluefox_vio_front/image_raw/compressed'
 
   get_camera_calib_from_topic: False
   camera_info_topic: '/uav25/bluefox_vio_front/camera_info'
