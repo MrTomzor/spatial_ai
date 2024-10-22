@@ -34,7 +34,7 @@ class OpticalFlowNode:
         vis = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
         cv2.polylines(vis, lines, 0, (0, 255, 0))
         for (x1, y1), (x2, y2) in lines:
-            cv2.circle(vis, (x1, y1), 1, (0, 255, 0), -1)
+            cv2.circle(vis, (x1, y1), 3, (0, 255, 0), -1)
         return vis
 
     def image_callback(self, msg):

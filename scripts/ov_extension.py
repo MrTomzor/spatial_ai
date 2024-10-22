@@ -176,6 +176,7 @@ class NavNode:
             self.P = np.zeros((3,4))
             self.P[:3, :3] = self.K
 
+            # self.distortion_coeffs: [0.019265981371039506, 0.0011428473998276235, -0.0003811659324868097, 6.340084698783884e-05]
             self.T_imu_to_cam = np.eye(4)
             self.T_fcu_to_imu = np.eye(4)
             self.width = 752
@@ -273,7 +274,8 @@ class NavNode:
 
         # --INIT SUBSCRIBERS
         # CAMERA
-        self.sub_cam = rospy.Subscriber(self.img_topic, Image, self.image_callback, queue_size=10)
+        # self.sub_cam = rospy.Subscriber(self.img_topic, Image, self.image_callback, queue_size=10)
+        self.sub_cam = rospy.Subscriber(self.img_topic, CompressedImage, self.image_callback, queue_size=10)
         if self.using_external_slam_pts:
             self.sub_slam_pts = rospy.Subscriber(self.ov_slampoints_topic, PointCloud2, self.slam_points_callback, queue_size=10)
 
@@ -349,6 +351,11 @@ class NavNode:
     def image_callback(self, msg):# # #{
         if not self.node_initialized:
             return
+
+        self.verbose_visualization = True
+        if self.verbose_visualization:
+            print('saving img')
+            self.submap_builder_module.save_camera_img_for_visualization(msg)
 
         # UPDATE VISUAL SLAM MODULE, PASS INPUT TO SUBMAP BUILDER IF NEW INPUT
         if self.using_external_slam_pts:
