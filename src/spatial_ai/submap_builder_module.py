@@ -464,6 +464,12 @@ class SubmapBuilderModule:
 
             # # #}
 
+            meshing_dt = time.time() - interm_time
+            interm_time = time.time()
+            if self.verbose_submap_construction:
+                print("POLYHEDRON CONSTRUCTION time: " + str((meshing_dt) * 1000) +  " ms")
+            runtime_data.append(meshing_dt)
+
             # SAMPLE NEW FRONTIERS ALONG THE VISIBLE FREESPACE MESH# #{
             fr_samples = None
             if self.do_frontiers:
@@ -480,11 +486,12 @@ class SubmapBuilderModule:
             polyhedron_markers = self.get_freespace_polyhedron_markers(self.spheremap.T_global_to_own_origin, T_global_to_fcu, fullmesh_pts.T, fullmesh_simplices)
             self.freespace_polyhedron_pub.publish(polyhedron_markers) 
 
-            meshing_dt = time.time() - interm_time
+            frontiers_dt = time.time() - interm_time
             interm_time = time.time()
             interm_time2 = time.time()
             if self.verbose_submap_construction:
-                print("MESHING time: " + str((meshing_dt) * 1000) +  " ms")
+                print("FRONTIER SAMPLING time: " + str((frontiers_dt) * 1000) +  " ms")
+            runtime_data.append(frontiers_dt)
             # # #}
 
             # UPDATE OLD SPHERES# #{
@@ -551,7 +558,23 @@ class SubmapBuilderModule:
 
                     surfels_in_bbx_mask = bbx_for_surfel_deletion.pts_in_mask(surfel_points_in_camframe) 
                     surfels_in_bbx_idxs = np.where(surfels_in_bbx_mask)[0] 
-                    # print("N SURFELS IN BBX: " + str(np.sum(surfels_in_bbx_mask)))
+
+                    #FURTHER FILTER OUT
+
+                    # - by distance from camera and max sphere size
+                    toofar = surfel_points_in_camframe[surfels_in_bbx_mask, 2] > self.max_sphere_update_dist + self.spheremap.max_radius
+
+                    print("n too far: " + str(np.sum(toofar)))
+                    surfels_in_bbx_mask[surfels_in_bbx_mask] = np.logical_not(toofar)
+                    surfels_in_bbx_idxs = np.where(surfels_in_bbx_mask)[0] 
+
+
+                    # - by being in 2D delaunay hull or not
+                    pixpos = getPixelPositions(surfel_points_in_camframe[surfels_in_bbx_idxs, :].T, self.K)
+                    inhull = tri.find_simplex(pixpos)>=0
+                    surfels_in_bbx_mask[surfels_in_bbx_mask] = inhull
+                    print("n not inhull: " + str(np.sum(np.logical_not(inhull))))
+                    surfels_in_bbx_idxs = np.where(surfels_in_bbx_mask)[0] 
 
                     # surfel_points_in_camframe = transformPoints(self.spheremap.surfel_points[surfels_in_bbx_mask, :], np.linalg.inv(T_orig_to_current_cam))
                     contained_surfels_mask = np.full(n_surfels, False)
@@ -559,21 +582,40 @@ class SubmapBuilderModule:
                     # print(contained_surfels_mask .shape)
                     # contained_surfels_mask[surfels_in_bbx_idxs] = contained_surfels_mask
                     
-                    contained_surfels_mask[surfels_in_bbx_idxs] = fov_mesh.contains(surfel_points_in_camframe[surfels_in_bbx_idxs, :])
+                    # max_z = np.max(z_ok_points[2, :])
+                    # print(z_ok_points.shape)
+                    # print("maxz")
+                    # print(np.sum(surfel_points_in_camframe[surfels_in_bbx_idxs, 2] <= max_z))
 
+                    
+                    print("AAA")
+                    print(surfels_in_bbx_idxs.shape)
+                    tick = time.time()
+                    contained_surfels_mask[surfels_in_bbx_idxs] = fov_mesh.contains(surfel_points_in_camframe[surfels_in_bbx_idxs, :])
+                    print(time.time() - tick)
+
+                    tick = time.time()
                     # CHECK IF THE SURFELS PROJECT TO HULL FORMED BY ONLY OBSTACLE PTS (dont delete pts with fake freespace!)
                     pixpos = getPixelPositions(surfel_points_in_camframe[surfels_in_bbx_idxs, :].T, self.K)
-                    inhull = np.array([visible_obstacle_pts_polygon.contains(geometry.Point(pixpos[i, 0], pixpos[i, 1])) for i in range(pixpos.shape[0])])
+                    # print("AAA")
+                    # inhull = np.array([visible_obstacle_pts_polygon.contains(geometry.Point(pixpos[i, 0], pixpos[i, 1])) for i in range(pixpos.shape[0])])
+                    # inhull = hull2d.find_simplex(pixpos)>=0
+                    inhull = tri.find_simplex(pixpos)>=0
+
+                    print(np.sum(inhull.flatten()))
+                    # print(inhull)
+                    # inhull = np.array([visible_obstacle_pts_polygon.contains(pixpos)])
                     contained_surfels_mask[surfels_in_bbx_idxs] = np.logical_and(contained_surfels_mask[surfels_in_bbx_idxs], inhull)
 
                     contained_surfels_idxs = np.where(contained_surfels_mask)[0]
                     contained_surfels_dists = np.linalg.norm(surfel_points_in_camframe[contained_surfels_mask, :], axis = 1)
+                    print(time.time() - tick)
 
 
                     old_update_dt = time.time() - interm_time2
                     interm_time2 = time.time()
                     if self.verbose_submap_construction:
-                        print("PART CONTAINS: " + str((old_update_dt ) * 1000) +  " ms")
+                        print("PART CONTAINS OBSTACLE PTS: " + str((old_update_dt ) * 1000) +  " ms")
                     
                     # DETERMINE PTS THAT HAVE BEEN MEASURED FROM UP CLOSE AND NOW FALL INTO FOV
                     contained_surfels_minmeas_dists = self.spheremap.surfel_minmeas_dists[contained_surfels_mask]
@@ -595,6 +637,13 @@ class SubmapBuilderModule:
                 interm_time2 = time.time()
                 if self.verbose_submap_construction:
                     print("PART 0: " + str((old_update_dt ) * 1000) +  " ms")
+
+
+                pt_distbased_dt = time.time() - interm_time
+                interm_time = time.time()
+                if self.verbose_submap_construction:
+                    print("POINTS DISTBASED AND POLYGON CONTAIN CHECKING time: " + str((meshing_dt) * 1000) +  " ms")
+                runtime_data.append(pt_distbased_dt )
 
                 # GET THE SPHERES THAT COULD BE UPDATED BY CURRENTLY SEEN DATA
                 if np.any(z_ok_mask):
@@ -618,7 +667,7 @@ class SubmapBuilderModule:
                     old_update_dt = time.time() - interm_time2
                     interm_time2 = time.time()
                     if self.verbose_submap_construction:
-                        print("PART 0.3 - contains: " + str((old_update_dt ) * 1000) +  " ms")
+                        print("PART 0.3 - contains sphere centers: " + str((old_update_dt ) * 1000) +  " ms")
 
                     old_spheres_fov_dists_signed = fov_mesh_query.signed_distance(visible_old_points)
                     # old_spheres_fov_dists_signed = np.full(self.spheremap.radii.shape, 0)

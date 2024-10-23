@@ -53,7 +53,7 @@ windows:
   - VINS_republisher:
       layout: tiled
       panes:
-        -  waitForOdometry; roslaunch vins_republisher vins_republisher_openvins_bluefox.launch
+        -  waitForOdometry; roslaunch vins_republisher2 vins_republisher_openvins_bluefox.launch
         # -  waitForOdometry; roslaunch vins_republisher vins_republisher.launch
   - change_odom_source:
       layout: tiled
