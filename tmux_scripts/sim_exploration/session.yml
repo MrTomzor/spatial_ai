@@ -9,6 +9,10 @@ windows:
       layout: tiled
       panes:
         - roscore
+  - rosbag:
+      layout: tiled
+      panes:
+        - waitForOffboard; ./record.sh
   - gazebo:
       layout: tiled
       panes:
