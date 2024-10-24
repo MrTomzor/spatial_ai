@@ -1,6 +1,6 @@
 name: vio_simulation
 socket_name: mrs
-tmux_options: -f /etc/ctu-mrs/tmux.conf
+# tmux_options: -f /etc/ctu-mrs/tmux.conf
 root: ./
 startup_window: navigation
 pre_window: export UAV_NAME=uav1; export RUN_TYPE=simulation; export UAV_TYPE=f330; export WORLD_NAME=simulation; export SENSORS="garmin_down"

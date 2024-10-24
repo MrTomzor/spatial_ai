@@ -314,7 +314,7 @@ class NavNode:
         if self.n_plan_iters_without_smap_update > 1:
             print("NOT LOCAL NAVING, GIVING SMAP BUILDER CHANCE TO UPDATE!")
             return
-        n_upd = 3
+        n_upd = 1
         if self.n_smap_iters_since_last_planning < n_upd :
             print("NOT LOCAL NAVING, GIVING SMAP BUILDER CHANCE TO DO " + str(n_upd) + "UPDATES!")
             return

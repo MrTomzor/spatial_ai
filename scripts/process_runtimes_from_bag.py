@@ -26,18 +26,23 @@ def process_rosbag(bag_path):
 def plot_runtimes(timestamps, runtime_values):
     # Convert timestamps and runtime values into numpy arrays for easier processing
     timestamps = np.array(timestamps)
+    timestamps = timestamps  - np.min(timestamps  )
     runtime_values = np.array(runtime_values)
 
     # Plot the runtimes of individual parts over time
     plt.figure(figsize=(10, 6))
 
     # Transpose runtime_values so that we can plot each part separately
+    labels = ["Polyhedron construction", "Obstacle+Frontier points", "Old Spheres", "New Spheres", "Connectivity+Sparsification"]
     num_parts = runtime_values.shape[1]
     for part_idx in range(num_parts):
-        plt.plot(timestamps, runtime_values[:, part_idx], label=f'Part {part_idx + 1}')
+        # plt.plot(timestamps, runtime_values[:, part_idx], label=f'Part {part_idx + 1}')
+        plt.plot(timestamps, runtime_values[:, part_idx], label=labels[part_idx])
+    # plot also sum
+    plt.plot(timestamps, np.sum(runtime_values, axis = 1), label=f'Total Runtime')
 
     plt.xlabel('Time (s)')
-    plt.ylabel('Runtime (ms)')
+    plt.ylabel('Runtime (s)')
     plt.title('Runtimes of Individual Parts Over Time')
     plt.legend()
     plt.grid(True)
