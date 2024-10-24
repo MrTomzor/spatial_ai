@@ -9,7 +9,7 @@ local_mapping:
   keyframe_dist_thr: 4
   slam_filtering_enabled: False
 
-  smap_fragmentation_dist: 2000
+  smap_fragmentation_dist: 20000
   n_sphere_samples_per_update: 300
   carryover_dist: 4
   max_sphere_sampling_z : 20
@@ -39,8 +39,8 @@ local_mapping:
 local_nav:
   enabled: True
   uav_radius: 0.8
-  safety_replanning_trigger_odist: 1.1
-  min_planning_odist: 1.5
+  safety_replanning_trigger_odist: 1.5
+  min_planning_odist: 1.8
   max_planning_odist: 8
   safety_weight: 50
 
@@ -60,7 +60,7 @@ local_nav:
   output_path_topic: '/uav1/trajectory_generation/path'
 
   frontier_visibility_dist: 15
-  min_num_frontiers_per_goal: 5
+  min_num_frontiers_per_goal: 4
 
 exploration_safety_area:
   enabled: True
