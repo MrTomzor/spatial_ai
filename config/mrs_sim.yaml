@@ -23,15 +23,15 @@ local_mapping:
   odom_frame: 'global'
   camera_frame: 'cam0'
 
-  img_topic: '/uav1/vio/camera/image_raw'
+  img_topic: '/uav1/vio/camera/image_raw/compressed'
   slampoints_topic: '/ov_msckf/points_slam'
 
   get_camera_calib_from_topic: False
   camera_info_topic: '/uav1/vio/camera/camera_info'
 
   fake_freespace_pts_enabled: True
-  fake_freespace_pts_dist: 10
-  fake_freespace_min_parallax: 0.1
+  fake_freespace_pts_dist: 15
+  fake_freespace_min_parallax: 0.07
   fake_freespace_pts_always_active: False #DANGEROUS if True
   fake_freespace_ignore_tracking: False #DANGEROUS if True
   fake_freespace_tracking_buffer_len: 10
@@ -54,6 +54,7 @@ local_nav:
   out_path_resolution: 0.5
 
   local_exploration_radius: 20
+  # exploration_goal_blocking_dist: 7
   exploration_goal_blocking_dist: 7
 
   predicted_trajectory_topic: '/uav1/control_manager/mpc_tracker/prediction_full_state'
@@ -65,11 +66,17 @@ local_nav:
 exploration_safety_area:
   enabled: True
 
-  x_min: -1000
-  x_max: 1000
+  x_min: -50
+  x_max: 0
 
-  y_min: -1000
-  y_max: 1000
+  y_min: -25
+  y_max: 25
+  
+  # x_min: -30
+  # x_max: 30
+
+  # y_min: -120
+  # y_max: 10
 
   z_min: -1
   z_max: 8

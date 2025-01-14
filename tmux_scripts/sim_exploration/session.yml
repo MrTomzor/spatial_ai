@@ -9,17 +9,18 @@ windows:
       layout: tiled
       panes:
         - roscore
-  - rosbag:
-      layout: tiled
-      panes:
-        - waitForOffboard; ./record.sh
+  # - rosbag:
+  #     layout: tiled
+  #     panes:
+  #       - waitForOffboard; ./record.sh
   - gazebo:
       layout: tiled
       panes:
         # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_name:=forest gui:=true
         # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_name:=grass_plane gui:=true
         # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/schoolworld.sdf gui:=true
-        - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/flood3.sdf gui:=true
+        # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/flood3.sdf gui:=true
+        - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/sparse_world.sdf gui:=true
         # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/gazebos_world.sdf gui:=true
         - waitForOdometry; gz camera -c gzclient_camera -f uav1; history -s gz camera -c gzclient_camera -f uav1
 
@@ -63,6 +64,7 @@ windows:
       layout: tiled
       panes:
         - waitForSimulation; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-vio --pos 3 0 0 1.57"
+        # - waitForSimulation; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-vio --pos 3 0 0 0"
   - control:
       layout: tiled
       panes:

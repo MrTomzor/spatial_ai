@@ -294,7 +294,7 @@ Visualization Manager:
               Marker Topic: /uav1/control_manager/trajectory_original/markers
               Name: Markers
               Namespaces:
-                "": true
+                {}
               Queue Size: 100
               Value: true
           Enabled: true
@@ -418,7 +418,7 @@ Visualization Manager:
               Marker Topic: /uav1/control_manager/mpc_tracker/trajectory_processed/markers
               Name: Markers
               Namespaces:
-                "": true
+                {}
               Queue Size: 100
               Value: true
           Enabled: true
@@ -432,9 +432,7 @@ Visualization Manager:
           Marker Topic: /uav1/trajectory_generation/markers/final
           Name: final
           Namespaces:
-            markers/final_lines: true
-            markers/final_points: true
-            markers/final_triangles: true
+            {}
           Queue Size: 100
           Value: true
         - Class: rviz/MarkerArray
@@ -442,9 +440,7 @@ Visualization Manager:
           Marker Topic: /uav1/trajectory_generation/markers/original
           Name: original
           Namespaces:
-            markers/original_lines: true
-            markers/original_points: true
-            markers/original_triangles: true
+            {}
           Queue Size: 100
           Value: true
       Enabled: true
@@ -466,8 +462,7 @@ Visualization Manager:
       Marker Topic: /path_planning_vis
       Name: PLANNING
       Namespaces:
-        path: true
-        rrt: true
+        {}
       Queue Size: 100
       Value: true
     - Class: rviz/MarkerArray
@@ -475,17 +470,17 @@ Visualization Manager:
       Marker Topic: /spheres
       Name: CURRENT SUBMAP PTS
       Namespaces:
-        "": true
+        {}
       Queue Size: 100
       Value: true
     - Class: rviz/MarkerArray
-      Enabled: false
+      Enabled: true
       Marker Topic: /spheremap_freespace
       Name: CURRENT SUBMAP FSPACE
       Namespaces:
         {}
       Queue Size: 100
-      Value: false
+      Value: true
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
@@ -527,7 +522,7 @@ Visualization Manager:
       Marker Topic: /exploration_goals
       Name: EXPLORATION GOALS
       Namespaces:
-        "": true
+        {}
       Queue Size: 100
       Value: true
     - Class: rviz/MarkerArray
@@ -535,7 +530,7 @@ Visualization Manager:
       Marker Topic: /roadmap
       Name: ROADMAP
       Namespaces:
-        path: true
+        {}
       Queue Size: 100
       Value: true
     - Class: rviz/MarkerArray
@@ -543,7 +538,7 @@ Visualization Manager:
       Marker Topic: /path_planning_vis_global
       Name: GLOBAL PLANNING
       Namespaces:
-        path: true
+        {}
       Queue Size: 100
       Value: true
     - Class: rviz/MarkerArray
@@ -551,7 +546,7 @@ Visualization Manager:
       Marker Topic: /visible_freespace_poly
       Name: VISIBLE FREESPACE
       Namespaces:
-        "": true
+        {}
       Queue Size: 100
       Value: true
     - Class: rviz/MarkerArray
@@ -559,7 +554,7 @@ Visualization Manager:
       Marker Topic: /unsorted_markers
       Name: MarkerArray
       Namespaces:
-        "": true
+        {}
       Queue Size: 100
       Value: true
     - Class: rviz/MarkerArray
@@ -567,9 +562,21 @@ Visualization Manager:
       Marker Topic: /assumed_freespace_points
       Name: MarkerArray
       Namespaces:
-        "": true
+        {}
       Queue Size: 100
       Value: true
+    - Class: rviz/Image
+      Enabled: false
+      Image Topic: /polygon_enhanced_debug
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Name: Image
+      Normalize Range: true
+      Queue Size: 2
+      Transport Hint: raw
+      Unreliable: false
+      Value: false
   Enabled: true
   Global Options:
     Background Color: 255; 255; 255
@@ -611,7 +618,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 49.9450798034668
+      Distance: 60.90884780883789
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -619,17 +626,17 @@ Visualization Manager:
         Value: false
       Field of View: 0.7853981852531433
       Focal Point:
-        X: -1.2066432237625122
-        Y: -10.032585144042969
-        Z: -1.1740944385528564
+        X: 1.585364580154419
+        Y: -0.3287256956100464
+        Z: 7.752617359161377
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.1647961139678955
+      Pitch: 1.359795331954956
       Target Frame: uav1/fcu
-      Yaw: 0.20807990431785583
+      Yaw: 2.5348994731903076
     Saved: ~
 Window Geometry:
   Displays:
@@ -637,7 +644,9 @@ Window Geometry:
   Height: 1030
   Hide Left Dock: false
   Hide Right Dock: true
-  QMainWindow State: 000000ff00000000fd0000000400000000000001a8000003b0fc020000000efb0000001200530065006c0065006300740069006f006e00000001e10000009b0000005c00fffffffb000000120056006900650077007300200054006f006f02000001df000002110000018500000122fb000000200054006f006f006c002000500072006f0070006500720074006900650073003203000002880000011d000002210000017afb000000100044006900730070006c006100790073010000003b000001ca000000c700fffffffb0000001400760069006f005f00630061006d0065007200610000000122000000bd0000001600fffffffb0000002000730065006c0065006300740069006f006e00200062007500660066006500720200000138000000aa0000023a00000294fb00000014005700690064006500530074006500720065006f02000000e6000000d2000003ee0000030bfb0000000c004b0069006e0065006300740200000186000001060000030c00000261fb0000000a0049006d00610067006500000001650000015e0000000000000000fb0000001400760069006f005f00630061006d00650072006100000001400000009f0000000000000000fb000000120054005200410043004b0048004900530054010000020b000001e00000001600fffffffb0000000a0049006d00610067006500000002b7000001340000000000000000fb0000000a0049006d006100670065000000032d000000be0000000000000000fb0000000a0049006d00610067006501000002b40000015500000000000000000000000100000100000003b0fc0200000004fb0000001e0054006f006f006c002000500072006f0070006500720074006900650073000000003b000002f00000005c00fffffffb0000000a005600690065007700730000000331000000ba000000a000fffffffb0000001e0054006f006f006c002000500072006f0070006500720074006900650073000000016d0000016e0000000000000000fb0000001200530065006c0065006300740069006f006e010000025a000000b200000000000000000000000200000490000000a9fc0100000001fb0000000a00560069006500770073030000004e00000080000002e100000197000000030000038f0000003efc0100000002fb0000000800540069006d006500000000000000038f0000035700fffffffb0000000800540069006d00650100000000000004500000000000000000000000ba000003b000000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  Image:
+    collapsed: false
+  QMainWindow State: 000000ff00000000fd000000040000000000000171000003b0fc020000000ffb0000001200530065006c0065006300740069006f006e00000001e10000009b0000005c00fffffffb000000120056006900650077007300200054006f006f02000001df000002110000018500000122fb000000200054006f006f006c002000500072006f0070006500720074006900650073003203000002880000011d000002210000017afb000000100044006900730070006c006100790073010000003b000001ca000000c700fffffffb0000001400760069006f005f00630061006d0065007200610000000122000000bd0000001600fffffffb0000002000730065006c0065006300740069006f006e00200062007500660066006500720200000138000000aa0000023a00000294fb00000014005700690064006500530074006500720065006f02000000e6000000d2000003ee0000030bfb0000000c004b0069006e0065006300740200000186000001060000030c00000261fb0000000a0049006d00610067006500000001650000015e0000001600fffffffb0000001400760069006f005f00630061006d00650072006100000001400000009f0000000000000000fb000000120054005200410043004b0048004900530054010000020b000001e00000001600fffffffb0000000a0049006d00610067006500000002b7000001340000000000000000fb0000000a0049006d006100670065000000032d000000be0000000000000000fb0000000a0049006d00610067006501000002b4000001550000000000000000fb0000000a0049006d0061006700650100000213000001d800000000000000000000000100000100000003b0fc0200000004fb0000001e0054006f006f006c002000500072006f0070006500720074006900650073000000003b000002f00000005c00fffffffb0000000a005600690065007700730000000331000000ba000000a000fffffffb0000001e0054006f006f006c002000500072006f0070006500720074006900650073000000016d0000016e0000000000000000fb0000001200530065006c0065006300740069006f006e010000025a000000b200000000000000000000000200000490000000a9fc0100000001fb0000000a00560069006500770073030000004e00000080000002e100000197000000030000038f0000003efc0100000002fb0000000800540069006d006500000000000000038f0000035700fffffffb0000000800540069006d00650100000000000004500000000000000000000000f7000003b000000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   Selection:
     collapsed: false
   TRACKHIST:
@@ -648,8 +657,8 @@ Window Geometry:
     collapsed: true
   Views:
     collapsed: true
-  Width: 616
-  X: 1286
+  Width: 622
+  X: 646
   Y: 32
   vio_camera:
     collapsed: false
