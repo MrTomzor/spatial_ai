@@ -1,0 +1,2782 @@
+<sdf version='1.7'>
+  <world name='default'>
+    <plugin name='mrs_gazebo_static_transform_republisher_plugin' filename='libMrsGazeboCommonResources_StaticTransformRepublisher.so'/>
+    <spherical_coordinates>
+      <surface_model>EARTH_WGS84</surface_model>
+      <latitude_deg>47.3977</latitude_deg>
+      <longitude_deg>8.54559</longitude_deg>
+      <elevation>0</elevation>
+      <heading_deg>0</heading_deg>
+    </spherical_coordinates>
+    <physics name='default_physics' default='0' type='ode'>
+      <ode>
+        <solver>
+          <type>quick</type>
+          <iters>10</iters>
+          <sor>1.3</sor>
+          <use_dynamic_moi_rescaling>0</use_dynamic_moi_rescaling>
+        </solver>
+        <constraints>
+          <cfm>0</cfm>
+          <erp>0.2</erp>
+          <contact_max_correcting_vel>1000</contact_max_correcting_vel>
+          <contact_surface_layer>0.001</contact_surface_layer>
+        </constraints>
+      </ode>
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1</real_time_factor>
+      <real_time_update_rate>250</real_time_update_rate>
+    </physics>
+    <scene>
+      <shadows>0</shadows>
+      <ambient>0.4 0.4 0.4 1</ambient>
+      <background>0.7 0.7 0.7 1</background>
+    </scene>
+    <light name='sun' type='directional'>
+      <pose>0 0 1000 0.4 0.2 0</pose>
+      <diffuse>1 1 1 1</diffuse>
+      <specular>0.6 0.6 0.6 1</specular>
+      <direction>0.1 0.1 -0.9</direction>
+      <attenuation>
+        <range>20</range>
+        <constant>0.5</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <cast_shadows>1</cast_shadows>
+      <spot>
+        <inner_angle>0</inner_angle>
+        <outer_angle>0</outer_angle>
+        <falloff>0</falloff>
+      </spot>
+    </light>
+    <model name='ground_plane'>
+      <static>1</static>
+      <link name='link'>
+        <collision name='collision'>
+          <pose>0 0 0 0 -0 0</pose>
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>250 250</size>
+            </plane>
+          </geometry>
+          <surface>
+            <contact>
+              <ode>
+                <min_depth>0.01</min_depth>
+                <max_vel>0</max_vel>
+              </ode>
+            </contact>
+            <friction>
+              <ode/>
+              <torsional>
+                <ode/>
+              </torsional>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <visual name='grass'>
+          <pose>0 0 0 0 -0 0</pose>
+          <cast_shadows>0</cast_shadows>
+          <geometry>
+            <mesh>
+              <uri>file://grass_plane/meshes/grass_plane.dae</uri>
+            </mesh>
+          </geometry>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+    </model>
+    <model name='the_void'>
+      <static>1</static>
+      <link name='link'>
+        <pose>0 0 0.1 0 -0 0</pose>
+        <visual name='the_void'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>0.25</radius>
+            </sphere>
+          </geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/Gazebo.material</uri>
+              <name>Gazebo/Black</name>
+            </script>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>-1000 -1000 0 0 -0 0</pose>
+    </model>
+    <gui fullscreen='0'>
+      <camera name='camera'>
+        <pose>72.8847 29.6797 134.32 0 1.1218 -3.07623</pose>
+        <view_controller>orbit</view_controller>
+        <projection_type>perspective</projection_type>
+      </camera>
+    </gui>
+    <plugin name='mrs_gazebo_rviz_cam_synchronizer' filename='libMrsGazeboCommonResources_RvizCameraSynchronizer.so'>
+      <target_frame_id>gazebo_user_camera</target_frame_id>
+      <world_origin_frame_id>uav1/gps_origin</world_origin_frame_id>
+      <frame_to_follow>uav1</frame_to_follow>
+    </plugin>
+    <gravity>0 0 -9.8066</gravity>
+    <magnetic_field>6e-06 2.3e-05 -4.2e-05</magnetic_field>
+    <atmosphere type='adiabatic'/>
+    <wind/>
+    <model name='tree_simple_0_clone'>
+      <static>1</static>
+      <link name='link'>
+        <pose>0 0 0.1 0 -0 0</pose>
+        <inertial>
+          <mass>666</mass>
+          <inertia>
+            <ixx>0.0861167</ixx>
+            <ixy>0</ixy>
+            <ixz>0</ixz>
+            <iyy>0.0861167</iyy>
+            <iyz>0</iyz>
+            <izz>0.0861167</izz>
+          </inertia>
+        </inertial>
+        <collision name='collision_trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <collision name='collision_treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <visual name='trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Trunk</name>
+            </script>
+          </material>
+        </visual>
+        <visual name='treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Treetop</name>
+            </script>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>19.72 60.7099 0 0 -0 0</pose>
+    </model>
+    <state world_name='default'>
+      <sim_time>10297 740000000</sim_time>
+      <real_time>160 957057164</real_time>
+      <wall_time>1739815539 618244666</wall_time>
+      <iterations>38745</iterations>
+      <model name='ambulance'>
+        <pose>-0.847117 -29.3189 0 0.462922 -1.24469 0.616645</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>-0.847117 -29.3189 0 0.462922 -1.24469 0.616645</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='bus'>
+        <pose>6.71705 30.5037 0 0 -0 1.55569</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>6.71705 30.5037 0 0 -0 1.55569</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='bus_0'>
+        <pose>-25.7389 13.1661 0 0 0 -0.804906</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>-25.7389 13.1661 0 0 0 -0.804906</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='fire_truck'>
+        <pose>23.6484 3.19567 0 0 0 -0.423542</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>23.6484 3.19567 0 0 0 -0.423542</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='gazebo'>
+        <pose>19.3631 78.2722 0 0 -0 0</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>19.3631 78.2722 0 0 -0 0</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='ground_plane'>
+        <pose>0 0 0 0 -0 0</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>0 0 0 0 -0 0</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='parking_garage'>
+        <pose>-13.0416 31.6208 0 0 -0 0</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>-13.0416 31.6208 0 0 -0 0</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='playground'>
+        <pose>-29.784 83.253 0 0 -0 0</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>-29.784 83.253 0 0 -0 0</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='police_station'>
+        <pose>0.158552 -15.763 0 0 -0 0</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>0.158552 -15.763 0 0 -0 0</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='suv'>
+        <pose>-14.7447 42.156 0 0 -0 0</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>-14.7447 42.156 0 0 -0 0</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='suv_0'>
+        <pose>4.95591 26.495 0 0 -0 0</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>4.95591 26.495 0 0 -0 0</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='suv_0_clone'>
+        <pose>4.10032 40.37 0 0 -0 0</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>4.10032 40.37 0 0 -0 0</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='suv_0_clone_0'>
+        <pose>-9.67528 20.1063 0 0 -0 0</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>-9.67528 20.1063 0 0 -0 0</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='suv_0_clone_1'>
+        <pose>-6.62201 42.6362 0 0 -0 0</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>-6.62201 42.6362 0 0 -0 0</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='suv_1'>
+        <pose>4.93915 7.49568 0 0 0 -0.213549</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>4.93915 7.49568 0 0 0 -0.213549</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='suv_1_clone'>
+        <pose>-7.45978 6.84084 0 0 -0 0.474963</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>-7.45978 6.84084 0 0 -0 0.474963</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='suv_clone_0_clone'>
+        <pose>8.12142 80.6254 0 -1.18192 -0.079271 0.548784</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>8.12142 80.6254 0 -1.18192 -0.079271 0.548784</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='the_void'>
+        <pose>-1000 -1000 0 0 -0 0</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>-1000 -1000 0.1 0 -0 0</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='tower_crane'>
+        <pose>-16.3995 -4.42121 0 -0.121009 0.46842 1.59738</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>-16.3995 -4.42121 0 -0.121009 0.46842 1.59738</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='tree_simple_0_clone'>
+        <pose>16.8324 64.3347 0 0 -0 0</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>16.8324 64.3347 0.1 0 -0 0</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='tree_simple_0_clone_0_clone_clone_0'>
+        <pose>9.13521 72.4249 0 0 -0 0</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>9.13521 72.4249 0.1 0 -0 0</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='tree_simple_0_clone_0_clone_clone_2_clone'>
+        <pose>16.1026 -7.30516 0 0 -0 0</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>16.1026 -7.30516 0.1 0 -0 0</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='tree_simple_0_clone_0_clone_clone_2_clone_0'>
+        <pose>24.1579 -7.91423 0 0 -0 0</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>24.1579 -7.91423 0.1 0 -0 0</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='tree_simple_0_clone_0_clone_clone_4'>
+        <pose>20.868 -16.5442 0 0 -0 0</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>20.868 -16.5442 0.1 0 -0 0</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='tree_simple_0_clone_0_clone_clone_7'>
+        <pose>-1.21544 80.1575 0 0 -0 0</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>-1.21544 80.1575 0.1 0 -0 0</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='tree_simple_0_clone_0_clone_clone_8'>
+        <pose>-19.1485 -22.4829 0 0 -0 0</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>-19.1485 -22.4829 0.1 0 -0 0</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='tree_simple_0_clone_0_clone_clone_8_clone'>
+        <pose>-28.1591 -30 0 0 -0 0</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>-28.1591 -30 0.1 0 -0 0</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='tree_simple_0_clone_0_clone_clone_8_clone_0'>
+        <pose>-30.1909 -16.4677 0 0 -0 0</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>-30.1909 -16.4677 0.1 0 -0 0</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='tree_simple_0_clone_0_clone_clone_9'>
+        <pose>-15.9854 -12.7922 0 0 -0 0</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>-15.9854 -12.7922 0.1 0 -0 0</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='tree_simple_0_clone_0_clone_clone_clone'>
+        <pose>-4.34082 72.6333 0 0 -0 0</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>-4.34082 72.6333 0.1 0 -0 0</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='tree_simple_0_clone_0_clone_clone_clone_clone'>
+        <pose>-13.2706 80.0426 0 0 -0 0</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>-13.2706 80.0426 0.1 0 -0 0</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='tree_simple_0_clone_0_clone_clone_clone_clone_0'>
+        <pose>-21.8924 70.6215 0 0 -0 0</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>-21.8924 70.6215 0.1 0 -0 0</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <model name='tree_simple_0_clone_0_clone_clone_clone_clone_1'>
+        <pose>-16.2747 64.6136 0 0 -0 0</pose>
+        <scale>1 1 1</scale>
+        <link name='link'>
+          <pose>-16.2747 64.6136 0.1 0 -0 0</pose>
+          <velocity>0 0 0 0 -0 0</velocity>
+          <acceleration>0 0 0 0 -0 0</acceleration>
+          <wrench>0 0 0 0 -0 0</wrench>
+        </link>
+      </model>
+      <light name='sun'>
+        <pose>0 0 1000 0.4 0.2 0</pose>
+      </light>
+      <light name='user_point_light_0'>
+        <pose>-1.7279 28.0532 3.59451 0 -0 0</pose>
+      </light>
+    </state>
+    <model name='tree_simple_0_clone_0_clone_clone_0'>
+      <static>1</static>
+      <link name='link'>
+        <pose>0 0 0.1 0 -0 0</pose>
+        <inertial>
+          <mass>666</mass>
+          <inertia>
+            <ixx>0.0861167</ixx>
+            <ixy>0</ixy>
+            <ixz>0</ixz>
+            <iyy>0.0861167</iyy>
+            <iyz>0</iyz>
+            <izz>0.0861167</izz>
+          </inertia>
+        </inertial>
+        <collision name='collision_trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <collision name='collision_treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <visual name='trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Trunk</name>
+            </script>
+          </material>
+        </visual>
+        <visual name='treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Treetop</name>
+            </script>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>9.13521 72.4249 0 0 -0 0</pose>
+    </model>
+    <model name='tree_simple_0_clone_0_clone_clone_4'>
+      <static>1</static>
+      <link name='link'>
+        <pose>0 0 0.1 0 -0 0</pose>
+        <inertial>
+          <mass>666</mass>
+          <inertia>
+            <ixx>0.0861167</ixx>
+            <ixy>0</ixy>
+            <ixz>0</ixz>
+            <iyy>0.0861167</iyy>
+            <iyz>0</iyz>
+            <izz>0.0861167</izz>
+          </inertia>
+        </inertial>
+        <collision name='collision_trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <collision name='collision_treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <visual name='trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Trunk</name>
+            </script>
+          </material>
+        </visual>
+        <visual name='treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Treetop</name>
+            </script>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>11.787 -11.2183 0 0 -0 0</pose>
+    </model>
+    <model name='tower_crane'>
+      <static>1</static>
+      <link name='link'>
+        <collision name='collision'>
+          <geometry>
+            <mesh>
+              <uri>model://tower_crane/meshes/tower_crane.dae</uri>
+            </mesh>
+          </geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact>
+              <ode/>
+            </contact>
+            <bounce/>
+            <friction>
+              <torsional>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+          </surface>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <mesh>
+              <uri>model://tower_crane/meshes/tower_crane.dae</uri>
+            </mesh>
+          </geometry>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>-26.0764 14.183 0 0 -0 0</pose>
+    </model>
+    <model name='tree_simple_0_clone_0_clone_clone_7'>
+      <static>1</static>
+      <link name='link'>
+        <pose>0 0 0.1 0 -0 0</pose>
+        <inertial>
+          <mass>666</mass>
+          <inertia>
+            <ixx>0.0861167</ixx>
+            <ixy>0</ixy>
+            <ixz>0</ixz>
+            <iyy>0.0861167</iyy>
+            <iyz>0</iyz>
+            <izz>0.0861167</izz>
+          </inertia>
+        </inertial>
+        <collision name='collision_trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <collision name='collision_treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <visual name='trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Trunk</name>
+            </script>
+          </material>
+        </visual>
+        <visual name='treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Treetop</name>
+            </script>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>-1.21544 80.1575 0 0 -0 0</pose>
+    </model>
+    <model name='tree_simple_0_clone_0_clone_clone_8'>
+      <static>1</static>
+      <link name='link'>
+        <pose>0 0 0.1 0 -0 0</pose>
+        <inertial>
+          <mass>666</mass>
+          <inertia>
+            <ixx>0.0861167</ixx>
+            <ixy>0</ixy>
+            <ixz>0</ixz>
+            <iyy>0.0861167</iyy>
+            <iyz>0</iyz>
+            <izz>0.0861167</izz>
+          </inertia>
+        </inertial>
+        <collision name='collision_trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <collision name='collision_treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <visual name='trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Trunk</name>
+            </script>
+          </material>
+        </visual>
+        <visual name='treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Treetop</name>
+            </script>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>-34.9705 -21.5177 0 0 -0 0</pose>
+    </model>
+    <model name='tree_simple_0_clone_0_clone_clone_9'>
+      <static>1</static>
+      <link name='link'>
+        <pose>0 0 0.1 0 -0 0</pose>
+        <inertial>
+          <mass>666</mass>
+          <inertia>
+            <ixx>0.0861167</ixx>
+            <ixy>0</ixy>
+            <ixz>0</ixz>
+            <iyy>0.0861167</iyy>
+            <iyz>0</iyz>
+            <izz>0.0861167</izz>
+          </inertia>
+        </inertial>
+        <collision name='collision_trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <collision name='collision_treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <visual name='trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Trunk</name>
+            </script>
+          </material>
+        </visual>
+        <visual name='treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Treetop</name>
+            </script>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>-29.4509 -12.4345 0 0 -0 0</pose>
+    </model>
+    <model name='tree_simple_0_clone_0_clone_clone_clone'>
+      <static>1</static>
+      <link name='link'>
+        <pose>0 0 0.1 0 -0 0</pose>
+        <inertial>
+          <mass>666</mass>
+          <inertia>
+            <ixx>0.0861167</ixx>
+            <ixy>0</ixy>
+            <ixz>0</ixz>
+            <iyy>0.0861167</iyy>
+            <iyz>0</iyz>
+            <izz>0.0861167</izz>
+          </inertia>
+        </inertial>
+        <collision name='collision_trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <collision name='collision_treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <visual name='trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Trunk</name>
+            </script>
+          </material>
+        </visual>
+        <visual name='treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Treetop</name>
+            </script>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>-6.60923 71.9711 0 0 -0 0</pose>
+    </model>
+    <model name='suv_clone_0_clone'>
+      <static>1</static>
+      <link name='link'>
+        <collision name='collision'>
+          <pose>0 0 0 0 0 -1.5708</pose>
+          <geometry>
+            <mesh>
+              <scale>0.06 0.06 0.06</scale>
+              <uri>model://suv/meshes/suv.obj</uri>
+            </mesh>
+          </geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact>
+              <ode/>
+            </contact>
+            <bounce/>
+            <friction>
+              <torsional>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+          </surface>
+        </collision>
+        <visual name='visual'>
+          <pose>0 0 0 0 0 -1.5708</pose>
+          <geometry>
+            <mesh>
+              <scale>0.06 0.06 0.06</scale>
+              <uri>model://suv/meshes/suv.obj</uri>
+            </mesh>
+          </geometry>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>8.12142 80.6254 0 0 -0 0.892544</pose>
+    </model>
+    <model name='tree_simple_0_clone_0_clone_clone_2_clone'>
+      <static>1</static>
+      <link name='link'>
+        <pose>0 0 0.1 0 -0 0</pose>
+        <inertial>
+          <mass>666</mass>
+          <inertia>
+            <ixx>0.0861167</ixx>
+            <ixy>0</ixy>
+            <ixz>0</ixz>
+            <iyy>0.0861167</iyy>
+            <iyz>0</iyz>
+            <izz>0.0861167</izz>
+          </inertia>
+        </inertial>
+        <collision name='collision_trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <collision name='collision_treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <visual name='trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Trunk</name>
+            </script>
+          </material>
+        </visual>
+        <visual name='treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Treetop</name>
+            </script>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>10.3045 -9.33298 0 0 -0 0</pose>
+    </model>
+    <model name='tree_simple_0_clone_0_clone_clone_2_clone_0'>
+      <static>1</static>
+      <link name='link'>
+        <pose>0 0 0.1 0 -0 0</pose>
+        <inertial>
+          <mass>666</mass>
+          <inertia>
+            <ixx>0.0861167</ixx>
+            <ixy>0</ixy>
+            <ixz>0</ixz>
+            <iyy>0.0861167</iyy>
+            <iyz>0</iyz>
+            <izz>0.0861167</izz>
+          </inertia>
+        </inertial>
+        <collision name='collision_trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <collision name='collision_treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <visual name='trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Trunk</name>
+            </script>
+          </material>
+        </visual>
+        <visual name='treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Treetop</name>
+            </script>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>19.9553 -8.45541 0 0 -0 0</pose>
+    </model>
+    <model name='gazebo'>
+      <static>1</static>
+      <link name='link'>
+        <collision name='collision'>
+          <geometry>
+            <mesh>
+              <scale>3 3 2.5</scale>
+              <uri>model://gazebo/meshes/gazebo.dae</uri>
+            </mesh>
+          </geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact>
+              <ode/>
+            </contact>
+            <bounce/>
+            <friction>
+              <torsional>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+          </surface>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <mesh>
+              <scale>3 3 2.5</scale>
+              <uri>model://gazebo/meshes/gazebo.dae</uri>
+            </mesh>
+          </geometry>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>16.1349 79.0954 0 0 -0 0</pose>
+    </model>
+    <model name='parking_garage'>
+      <static>1</static>
+      <link name='link'>
+        <collision name='collision'>
+          <geometry>
+            <mesh>
+              <uri>model://parking_garage/meshes/parking_garage.dae</uri>
+            </mesh>
+          </geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact>
+              <ode/>
+            </contact>
+            <bounce/>
+            <friction>
+              <torsional>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+          </surface>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <mesh>
+              <uri>model://parking_garage/meshes/parking_garage.dae</uri>
+            </mesh>
+          </geometry>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>-9.3603 24.7743 0 0 -0 0</pose>
+    </model>
+    <model name='tree_simple_0_clone_0_clone_clone_clone_clone'>
+      <static>1</static>
+      <link name='link'>
+        <pose>0 0 0.1 0 -0 0</pose>
+        <inertial>
+          <mass>666</mass>
+          <inertia>
+            <ixx>0.0861167</ixx>
+            <ixy>0</ixy>
+            <ixz>0</ixz>
+            <iyy>0.0861167</iyy>
+            <iyz>0</iyz>
+            <izz>0.0861167</izz>
+          </inertia>
+        </inertial>
+        <collision name='collision_trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <collision name='collision_treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <visual name='trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Trunk</name>
+            </script>
+          </material>
+        </visual>
+        <visual name='treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Treetop</name>
+            </script>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>-13.2706 80.0426 0 0 -0 0</pose>
+    </model>
+    <model name='tree_simple_0_clone_0_clone_clone_clone_clone_0'>
+      <static>1</static>
+      <link name='link'>
+        <pose>0 0 0.1 0 -0 0</pose>
+        <inertial>
+          <mass>666</mass>
+          <inertia>
+            <ixx>0.0861167</ixx>
+            <ixy>0</ixy>
+            <ixz>0</ixz>
+            <iyy>0.0861167</iyy>
+            <iyz>0</iyz>
+            <izz>0.0861167</izz>
+          </inertia>
+        </inertial>
+        <collision name='collision_trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <collision name='collision_treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <visual name='trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Trunk</name>
+            </script>
+          </material>
+        </visual>
+        <visual name='treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Treetop</name>
+            </script>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>-21.8924 70.6215 0 0 -0 0</pose>
+    </model>
+    <model name='tree_simple_0_clone_0_clone_clone_clone_clone_1'>
+      <static>1</static>
+      <link name='link'>
+        <pose>0 0 0.1 0 -0 0</pose>
+        <inertial>
+          <mass>666</mass>
+          <inertia>
+            <ixx>0.0861167</ixx>
+            <ixy>0</ixy>
+            <ixz>0</ixz>
+            <iyy>0.0861167</iyy>
+            <iyz>0</iyz>
+            <izz>0.0861167</izz>
+          </inertia>
+        </inertial>
+        <collision name='collision_trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <collision name='collision_treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <visual name='trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Trunk</name>
+            </script>
+          </material>
+        </visual>
+        <visual name='treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Treetop</name>
+            </script>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>-16.2747 64.6136 0 0 -0 0</pose>
+    </model>
+    <model name='fire_truck'>
+      <static>1</static>
+      <link name='link'>
+        <collision name='collision'>
+          <geometry>
+            <mesh>
+              <scale>0.1 0.1 0.1</scale>
+              <uri>model://fire_truck/meshes/fire_truck.obj</uri>
+            </mesh>
+          </geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact>
+              <ode/>
+            </contact>
+            <bounce/>
+            <friction>
+              <torsional>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+          </surface>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <mesh>
+              <scale>0.1 0.1 0.1</scale>
+              <uri>model://fire_truck/meshes/fire_truck.obj</uri>
+            </mesh>
+          </geometry>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>7.92326 31.3842 0 0 -0 0</pose>
+    </model>
+    <model name='bus'>
+      <static>1</static>
+      <link name='link'>
+        <collision name='collision'>
+          <geometry>
+            <mesh>
+              <scale>0.01 0.01 0.01</scale>
+              <uri>model://bus/meshes/bus.obj</uri>
+            </mesh>
+          </geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact>
+              <ode/>
+            </contact>
+            <bounce/>
+            <friction>
+              <torsional>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+          </surface>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <mesh>
+              <scale>0.01 0.01 0.01</scale>
+              <uri>model://bus/meshes/bus.obj</uri>
+            </mesh>
+          </geometry>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>8.76836 33.5309 0 0 -0 0</pose>
+    </model>
+    <model name='suv'>
+      <static>1</static>
+      <link name='link'>
+        <collision name='collision'>
+          <pose>0 0 0 0 0 -1.5708</pose>
+          <geometry>
+            <mesh>
+              <scale>0.06 0.06 0.06</scale>
+              <uri>model://suv/meshes/suv.obj</uri>
+            </mesh>
+          </geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact>
+              <ode/>
+            </contact>
+            <bounce/>
+            <friction>
+              <torsional>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+          </surface>
+        </collision>
+        <visual name='visual'>
+          <pose>0 0 0 0 0 -1.5708</pose>
+          <geometry>
+            <mesh>
+              <scale>0.06 0.06 0.06</scale>
+              <uri>model://suv/meshes/suv.obj</uri>
+            </mesh>
+          </geometry>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>6.34913 27.4811 0 0 -0 0</pose>
+    </model>
+    <model name='suv_0'>
+      <static>1</static>
+      <link name='link'>
+        <collision name='collision'>
+          <pose>0 0 0 0 0 -1.5708</pose>
+          <geometry>
+            <mesh>
+              <scale>0.06 0.06 0.06</scale>
+              <uri>model://suv/meshes/suv.obj</uri>
+            </mesh>
+          </geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact>
+              <ode/>
+            </contact>
+            <bounce/>
+            <friction>
+              <torsional>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+          </surface>
+        </collision>
+        <visual name='visual'>
+          <pose>0 0 0 0 0 -1.5708</pose>
+          <geometry>
+            <mesh>
+              <scale>0.06 0.06 0.06</scale>
+              <uri>model://suv/meshes/suv.obj</uri>
+            </mesh>
+          </geometry>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>7.26416 28.4309 0 0 -0 0</pose>
+    </model>
+    <model name='suv_0_clone'>
+      <static>1</static>
+      <link name='link'>
+        <collision name='collision'>
+          <pose>0 0 0 0 0 -1.5708</pose>
+          <geometry>
+            <mesh>
+              <scale>0.06 0.06 0.06</scale>
+              <uri>model://suv/meshes/suv.obj</uri>
+            </mesh>
+          </geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact>
+              <ode/>
+            </contact>
+            <bounce/>
+            <friction>
+              <torsional>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+          </surface>
+        </collision>
+        <visual name='visual'>
+          <pose>0 0 0 0 0 -1.5708</pose>
+          <geometry>
+            <mesh>
+              <scale>0.06 0.06 0.06</scale>
+              <uri>model://suv/meshes/suv.obj</uri>
+            </mesh>
+          </geometry>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>4.10032 40.37 0 0 -0 0</pose>
+    </model>
+    <model name='suv_0_clone_0'>
+      <static>1</static>
+      <link name='link'>
+        <collision name='collision'>
+          <pose>0 0 0 0 0 -1.5708</pose>
+          <geometry>
+            <mesh>
+              <scale>0.06 0.06 0.06</scale>
+              <uri>model://suv/meshes/suv.obj</uri>
+            </mesh>
+          </geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact>
+              <ode/>
+            </contact>
+            <bounce/>
+            <friction>
+              <torsional>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+          </surface>
+        </collision>
+        <visual name='visual'>
+          <pose>0 0 0 0 0 -1.5708</pose>
+          <geometry>
+            <mesh>
+              <scale>0.06 0.06 0.06</scale>
+              <uri>model://suv/meshes/suv.obj</uri>
+            </mesh>
+          </geometry>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>-9.08123 20.9563 0 0 -0 0</pose>
+    </model>
+    <model name='police_station'>
+      <static>1</static>
+      <link name='link'>
+        <collision name='collision_main'>
+          <pose>0 0 4.28998 0 -0 0</pose>
+          <geometry>
+            <box>
+              <size>13.037 13.037 8.57995</size>
+            </box>
+          </geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact>
+              <ode/>
+            </contact>
+            <bounce/>
+            <friction>
+              <torsional>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+          </surface>
+        </collision>
+        <collision name='collision_landing'>
+          <pose>0 0 0.464086 0 -0 0</pose>
+          <geometry>
+            <box>
+              <size>13.037 16.2446 0.928173</size>
+            </box>
+          </geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact>
+              <ode/>
+            </contact>
+            <bounce/>
+            <friction>
+              <torsional>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+          </surface>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <mesh>
+              <uri>model://police_station/meshes/police_station.dae</uri>
+            </mesh>
+          </geometry>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>0.783105 -19.7766 0 0 -0 0</pose>
+    </model>
+    <model name='bus_0'>
+      <static>1</static>
+      <link name='link'>
+        <collision name='collision'>
+          <geometry>
+            <mesh>
+              <scale>0.01 0.01 0.01</scale>
+              <uri>model://bus/meshes/bus.obj</uri>
+            </mesh>
+          </geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact>
+              <ode/>
+            </contact>
+            <bounce/>
+            <friction>
+              <torsional>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+          </surface>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <mesh>
+              <scale>0.01 0.01 0.01</scale>
+              <uri>model://bus/meshes/bus.obj</uri>
+            </mesh>
+          </geometry>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>-24.369 11.2996 0 0 -0 0</pose>
+    </model>
+    <model name='ambulance'>
+      <static>1</static>
+      <link name='link'>
+        <collision name='collision'>
+          <geometry>
+            <mesh>
+              <scale>0.0254 0.0254 0.0254</scale>
+              <uri>model://ambulance/meshes/ambulance.obj</uri>
+            </mesh>
+          </geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact>
+              <ode/>
+            </contact>
+            <bounce/>
+            <friction>
+              <torsional>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+          </surface>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <mesh>
+              <scale>0.0254 0.0254 0.0254</scale>
+              <uri>model://ambulance/meshes/ambulance.obj</uri>
+            </mesh>
+          </geometry>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>-1.33842 -33.2492 0 0 -0 0</pose>
+    </model>
+    <model name='playground'>
+      <static>1</static>
+      <link name='link'>
+        <collision name='collision'>
+          <geometry>
+            <mesh>
+              <uri>model://playground/meshes/playground.dae</uri>
+            </mesh>
+          </geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact>
+              <ode/>
+            </contact>
+            <bounce/>
+            <friction>
+              <torsional>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+          </surface>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <mesh>
+              <uri>model://playground/meshes/playground.dae</uri>
+            </mesh>
+          </geometry>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>-29.784 83.253 0 0 -0 0</pose>
+    </model>
+    <model name='tree_simple_0_clone_0_clone_clone_8_clone'>
+      <static>1</static>
+      <link name='link'>
+        <pose>0 0 0.1 0 -0 0</pose>
+        <inertial>
+          <mass>666</mass>
+          <inertia>
+            <ixx>0.0861167</ixx>
+            <ixy>0</ixy>
+            <ixz>0</ixz>
+            <iyy>0.0861167</iyy>
+            <iyz>0</iyz>
+            <izz>0.0861167</izz>
+          </inertia>
+        </inertial>
+        <collision name='collision_trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <collision name='collision_treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <visual name='trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Trunk</name>
+            </script>
+          </material>
+        </visual>
+        <visual name='treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Treetop</name>
+            </script>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>-28.1591 -30 0 0 -0 0</pose>
+    </model>
+    <model name='tree_simple_0_clone_0_clone_clone_8_clone_0'>
+      <static>1</static>
+      <link name='link'>
+        <pose>0 0 0.1 0 -0 0</pose>
+        <inertial>
+          <mass>666</mass>
+          <inertia>
+            <ixx>0.0861167</ixx>
+            <ixy>0</ixy>
+            <ixz>0</ixz>
+            <iyy>0.0861167</iyy>
+            <iyz>0</iyz>
+            <izz>0.0861167</izz>
+          </inertia>
+        </inertial>
+        <collision name='collision_trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <collision name='collision_treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <surface>
+            <contact>
+              <poissons_ratio>0.347</poissons_ratio>
+              <elastic_modulus>8.8e+09</elastic_modulus>
+              <ode>
+                <kp>100000</kp>
+                <kd>100</kd>
+                <max_vel>100</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+            <friction>
+              <torsional>
+                <coefficient>1</coefficient>
+                <use_patch_radius>0</use_patch_radius>
+                <surface_radius>0.01</surface_radius>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <visual name='trunk'>
+          <pose>0 0 2 0 -0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>4</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Trunk</name>
+            </script>
+          </material>
+        </visual>
+        <visual name='treetop'>
+          <pose>0 0 5.2 0 -0 0</pose>
+          <geometry>
+            <sphere>
+              <radius>1.5</radius>
+            </sphere>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://tree_simple/scripts</uri>
+              <uri>model://tree_simple/materials/textures</uri>
+              <name>TreeSimple/Treetop</name>
+            </script>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>-30.1909 -16.4677 0 0 -0 0</pose>
+    </model>
+    <model name='suv_1'>
+      <static>1</static>
+      <link name='link'>
+        <collision name='collision'>
+          <pose>0 0 0 0 0 -1.5708</pose>
+          <geometry>
+            <mesh>
+              <scale>0.06 0.06 0.06</scale>
+              <uri>model://suv/meshes/suv.obj</uri>
+            </mesh>
+          </geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact>
+              <ode/>
+            </contact>
+            <bounce/>
+            <friction>
+              <torsional>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+          </surface>
+        </collision>
+        <visual name='visual'>
+          <pose>0 0 0 0 0 -1.5708</pose>
+          <geometry>
+            <mesh>
+              <scale>0.06 0.06 0.06</scale>
+              <uri>model://suv/meshes/suv.obj</uri>
+            </mesh>
+          </geometry>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>5.29676 11.5962 0 0 -0 0</pose>
+    </model>
+    <light name='user_point_light_0' type='point'>
+      <pose>-2.92816 28.0532 1 0 -0 0</pose>
+      <diffuse>0.5 0.5 0.5 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation>
+        <range>20</range>
+        <constant>0.5</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <cast_shadows>0</cast_shadows>
+      <direction>0 0 -1</direction>
+      <spot>
+        <inner_angle>0</inner_angle>
+        <outer_angle>0</outer_angle>
+        <falloff>0</falloff>
+      </spot>
+    </light>
+    <model name='suv_0_clone_1'>
+      <static>1</static>
+      <link name='link'>
+        <collision name='collision'>
+          <pose>0 0 0 0 0 -1.5708</pose>
+          <geometry>
+            <mesh>
+              <scale>0.06 0.06 0.06</scale>
+              <uri>model://suv/meshes/suv.obj</uri>
+            </mesh>
+          </geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact>
+              <ode/>
+            </contact>
+            <bounce/>
+            <friction>
+              <torsional>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+          </surface>
+        </collision>
+        <visual name='visual'>
+          <pose>0 0 0 0 0 -1.5708</pose>
+          <geometry>
+            <mesh>
+              <scale>0.06 0.06 0.06</scale>
+              <uri>model://suv/meshes/suv.obj</uri>
+            </mesh>
+          </geometry>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>-6.62201 42.6362 0 0 -0 0</pose>
+    </model>
+    <model name='suv_1_clone'>
+      <static>1</static>
+      <link name='link'>
+        <collision name='collision'>
+          <pose>0 0 0 0 0 -1.5708</pose>
+          <geometry>
+            <mesh>
+              <scale>0.06 0.06 0.06</scale>
+              <uri>model://suv/meshes/suv.obj</uri>
+            </mesh>
+          </geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact>
+              <ode/>
+            </contact>
+            <bounce/>
+            <friction>
+              <torsional>
+                <ode/>
+              </torsional>
+              <ode/>
+            </friction>
+          </surface>
+        </collision>
+        <visual name='visual'>
+          <pose>0 0 0 0 0 -1.5708</pose>
+          <geometry>
+            <mesh>
+              <scale>0.06 0.06 0.06</scale>
+              <uri>model://suv/meshes/suv.obj</uri>
+            </mesh>
+          </geometry>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <pose>-8.62201 7.32926 0 0 0 -0.213549</pose>
+    </model>
+  </world>
+</sdf>

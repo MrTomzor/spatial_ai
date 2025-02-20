@@ -454,7 +454,7 @@ class SubmapBuilderModule:
                 extended_obstacle_mesh = trimesh.Trimesh(vertices=fullmesh_pts.T, faces = tri.simplices)
 
 
-                self.polygon_enhanced_debug_pub.publish(self.bridge.cv2_to_imgmsg(self.visualize_polygon(pixpos, tri, True), "bgr8"))
+                # self.polygon_enhanced_debug_pub.publish(self.bridge.cv2_to_imgmsg(self.visualize_polygon(pixpos, tri, True), "bgr8"))
 
 
             # ADD ORIGIN PT

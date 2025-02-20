@@ -3,8 +3,8 @@ mrs_uav_trackers:
   landoff_tracker:
 
     vertical_tracker:
-      vertical_speed: 5.0
-      vertical_acceleration: 10.0
+      vertical_speed: 8.0
+      vertical_acceleration: 20.0
 
 mrs_uav_managers:
 
@@ -21,7 +21,7 @@ mrs_uav_managers:
   uav_manager:
 
     takeoff:
-      takeoff_height: 2.5
+      takeoff_height: 3
 
       during_takeoff:
         controller: "MpcController"
