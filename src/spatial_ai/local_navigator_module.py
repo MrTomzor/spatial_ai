@@ -1572,6 +1572,9 @@ class LocalNavigatorModule:
         return n_visible
 # # #}
 
+    def sampleAndUpdateLocalExplorationViewpoints(self, planning_start_vp, search_dist=30):
+        pass
+
     # --UTILS
 
     def odom_msg_to_transformation_matrix(self, closest_time_odom_msg):# # #{

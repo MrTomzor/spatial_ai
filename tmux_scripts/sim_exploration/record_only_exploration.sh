@@ -32,6 +32,7 @@ exclude=(
 # Every topic containing "h264"
 # '(.*)h264(.*)'
 
+'(.*)octomap(.*)'
 '(.*)ov_msckf(.*)'
 '(.*)mavros(.*)'
 '(.*)control_manager(.*)'

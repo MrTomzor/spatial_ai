@@ -12,6 +12,7 @@ Panels:
         - /TRACKHIST1
         - /PointCloud21
         - /MarkerArray4
+        - /PointCloud22
       Splitter Ratio: 0.5075922012329102
     Tree Height: 419
   - Class: rviz/Selection
@@ -584,13 +585,13 @@ Visualization Manager:
       Unreliable: false
       Value: false
     - Class: rviz/MarkerArray
-      Enabled: true
+      Enabled: false
       Marker Topic: /uav1/octomap_global_vis/free_cells_vis_array
       Name: MarkerArray
       Namespaces:
-        map: true
+        {}
       Queue Size: 100
-      Value: true
+      Value: false
     - Class: rviz/MarkerArray
       Enabled: true
       Marker Topic: /uav1/octomap_global_vis/occupied_cells_vis_array
@@ -599,6 +600,34 @@ Visualization Manager:
         map: true
       Queue Size: 100
       Value: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz/PointCloud2
+      Color: 17; 255; 0
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: false
+      Invert Rainbow: false
+      Max Color: 136; 255; 0
+      Min Color: 0; 0; 0
+      Name: PointCloud2
+      Position Transformer: XYZ
+      Queue Size: 10
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.4000000059604645
+      Style: Boxes
+      Topic: /uav1/octomap_global_vis/octomap_free_centers
+      Unreliable: false
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: false
   Enabled: true
   Global Options:
     Background Color: 255; 255; 255
@@ -640,7 +669,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 43.600257873535156
+      Distance: 40.92030334472656
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -648,17 +677,17 @@ Visualization Manager:
         Value: false
       Field of View: 0.7853981852531433
       Focal Point:
-        X: -1.9749565124511719
-        Y: -1.6796621084213257
-        Z: 7.560364723205566
+        X: -3.070197582244873
+        Y: -24.330659866333008
+        Z: 3.478353977203369
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.494796484708786
+      Pitch: 0.3097974359989166
       Target Frame: map
-      Yaw: 6.0900115966796875
+      Yaw: 3.600031852722168
     Saved:
       - Class: rviz/FPS
         Enable Stereo Rendering:

@@ -1,4 +1,7 @@
 # for point cloud raycasting
+#
+resolution: 0.2
+
 local_map:
 
   # the bounding box distance of the local map
