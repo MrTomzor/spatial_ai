@@ -708,6 +708,106 @@ class LocalNavigatorModule:
 
     # # #}
 
+    def getReachableNodes(self, smap, startpoint, search_dist, maxdist_to_graph_start=0, min_safe_dist=0.5, max_safe_dist=3, safety_weight=1, clearing_dist=0):# # #{
+        print("REACHABILITY: STARTING, FROM TO:")
+        print(startpoint)
+
+        start_time = time.time()
+
+        if smap.points is None: 
+            print("REACHABILITY: MAP IS EMPTY!!!")
+            return None
+
+        # PRECOMPUTE UNSAFE SPHERES
+        unsafe_mask = smap.radii < min_safe_dist
+        expanded_mask = np.full(smap.radii.shape, False)
+
+        # PRECOMPUTE OUT-OF-BOUNDS SPHERES
+        oob_x = np.logical_or(smap.points[:, 0] < startpoint[0] - search_dist, smap.points[:, 0] > startpoint[0] + search_dist)
+        oob_y = np.logical_or(smap.points[:, 1] < startpoint[1] - search_dist, smap.points[:, 1] > startpoint[1] + search_dist)
+        oob_z = np.logical_or(smap.points[:, 2] < startpoint[2] - search_dist, smap.points[:, 2] > startpoint[2] + search_dist)
+        oob_mask = np.logical_or(np.logical_or(oob_x, oob_y), oob_z)
+
+        # ADD OOB TO UNSAFE MASK
+        unsafe_mask = np.logical_or(unsafe_mask, oob_mask)
+
+        # MARK UNTRAVERSABLE NODES
+        safe_nodes_mask = np.logical_not(unsafe_mask)
+        if not np.any(safe_nodes_mask):
+            print("REACHABILITY: no nodes are safe!!!")
+            return None
+
+        # FIND NEAREST NODES TO START AND END
+        dist_from_startpoint = np.linalg.norm((smap.points - startpoint), axis=1) - smap.radii
+
+        # SET NODES IN CLEARING DIST TO BE SAFE AS WELL (SO CAN START FROM THEM)
+        # safe_nodes_mask[dist_from_startpoint < clearing_dist] = True
+
+        argm = np.argmin(dist_from_startpoint[safe_nodes_mask])
+        # start_node_index = np.argmin(dist_from_startpoint)
+        start_node_index = np.arange(smap.radii.size)[safe_nodes_mask][argm]
+
+        # CHECK IF START ITSELF IS SAFE
+        if(dist_from_startpoint[start_node_index] > maxdist_to_graph_start):
+            print("REACHABILITY: start too far form graph!")
+            print(dist_from_startpoint[start_node_index])
+            print("N SPHERES:")
+            print(smap.points.shape[0])
+            return None
+        print("REACHABILITY: node indices:")
+        print(start_node_index)
+
+        # closed_set = set()
+        # closed_set = {start_node_index: None}
+        closed_set = np.full(smap.radii.shape, False)
+        open_set = np.full(smap.radii.shape, False)
+
+        # Priority queue for efficient retrieval of the node with the lowest total cost
+        # heapq.heappush(open_set, (0, start_node_index, None))
+        open_set[start_node_index] = True
+
+        # Dictionary to store the cost of reaching each node from the start
+        # g_score = {start_node_index: 0}
+        g_score = np.full(smap.radii.shape, 0.0)
+
+        print('REACHABILITY CHECK START: %s' % ((time.time() - start_time)*1000))
+        num_open = 1
+
+        while num_open > 0:
+            current_index = np.argmax(open_set)
+            open_set[current_index] = False
+            num_open -= 1
+            current_g = g_score[current_index]
+            # current_g, current_index, parent = heapq.heappop(open_set)
+            expanded_mask[current_index] = True
+
+            conns = smap.connections[current_index]
+            if conns is None:
+                continue
+
+            for neighbor_index in conns:
+                if not safe_nodes_mask[neighbor_index]:
+                    continue
+
+                # if neighbor_index not in g_score or tentative_g < g_score[neighbor_index]:
+                if (not expanded_mask[neighbor_index] and not open_set[neighbor_index]):
+                    euclid_dist = smap.nodes_distmatrix[current_index, neighbor_index]
+                    safety_cost = self.compute_safety_cost(smap.radii[neighbor_index], min_safe_dist, max_safe_dist) * euclid_dist * self.safety_weight
+                    tentative_g = g_score[current_index] + euclid_dist + safety_cost
+
+                    expanded_mask[neighbor_index] = True
+                    g_score[neighbor_index] = tentative_g
+                    # heapq.heappush(open_set, (tentative_g, neighbor_index, current_index))
+                    open_set[neighbor_index] = True
+                    closed_set[neighbor_index] = True
+                    num_open += 1
+
+        print('REACHABILITY TOTAL TIME: %s' % ((time.time() - start_time)*1000))
+        print("N CLOSED NODES: " + str(np.sum(closed_set)) + "/" + str(smap.points.shape[0]))
+
+        return closed_set
+# # #}
+
     def findPathAstarInSubmap(self, smap, startpoint, endpoint, maxdist_to_graph_start=0,maxdist_to_graph_end=10, min_safe_dist=0.5, max_safe_dist=3, safety_weight=1, check_end_safety=False, clearing_dist=0):# # #{
         print("PATHFIND: STARTING, FROM TO:")
         print(startpoint)
@@ -1442,38 +1542,73 @@ class LocalNavigatorModule:
 
     # # #}
 
-    def tryAddingGoalsNearby(self, planning_start_vp, search_dist=30, planning_time=0.3):# # #{
-        print("SEARCHING FOR NEARBY GOALS IN DIST: " + str(search_dist))
-
-        frontier_vps = self.find_paths_rrt_smap_frame(planning_start_vp, max_comp_time = planning_time, min_odist = self.min_planning_odist, max_odist = self.max_planning_odist, max_step_size = self.path_step_size, max_spread_dist = search_dist, mode = 'find_goals')
+    def incorporateViewpointsIntoGoals(self, vps, use_safety_area = True):# # #{
+        res = []
         n_added = 0
 
-        if len(frontier_vps ) > 0:
-            n_added = 0
-            for i in range(len(frontier_vps)):
-                is_blocked, by_who, _ = self.isViewpointBlockedByExplorationGoals(frontier_vps[i])
-                if is_blocked:
+        for i in range(len(vps)):
+            is_blocked, by_who, _ = self.isViewpointBlockedByExplorationGoals(vps[i])
+            if is_blocked:
+                continue
+
+            if use_safety_area and self.safety_area_enabled:
+                vp_pos = vps[i].position
+                if vp_pos[0] > self.safety_area_x_max or vp_pos[0] < self.safety_area_x_min:
+                    continue
+                if vp_pos[1] > self.safety_area_y_max or vp_pos[1] < self.safety_area_y_min:
+                    continue
+                if vp_pos[2] > self.safety_area_z_max or vp_pos[2] < self.safety_area_z_min:
                     continue
 
-                if self.safety_area_enabled:
-                    vp_pos = frontier_vps[i].position
-                    if vp_pos[0] > self.safety_area_x_max or vp_pos[0] < self.safety_area_x_min:
-                        continue
-                    if vp_pos[1] > self.safety_area_y_max or vp_pos[1] < self.safety_area_y_min:
-                        continue
-                    if vp_pos[2] > self.safety_area_z_max or vp_pos[2] < self.safety_area_z_min:
+            new_goal = ExplorationGoal(vps[i])
+            if self.exploration_goals is None:
+                self.exploration_goals = np.array([new_goal], dtype=object)
+            else:
+                self.exploration_goals = np.concatenate((self.exploration_goals, np.array([new_goal], dtype=object)))
+            n_added += 1
+        return n_added
+# # #}
+
+    def tryAddingGoalsNearby(self, planning_start_vp, search_dist=30, planning_time=0.3, mode = 'bfs'):# # #{
+        print("SEARCHING FOR NEARBY GOALS IN DIST: " + str(search_dist))
+        frontier_vps = []
+
+        # SAMPLING IN REACHABLE PTS
+        if mode == 'bfs':
+            reachable_nodes = self.getReachableNodes(self.mapper.spheremap, planning_start_vp.position, search_dist, maxdist_to_graph_start = self.planning_clearing_dist, min_safe_dist=self.min_planning_odist, max_safe_dist=self.max_planning_odist, safety_weight = self.safety_weight, clearing_dist = self.planning_clearing_dist)
+
+            if reachable_nodes is not None and reachable_nodes.shape[0] > 0:
+                n_sampled_vps = 120
+                for i in range(n_sampled_vps):
+
+                    # Create VP
+                    pt_index = np.random.randint(0, reachable_nodes.shape[0])
+                    pos = self.mapper.spheremap.points[pt_index, :]
+                    heading = (np.random.rand() - 0.5) * 2 * np.pi
+                    global_vp = transformViewpoint(Viewpoint(pos.reshape((1,3)), heading), self.mapper.spheremap.T_global_to_own_origin)
+
+                    # Check if has information value
+                    frontier_val = self.getViewpointFrontierValue(global_vp)
+
+                    if frontier_val < self.min_vp_frontier_val:
                         continue
 
+                    # Add
+                    frontier_vps.append(global_vp)
 
-                new_goal = ExplorationGoal(frontier_vps[i])
-                if self.exploration_goals is None:
-                    self.exploration_goals = np.array([new_goal], dtype=object)
-                else:
-                    self.exploration_goals = np.concatenate((self.exploration_goals, np.array([new_goal], dtype=object)))
-                n_added += 1
-            if n_added == 0:
-                return 0
-            print("EXPLORATION - now have num of goals: " + str(self.exploration_goals.size))
+        # SAMPLING USING RRT
+        if mode == 'rrt':
+            frontier_vps = self.find_paths_rrt_smap_frame(planning_start_vp, max_comp_time = planning_time, min_odist = self.min_planning_odist, max_odist = self.max_planning_odist, max_step_size = self.path_step_size, max_spread_dist = search_dist, mode = 'find_goals')
+
+        print("EXPLORATION VP SAMPLING - n_viable_found: " + str(len(frontier_vps)))
+
+        n_added = 0
+        if len(frontier_vps ) > 0:
+            n_added = self.incorporateViewpointsIntoGoals(frontier_vps)
+
+        if n_added == 0:
+            return 0
+        print("EXPLORATION - now have num of goals: " + str(self.exploration_goals.size))
         return n_added
     # # #}
 
@@ -1572,8 +1707,30 @@ class LocalNavigatorModule:
         return n_visible
 # # #}
 
-    def sampleAndUpdateLocalExplorationViewpoints(self, planning_start_vp, search_dist=30):
+    def sampleAndUpdateLocalExplorationViewpoints(self, planning_start_vp, search_dist=30):# # #{
+        acceptance_thresh = 0
+        mode2 = 'frontiers'
+        mode3 = 'forward'
+
+        # Iterate thru spheres in search dist
+
+        # IF MODE IS TO FIND GOALS, RETURN ALL END VPS THAT ARE ACCEPTABLE, AND NOT BLOCKED
+        if mode == 'find_goals':
+            acceptable_goals = []
+            for i in range(heads_values.size):
+                if heads_values[i] < acceptance_thresh:
+                    continue
+                # CHECK IF NOT BLOCKED BY ANY
+                potential_vp = Viewpoint(heads_global[i, :], heads_headings_global[i])
+
+                # ADD TO RES
+                acceptable_goals.append(potential_vp)
+            print("RRT FOUND " + str(len(acceptable_goals)) + " ACCEPTABLE NEW GOALS")
+            return acceptable_goals
+
+
         pass
+# # #}
 
     # --UTILS
 

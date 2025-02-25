@@ -354,7 +354,6 @@ class NavNode:
 
         self.verbose_visualization = True
         if self.verbose_visualization:
-            print('saving img')
             self.submap_builder_module.save_camera_img_for_visualization(msg)
 
         # UPDATE VISUAL SLAM MODULE, PASS INPUT TO SUBMAP BUILDER IF NEW INPUT

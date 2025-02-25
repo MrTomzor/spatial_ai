@@ -165,6 +165,18 @@ def transformViewpoints(pts, headings, T):
 
     return res[:3, :].T, res_heads
 
+def transformViewpoint(vp, T):
+    # pts = Nx3 matrix, T = transformation matrix to apply
+    res = np.concatenate((vp.position.T, np.full((1, 1), 1)))
+    res = T @ res 
+    res = res / res[3, :] # unhomogenize
+
+    hedif = transformationMatrixToHeading(T)
+    # res_heads = np.unwrap(headings + hedif)
+    res_head = hdif(vp.heading + hedif)
+
+    return Viewpoint(res[:3, 0], res_head)
+
 def check_points_in_box(points, bounds):
     """
     Check if all 3D points fall within the specified box.

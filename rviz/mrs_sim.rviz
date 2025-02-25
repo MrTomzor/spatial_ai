@@ -469,17 +469,16 @@ Visualization Manager:
       Name: PLANNING
       Namespaces:
         path: true
-        rrt: true
       Queue Size: 100
       Value: true
     - Class: rviz/MarkerArray
-      Enabled: false
+      Enabled: true
       Marker Topic: /spheres
       Name: CURRENT SUBMAP PTS
       Namespaces:
-        {}
+        "": true
       Queue Size: 100
-      Value: false
+      Value: true
     - Class: rviz/MarkerArray
       Enabled: false
       Marker Topic: /spheremap_freespace
@@ -593,13 +592,13 @@ Visualization Manager:
       Queue Size: 100
       Value: false
     - Class: rviz/MarkerArray
-      Enabled: true
+      Enabled: false
       Marker Topic: /uav1/octomap_global_vis/occupied_cells_vis_array
       Name: MarkerArray
       Namespaces:
-        map: true
+        {}
       Queue Size: 100
-      Value: true
+      Value: false
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
@@ -669,7 +668,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 40.92030334472656
+      Distance: 18.650182723999023
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -677,17 +676,17 @@ Visualization Manager:
         Value: false
       Field of View: 0.7853981852531433
       Focal Point:
-        X: -3.070197582244873
-        Y: -24.330659866333008
-        Z: 3.478353977203369
+        X: -2.32751202583313
+        Y: 2.1170222759246826
+        Z: 12.311890602111816
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.3097974359989166
+      Pitch: 1.0047974586486816
       Target Frame: map
-      Yaw: 3.600031852722168
+      Yaw: 5.210036754608154
     Saved:
       - Class: rviz/FPS
         Enable Stereo Rendering:
