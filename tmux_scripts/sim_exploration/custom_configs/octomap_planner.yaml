@@ -1,5 +1,6 @@
-safe_obstacle_distance: 1.4 # [m]
-euclidean_distance_cutoff: 1.4 # [m]
+safe_obstacle_distance: 1.6 # [m]
+euclidean_distance_cutoff: 1.8 # [m]
+unknown_is_occupied: True
 
 subt_planner:
-  use: false
+  use: true

@@ -1,6 +1,6 @@
 # for point cloud raycasting
 #
-resolution: 0.2
+resolution: 0.5
 
 local_map:
 

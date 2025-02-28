@@ -17,13 +17,13 @@ windows:
       layout: tiled
       panes:
         # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_name:=forest gui:=true
-        # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_name:=grass_plane gui:=true
+        - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_name:=grass_plane gui:=true
         # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/schoolworld.sdf gui:=true
         # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/flood3.sdf gui:=true
         # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/sparse_world.sdf gui:=true
         # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/wide_world1.sdf gui:=true
         # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/garage2.sdf gui:=true
-        - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/crane_world7.sdf gui:=true
+        # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/crane_world7.sdf gui:=true
         # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/gazebos_world.sdf gui:=true
         - waitForOdometry; gz camera -c gzclient_camera -f uav1; history -s gz camera -c gzclient_camera -f uav1
 
@@ -39,7 +39,8 @@ windows:
       layout: tiled
       panes:
         # - waitForOdometry; rosrun spatial_ai ov_extension.py
-        - waitForOffboard; sleep 15; roslaunch spatial_ai mrs_openvins_explore.launch
+        # - waitForOffboard; sleep 15; roslaunch spatial_ai mrs_openvins_explore.launch
+        - waitForOffboard; roslaunch spatial_ai random_octomap_explorer.launch
   - octomap_pcl_retransform:
       layout: tiled
       panes:
@@ -50,6 +51,7 @@ windows:
       panes:
         - waitForHw; roslaunch spatial_ai mapplan.launch
           config_octomap_server:=./custom_configs/octomap_server.yaml
+          config_octomap_planner:=./custom_configs/octomap_planner.yaml
           # custom_config:=./custom_configs/custom_config.yaml
           # config_octomap_planner:=./config/octomap_planner.yaml
           # config_pcl_filter_ouster:=./config/ouster_filter_mapping.yaml
@@ -83,7 +85,7 @@ windows:
       panes:
         - waitForSimulation; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-vio --pos 0 0 0 1.57"
         # - waitForSimulation; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-vio --pos 3 3 0 1.57"
-        # - waitForSimulation; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-vio --pos 0 5 0 1.57"
+        # - waitForSimulation; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-vio --pos 0 5 0 0"
         # - waitForSimulation; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-vio --pos 3 0 0 0"
   - control:
       layout: tiled
