@@ -1,6 +1,24 @@
-safe_obstacle_distance: 1.6 # [m]
-euclidean_distance_cutoff: 1.8 # [m]
-unknown_is_occupied: True
+
+# NON SUBT
+safe_obstacle_distance: 0.5 # [m]
+euclidean_distance_cutoff: 0.5 # [m]
+unknown_is_occupied: False
 
 subt_planner:
-  use: true
+  use: false
+
+max_waypoint_distance: -1.0 # [m] // or set negative for no padding
+
+# planning_tree:
+#   resolution: 0.125
+
+
+
+# SUBT
+# safe_obstacle_distance: 1.6 # [m]
+# euclidean_distance_cutoff: 1.6 # [m]
+# unknown_is_occupied: True
+
+# subt_planner:
+#   use: True
+

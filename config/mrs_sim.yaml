@@ -29,7 +29,7 @@ local_mapping:
   get_camera_calib_from_topic: False
   camera_info_topic: '/uav1/vio/camera/camera_info'
 
-  fake_freespace_pts_enabled: False
+  fake_freespace_pts_enabled: True
   fake_freespace_pts_dist: 15
   fake_freespace_min_parallax: 0.07
   fake_freespace_pts_always_active: False #DANGEROUS if True
@@ -91,6 +91,15 @@ exploration_safety_area:
   y_max: 15
   z_min: -1
   z_max: 6
+
+  # TOWERS WORLD 
+  # x_min: -80
+  # x_max: 5
+  # # y_min: -35
+  # y_min: -40
+  # y_max: 15
+  # z_min: -1
+  # z_max: 50
 
   # GARAGE 2
   # x_min: -80

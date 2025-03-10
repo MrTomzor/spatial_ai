@@ -37,13 +37,14 @@ class RandomExplorer:
         self.last_sent_goal_time = rospy.Time.now().to_sec()
 
         # Exploration bounds
-        self.local_random_sampling_dist = 15
+        self.local_random_sampling_dist = 10
         self.goal_timeout = 10
 
         boundmax = 100
         self.x_min, self.x_max = -boundmax, boundmax
         self.y_min, self.y_max = -boundmax, boundmax
-        self.z_level = 2.5  # Assume exploration at z = 1.0
+        self.z_min = 0  # Assume exploration at z = 1.0
+        self.z_max = 6  # Assume exploration at z = 1.0
         self.free_threshold = 1  # Distance to consider near a free space marker
 
 
@@ -136,7 +137,9 @@ class RandomExplorer:
                 y = robot_pos.y + random.uniform(-self.local_random_sampling_dist, self.local_random_sampling_dist)
                 # x = robot_pos.x
                 # y = robot_pos.y 
-                z = self.z_level + random.uniform(-2, 2)
+                # z = self.z_level + random.uniform(-2, 2)
+                z = random.uniform(self.z_min, self.z_max)
+                # z = random.uniform(2, 50)
             # else:
             #     x = random.uniform(self.x_min, self.x_max)
             #     y = random.uniform(self.y_min, self.y_max)
