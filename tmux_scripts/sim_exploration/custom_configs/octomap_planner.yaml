@@ -10,7 +10,7 @@ subt_planner:
 max_waypoint_distance: -1.0 # [m] // or set negative for no padding
 
 # planning_tree:
-#   resolution: 0.125
+#   resolution: 0.1
 
 
 

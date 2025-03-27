@@ -2,6 +2,9 @@
 #
 resolution: 0.5
 
+octomap_global_vis:
+  free_throttled_rate: 0.1
+
 local_map:
 
   # the bounding box distance of the local map

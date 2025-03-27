@@ -170,6 +170,7 @@ catkin_install_python(PROGRAMS
   scripts/tracking_node.py
   scripts/mrs_path_follower.py
   scripts/process_volume_and_goals_from_markers.py
+  scripts/draw_exploration_progress_graph.py
   scripts/pointcloud_transformer.py
   scripts/random_octomap_explorer.py
   # src/common_spatial.py

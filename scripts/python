@@ -1,0 +1,14 @@
+
+def read_data_from_txt(filename):
+    timestamps, explored_space, visited_vps, nonvisited_vps = [], [], [], []
+
+    with open(filename, mode='r') as file:
+        next(file)  # Skip header
+        for line in file:
+            t, v, visited, unvisited = line.strip().split(", ")
+            timestamps.append(float(t))
+            explored_space.append(float(v))
+            visited_vps.append(int(visited))
+            nonvisited_vps.append(int(unvisited))
+
+    return timestamps, explored_space, visited_vps, nonvisited_vps
