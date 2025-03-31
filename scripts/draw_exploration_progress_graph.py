@@ -10,7 +10,10 @@ def read_data_from_txt(filename):
         next(file)  # Skip header
         for line in file:
             # print(line)
-            t, v, visited, unvisited = line.strip().split(",")
+            # t, v, visited, unvisited = line.strip().split(",")
+            vals = line.strip().split(",")
+            t = vals[0]
+            v = vals[1]
             timestamps.append(float(t))
             explored_space.append(float(v))
             # visited_vps.append(int(visited))
@@ -39,7 +42,8 @@ def main():
         experiment = {}
         experiment['timestamps'] = timestamps
         experiment['explored_volumes'] = explored_volumes 
-        experiment['name'] = "Experiment " + str(i)
+        # experiment['name'] = "Experiment " + str(i)
+        experiment['name'] = filename
         datas.append(experiment)
     print(f"read {len(datas)} experiments")
     plot_exploration_progress(datas)

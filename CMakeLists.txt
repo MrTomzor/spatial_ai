@@ -205,6 +205,14 @@ catkin_install_python(PROGRAMS
 #   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 # )
 
+# install(DIRECTORY images launch meshes models rviz scripts urdf worlds
+#   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
+#   PATTERN "*~" EXCLUDE)
+
+install(FILES model.config
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
+)
+
 #############
 ## Testing ##
 #############

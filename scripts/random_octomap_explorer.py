@@ -37,7 +37,7 @@ class RandomExplorer:
         self.last_sent_goal_time = rospy.Time.now().to_sec()
 
         # Exploration bounds
-        self.local_random_sampling_dist = 10
+        self.local_random_sampling_dist = 30
         self.goal_timeout = 10
 
         boundmax = 100

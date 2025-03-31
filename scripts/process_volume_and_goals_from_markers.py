@@ -211,9 +211,10 @@ def main():
     endvals = {}
 
     # VOLUME PROC - get both octomap and sphere data
-    print("processing spheremaps volume")
-    timestamps_spheres, explored_space_spheres = process_explored_volume_spheres(bag, SPHERES_CELLSIZE, skip_factor)
-    endvals['Total Explored Volume Spheres'] = explored_space_spheres[-1]
+    # print("processing spheremaps volume")
+    # timestamps_spheres, explored_space_spheres = process_explored_volume_spheres(bag, SPHERES_CELLSIZE, skip_factor)
+    # if len(explored_space_spheres) > 0:
+    #     endvals['Total Explored Volume Spheres'] = explored_space_spheres[-1]
     
     print("processing octomap volume")
     timestamps_octomap, explored_space_octomap = process_explored_volume_octomap(bag, OCTOMAP_CELLSIZE, skip_factor)
