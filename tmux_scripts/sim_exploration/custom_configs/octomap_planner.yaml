@@ -1,19 +1,23 @@
 
 # NON SUBT
-# safe_obstacle_distance: 0.5 # [m]
-# euclidean_distance_cutoff: 0.5 # [m]
+safe_obstacle_distance: 0.4 # [m]
+euclidean_distance_cutoff: 0.4 # [m]
+unknown_is_occupied: False
+
+subt_planner:
+  use: false
+
+planning_tree:
+  resolution: 0.25
+
+# SUBT
+# safe_obstacle_distance: 1.6 # [m]
+# euclidean_distance_cutoff: 1.6 # [m]
 # unknown_is_occupied: True
 
 # subt_planner:
-#   use: false
+#   use: true
 
-# SUBT
-safe_obstacle_distance: 1.6 # [m]
-euclidean_distance_cutoff: 1.6 # [m]
-unknown_is_occupied: True
-
-subt_planner:
-  use: true
 
 max_waypoint_distance: -1.0 # [m] // or set negative for no padding
 

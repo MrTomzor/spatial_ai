@@ -25,7 +25,7 @@ windows:
         # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/garage2.sdf gui:=true
         # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/crane_world7.sdf gui:=true
         # - waitForRos; export GAZEBO_MODEL_PATH=/home/tom/unity_robotics_ws/src/; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/widecave2.world gui:=true
-        - waitForRos; export GAZEBO_MODEL_PATH=/home/tom/unity_robotics_ws/src/; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/scale1cave2.sdf gui:=true
+        - waitForRos; export GAZEBO_MODEL_PATH=/home/tom/unity_robotics_ws/src/; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/doublecave4.sdf gui:=true
         # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/towers.sdf gui:=true
         - waitForOdometry; gz camera -c gzclient_camera -f uav1; history -s gz camera -c gzclient_camera -f uav1
 
@@ -67,7 +67,7 @@ windows:
   - start_maneuver:
       layout: tiled
       panes:
-        - waitForOffboard; sleep 22; rosrun spatial_ai goforward2m.sh
+        - waitForOffboard; sleep 22; rosrun spatial_ai cave_start_maneuver.sh
   - VINS:
       layout: tiled
       panes:
@@ -89,6 +89,7 @@ windows:
         # - waitForSimulation; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-vio --pos -13 -50 2 1.57"
         # - waitForSimulation; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-vio --pos -8 -35 3 1.57"
         - waitForSimulation; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-vio --pos -20 -70 5 -1.57"
+        # - waitForSimulation; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-vio --pos -23 -65 5 -1.57"
         # - waitForSimulation; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-vio --pos 3 3 0 1.57"
         # - waitForSimulation; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-vio --pos 0 5 0 0"
         # - waitForSimulation; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-vio --pos 3 0 0 0"

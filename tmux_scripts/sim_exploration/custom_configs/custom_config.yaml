@@ -3,8 +3,8 @@ mrs_uav_trackers:
   landoff_tracker:
 
     vertical_tracker:
-      vertical_speed: 8.0
-      vertical_acceleration: 20.0
+      vertical_speed: 16.0
+      vertical_acceleration: 40.0
 
 mrs_uav_managers:
 

@@ -73,7 +73,7 @@ local_nav:
   min_num_frontiers_per_goal: 6
 
 exploration_safety_area:
-  enabled: True
+  enabled: False
 
   # WIDE WORLD 1
   # x_min: -50
