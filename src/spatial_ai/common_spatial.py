@@ -381,7 +381,7 @@ class SphereMap:
                 continue
 
             # CHECK IF GROUND
-            if fr_normal[2, 0] < -0.2:
+            if fr_normal[2, 0] < -0.5:
                 keep_frontiers_mask[i] = False
                 continue
 

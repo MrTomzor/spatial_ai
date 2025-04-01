@@ -141,6 +141,12 @@ class LocalNavigatorModule:
         self.roadmap_navigation_failed  = False
         self.roadmap_navigation_success = False
 
+        self.local_reconsidering_index = 0
+        self.max_local_reconsidering_index = 2
+
+        self.global_reconsidering_last_time = rospy.Time.now()
+        self.global_reconsidering_period  = 2
+
         self.local_nav_start_time = rospy.get_rostime()
         self.traj_min_duration = 10
 
@@ -201,6 +207,7 @@ class LocalNavigatorModule:
         # TODO
         raw_pts, path_cost = self.findPathAstarInSubmap(self.mapper.spheremap, planning_start_vp.position, goal_vp_smap.position, maxdist_to_graph_start=self.planning_clearing_dist ,maxdist_to_graph_end=self.goal_blocking_dist/2, min_safe_dist=self.min_planning_odist, max_safe_dist=self.max_planning_odist, safety_weight = self.safety_weight, clearing_dist = self.planning_clearing_dist)
         if raw_pts is None:
+            print("HEADINGPATH: no path without headings found")
             return None, None, None
         n_pts = raw_pts.shape[0]
 
@@ -1578,7 +1585,7 @@ class LocalNavigatorModule:
             reachable_nodes = self.getReachableNodes(self.mapper.spheremap, planning_start_vp.position, search_dist, maxdist_to_graph_start = self.planning_clearing_dist, min_safe_dist=self.min_planning_odist, max_safe_dist=self.max_planning_odist, safety_weight = self.safety_weight, clearing_dist = self.planning_clearing_dist)
 
             if reachable_nodes is not None and reachable_nodes.shape[0] > 0:
-                n_sampled_vps = 120
+                n_sampled_vps = 300
                 for i in range(n_sampled_vps):
 
                     # Create VP
@@ -1668,18 +1675,33 @@ class LocalNavigatorModule:
             # IF NONE FOUND, SWITCH TO GLOBAL SEARCH
             if global_goal_roadmap is None:
                 # print("EXPLORATION - NOW HAVE GOALS: " + str(self.exploration_goals.size))
-                print("EXPLORATION - NO GOALS REACHABLE found withing " + str(self.local_exploration_radius) + "m, finding paths to all goals")
+                self.local_reconsidering_index += 1
+                print("EXPLORATION - NO GOALS REACHABLE found withing " + str(self.local_exploration_radius) + "m. Reconsidering Index: " + str(self.local_reconsidering_index) + "/" + str(self.max_local_reconsidering_index))
+
+                if self.local_reconsidering_index <= self.max_local_reconsidering_index:
+                    return
+
+                print("EXPLORATION - reconsidering done, pathfinding to ALL goals")
                 global_goal_roadmap = self.getBestGoalRoadmap()
                 if global_goal_roadmap is None:
                     print("EXPLORATION - NO GOALS REACHABLE anywhere!!!")
                     # print("EXPLORATION - NOW HAVE GOALS: " + str(self.exploration_goals.size))
                     # print("N GOALS NOW:" + str(
+
+                    self.tryAddingGoalsNearby(current_vp_smap_frame, search_dist = 100)
                     return
+            else:
+                print("EXPLORATION - LOCAL GOAL FOUND!")
+                local_reconsidering_index = 0
 
             print("EXPLORATION - SETTING NEW ROADMAP TO GOAL!!!")
 
             # IF SOME IS GOOD, SET IT AS NAVGOAL AND FUCKING GO TO IT
             self.set_roadmap(global_goal_roadmap)
+        else:
+            # HAVE ROADMAP, BUT CAN RECONSIDER IF LONG AND LOCAL GOALS NEARBY!
+            # self.global_reconsidering_last_time
+            pass
 
     # # #}
 
