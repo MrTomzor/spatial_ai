@@ -43,8 +43,8 @@ windows:
       layout: tiled
       panes:
         # - waitForOdometry; rosrun spatial_ai ov_extension.py
-        - waitForOffboard; sleep 15; roslaunch spatial_ai mrs_openvins_explore.launch
-        # - waitForOffboard; roslaunch spatial_ai random_octomap_explorer.launch
+        # - waitForOffboard; sleep 15; roslaunch spatial_ai mrs_openvins_explore.launch custom_config:=./custom_configs/exploration_area_config.yaml
+        - waitForOffboard; roslaunch spatial_ai random_octomap_explorer.launch custom_config:=./custom_configs/exploration_area_config.yaml
   - octomap_pcl_retransform:
       layout: tiled
       panes:

@@ -73,49 +73,15 @@ local_nav:
   min_num_frontiers_per_goal: 9
 
 exploration_safety_area:
-  enabled: True
-
-  # WIDE WORLD 1
-  # x_min: -50
-  # x_max: 5
-  # y_min: -25
-  # y_max: 25
-  # z_min: -1
-  # z_max: 8
+  enabled: False
 
   # CRANE WORLD 
-  x_min: -50
-  x_max: 12
-  # y_min: -35
-  y_min: -40
+  x_min: -10
+  x_max: 10
+  y_min: -10
   y_max: 10
-  z_min: -1
-  z_max: 7
-
-  # TOWERS WORLD 
-  # x_min: -80
-  # x_max: 5
-  # # y_min: -35
-  # y_min: -40
-  # y_max: 15
-  # z_min: -1
-  # z_max: 50
-
-  # GARAGE 2
-  # x_min: -80
-  # x_max: 30
-  # y_min: -5
-  # y_max: 25
-  # z_min: -1
-  # z_max: 7
-
-  # GARAGE INSIDE
-  # x_min: -80
-  # x_max: -10
-  # y_min: -5
-  # y_max: 10
-  # z_min: -1
-  # z_max: 6
+  z_min: -10
+  z_max: 10
 
 global_nav:
   enabled: False
