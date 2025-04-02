@@ -38,7 +38,7 @@ class RandomExplorer:
         self.last_sent_goal_time = rospy.Time.now().to_sec()
 
         # Exploration bounds
-        self.local_random_sampling_dist = 10
+        self.local_random_sampling_dist = 20
         self.goal_timeout = 20
         self.safety_area_enabled = rospy.get_param("exploration_safety_area/enabled")
         self.safety_area_x_min = rospy.get_param("exploration_safety_area/x_min")

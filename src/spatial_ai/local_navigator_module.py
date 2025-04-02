@@ -1692,7 +1692,7 @@ class LocalNavigatorModule:
                     return
             else:
                 print("EXPLORATION - LOCAL GOAL FOUND!")
-                local_reconsidering_index = 0
+                self.local_reconsidering_index = 0
 
             print("EXPLORATION - SETTING NEW ROADMAP TO GOAL!!!")
 
