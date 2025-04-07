@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from visualization_msgs.msg import MarkerArray
 import csv
 import numpy as np
+import os
 
 OCTOMAP_FREESPACE_TOPICNAME = "/uav1/octomap_local_vis/free_cells_vis_array_throttled"
 SPHERES_FREESPACE_TOPICNAME = "/spheremap_freespace"
@@ -40,22 +41,21 @@ def mark_sphere_explored(grid, center, radius, cellsize):
 # def compute_free_space(markerarray, cell_size):
     # Get bounds
 
-def process_explored_volume_octomap(bag, cellsize, skip_factor):
+def process_explored_volume_octomap(bag, cellsize, proc_period):
     timestamps = []
     explored_space = []
     start_time = None
-    
-    process_every_nth = int(1 / skip_factor)
+    last_proc_time = None
+
     message_index = 0
     for topic, msg, t in bag.read_messages(topics=[OCTOMAP_FREESPACE_TOPICNAME ]):
+        if last_proc_time is None:
+            start_time = t.to_sec()
+            last_proc_time = start_time
 
-        if message_index % process_every_nth == 0:
+        if t.to_sec() - last_proc_time > proc_period:
+            last_proc_time = t.to_sec()
             # print("PROC, index: " + str(message_index))
-            if start_time is None:
-                start_time = t.to_sec()
-            
-            # print("MSG, n markers: " + str(len(msg.markers)))
-
             explored_volume = 0
             marker_sizes = []
             # EACH MARKER - CUBE ARRAY
@@ -90,20 +90,21 @@ def process_explored_volume_octomap(bag, cellsize, skip_factor):
 
     return timestamps, explored_space
 
-def process_explored_volume_spheres(bag, cellsize, skip_factor):
+def process_explored_volume_spheres(bag, cellsize, proc_period):
     timestamps = []
     explored_space = []
     start_time = None
+    last_proc_time = None
     grid = {}
     
-    process_every_nth = int(1 / skip_factor)
     message_index = 0
     for topic, msg, t in bag.read_messages(topics=[SPHERES_FREESPACE_TOPICNAME ]):
+        if last_proc_time is None:
+            start_time = t.to_sec()
+            last_proc_time = start_time
 
-        if message_index % process_every_nth == 0:
-            # print("PROC, index: " + str(message_index))
-            if start_time is None:
-                start_time = t.to_sec()
+        if t.to_sec() - last_proc_time > proc_period:
+            last_proc_time = t.to_sec()
             
             # print("MSG, n markers: " + str(len(msg.markers)))
             # total_radius = sum(marker.scale.x / 2.0 for marker in msg.markers)  # Assuming scale.x is diameter
@@ -128,13 +129,14 @@ def process_explored_volume_spheres(bag, cellsize, skip_factor):
 
     return timestamps, explored_space
 
-def process_visited_goals(bag, skip_factor):
+def process_visited_goals(bag, proc_period):
     timestamps = []
     visited_vps = []
     nonvisited_vps = []
     start_time = None
     
-    process_every_nth = int(1 / skip_factor)
+    #TODO - fix with proc_period
+    process_every_nth = int(1 / proc_period)
     message_index = 0
     for topic, msg, t in bag.read_messages(topics=[GOALS_TOPICNAME]):
 
@@ -192,34 +194,31 @@ def save_data_to_csv(filename, timestamps, explored_space):
             writer.writerow([t, v])
     print(f"Data saved to {filename}")
 
-def main():
-    if len(sys.argv) < 2:
-        print("Usage: rosrun your_package script.py <bagfile_path> <>")
-        sys.exit(1)
-    
-    bagfile_path = sys.argv[1]
-    output_data_path_spheres = bagfile_path + "_processed_spheres.txt"
-    output_data_path_octomap = bagfile_path + "_processed_octomap.txt"
-    skip_factor = float(sys.argv[2])
-
+def process_and_save_bagfile_data(bagfile_path, proc_period, do_octomap = False, show_res = False):
     try:
         bag = rosbag.Bag(bagfile_path, 'r')
+        print(f"Opened bag in file {bagfile_path}")
     except Exception as e:
-        print(f"Error opening bag file: {e}")
-        sys.exit(1)
+        print(f"!!!! - Error opening bag file: {e}")
+        return False
 
     endvals = {}
+    timestamps = []
+    explored = []
 
-    # VOLUME PROC - get both octomap and sphere data
-    # print("processing spheremaps volume")
-    # timestamps_spheres, explored_space_spheres = process_explored_volume_spheres(bag, SPHERES_CELLSIZE, skip_factor)
-    # if len(explored_space_spheres) > 0:
-    #     endvals['Total Explored Volume Spheres'] = explored_space_spheres[-1]
-    
-    print("processing octomap volume")
-    timestamps_octomap, explored_space_octomap = process_explored_volume_octomap(bag, OCTOMAP_CELLSIZE, skip_factor)
-    endvals['Total Explored Volume Octomap'] = explored_space_octomap[-1]
-    # plot_explored_space_spheres(timestamps, explored_space_spheres)
+    # VOLUME PROC - get octomap OR sphere data
+    if not do_octomap:
+        print("processing spheremap volume")
+        timestamps, explored_space = process_explored_volume_spheres(bag, SPHERES_CELLSIZE, proc_period)
+    else:
+        print("processing octomap volume")
+        timestamps, explored_space = process_explored_volume_octomap(bag, OCTOMAP_CELLSIZE, proc_period)
+    if len(explored_space ) > 0:
+        endvals['Total Explored Volume'] = explored_space[-1]
+
+    # SHOW GRAPH
+    if show_res:
+        plot_explored_space(timestamps, explored_space)
 
 
     # GOALS PROC
@@ -236,10 +235,47 @@ def main():
 
 
     # SAVE DATA
-    # save_data_to_csv(output_data_path_spheres, timestamps_spheres, explored_space_spheres)
-    save_data_to_csv(output_data_path_octomap, timestamps_octomap, explored_space_octomap)
-
+    output_data_path = bagfile_path + "_processed_octomap.txt" if do_octomap else bagfile_path + "_processed_spheres.txt"
+    save_data_to_csv(output_data_path, timestamps, explored_space)
     bag.close()
 
+    return True
+
+def process_all_bags_in_path(rootpath, proc_period):
+    # GET ALL BAGFILES
+    bag_files = []
+    for dirpath, dirnames, filenames in os.walk(rootpath):
+        for file in filenames:
+            if file.endswith(".bag") and not file.endswith(".bag.") and file.count(".bag") == 1:
+                full_path = os.path.join(dirpath, file)
+                bag_files.append(full_path)
+    print("N found files: " + str(len(bag_files)))
+
+    # GO THRU ALL
+    for bag_file in bag_files:
+        print(f"\nProcessing file: {bag_file}")
+        basename = os.path.basename(bag_file)
+
+        do_octomap = False
+        if "astar" in basename:
+            do_octomap = True
+
+        process_and_save_bagfile_data(bag_file, proc_period, do_octomap, show_res = True)
+
+    return True
+
+def main():
+    if len(sys.argv) == 2:
+        print("Processing all bags in the run path")
+        proc_period = float(sys.argv[1])
+        current_path = os.getcwd()
+        process_all_bags_in_path(current_path, proc_period)
+    elif len(sys.argv > 2):
+        print("Processing one bag:")
+        process_and_save_bagfile_data(sys.argv[1], float(sys.argv[2]), do_octomap = True, show_res = False)
+    else:
+        print("Usage: rosrun your_package script.py <bagfile_path> <proc_period> /OR/ script.py <proc_period> to process all nearby pts")
+        return
+    
 if __name__ == "__main__":
     main()
