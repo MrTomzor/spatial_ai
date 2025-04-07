@@ -66,7 +66,8 @@ local_nav:
   # exploration_goal_blocking_dist: 7
   exploration_goal_blocking_dist: 5
 
-  predicted_trajectory_topic: '/uav1/control_manager/mpc_tracker/prediction_full_state'
+  # predicted_trajectory_topic: '/uav1/control_manager/mpc_tracker/prediction_full_state'
+  predicted_trajectory_topic: '/uav1/control_manager/mpc_tracker/predicted_trajectory_debugging'
   output_path_topic: '/uav1/trajectory_generation/path'
 
   frontier_visibility_dist: 10

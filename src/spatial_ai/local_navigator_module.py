@@ -26,6 +26,7 @@ import trimesh
 
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import PoseWithCovarianceStamped
+from geometry_msgs.msg import PoseArray
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
@@ -130,7 +131,8 @@ class LocalNavigatorModule:
 
 
         # PREDICTED TRAJ
-        self.sub_predicted_trajectory = rospy.Subscriber(ptraj_topic, mrs_msgs.msg.MpcPredictionFullState, self.predicted_trajectory_callback, queue_size=10000)
+        # self.sub_predicted_trajectory = rospy.Subscriber(ptraj_topic, mrs_msgs.msg.MpcPredictionFullState, self.predicted_trajectory_callback, queue_size=10000)
+        self.sub_predicted_trajectory = rospy.Subscriber(ptraj_topic, PoseArray, self.predicted_trajectory_callback, queue_size=10000)
         self.predicted_trajectory_pts_global = None
 
         # PLANNING PARAMS
@@ -947,12 +949,38 @@ class LocalNavigatorModule:
         return smap.points[np.array(path), :], g_score[end_node_index]
 # # #}
 
-    def quick_replanning_iter(self, spheremap_copy):# # #{
+    def quick_replanning_iter(self, smap):# # #{
         # CUT SPHEREMAP? (or not!)
+        if smap is None:
+            return
 
         # GET PREDICTED TRAJ OR LAST PATH
+        T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
+        T_smap_origin_to_fcu = np.linalg.inv(smap.T_global_to_own_origin) @ T_global_to_fcu
+        current_pos = T_global_to_fcu[:3, 3].T
+        current_heading = transformationMatrixToHeading(T_global_to_fcu)
+        planning_start_vp = Viewpoint(current_pos, current_heading)
+
+        # Get path to check
+        future_pts, future_headings, relative_times = self.get_future_predicted_trajectory_global_frame()
+        if future_pts is None:
+            return
+        dist_pred = np.linalg.norm(future_pts[-1] - current_pos)
+        rospy.loginfo("Dist pred: " + str(dist_pred))
+        rospy.loginfo("future pts: " + str(future_pts.size / 3))
+
+        # Check path
+        unsafe_idxs, odists = self.find_unsafe_pt_idxs_on_global_path(future_pts, future_headings, self.safety_replanning_trigger_odist, -1, smap)
+        if len(unsafe_idxs) == 0:
+            return
+
+        rospy.logwarn("some unsafety found! at index: " + str(unsafe_idxs[0]))
 
         # PUBLISH UNSAFETY MARKER
+        arrow_pos2 = future_pts[unsafe_idxs[0], :]
+        arrow_pos = copy.deepcopy(arrow_pos2)
+        arrow_pos[2] -= 10
+        self.visualize_arrow(arrow_pos.flatten(), arrow_pos2.flatten(), r=0.5, scale=0.8, marker_idx=1)
         
         # ACT - SEND REFERENCE/TRAJ TO SAVE DRONE
 
@@ -1003,8 +1031,12 @@ class LocalNavigatorModule:
     def predicted_trajectory_callback(self, msg):# # #{
         with ScopedLock(self.predicted_traj_mutex):
             # PARSE THE MSG
-            pts = np.array([[pt.x, pt.y, pt.z] for pt in msg.position])
-            headings = np.array([h for h in msg.heading])
+            # pts = np.array([[pt.x, pt.y, pt.z] for pt in msg.position])
+            # headings = np.array([h for h in msg.heading])
+            # rospy.logwarn("got pts in pred traj: " + str(len(msg.poses)))
+
+            pts = np.array([[pose.position.x, pose.position.y, pose.position.z] for pose in msg.poses])
+            headings = np.array([0 for pose in msg.poses]) #FIXME
             msg_frame = msg.header.frame_id
 
             # GET CURRENT ODOM MSG
@@ -1020,10 +1052,13 @@ class LocalNavigatorModule:
 
             # print("PTS FCU: ")
             pts_fcu, headings_fcu = transformViewpoints(pts_global, headings_global, T_fcu_to_global)
+
+            # rospy.logwarn("global: " + str(pts_global.shape))
             # print(pts_fcu)
             # print(headings_fcu)
 
-            self.predicted_trajectory_stamps = msg.stamps
+            # self.predicted_trajectory_stamps = msg.stamps
+            self.predicted_trajectory_stamps = [msg.header.stamp for pose in msg.poses]  #FIXME
             self.predicted_trajectory_pts_global = pts_global
             self.predicted_trajectory_headings_global = headings_global
 
@@ -1053,14 +1088,15 @@ class LocalNavigatorModule:
 
         n_pred_pts = pts.shape[0]
 
-        first_future_index = -1
-        for i in range(n_pred_pts):
-            if (stamps[i] - now).to_sec() > 0:
-                first_future_index = i
-                break
-        if first_future_index == -1:
-            print("WARN! - predicted trajectory is pretty old!")
-            return None, None, None
+        first_future_index = 0
+        # first_future_index = -1
+        # for i in range(n_pred_pts):
+        #     if (stamps[i] - now).to_sec() > 0:
+        #         first_future_index = i
+        #         break
+        # if first_future_index == -1:
+        #     print("WARN! - predicted trajectory is pretty old!")
+        #     return None, None, None
 
         pts_global = pts[first_future_index:, :]
         headings_global = headings[first_future_index:]
@@ -1070,18 +1106,19 @@ class LocalNavigatorModule:
 
     # # #}
 
-    def find_unsafe_pt_idxs_on_global_path(self, pts_global, headings_global, min_odist, clearing_dist = -1, other_submap_idxs = None):# # #{
+    def find_unsafe_pt_idxs_on_global_path(self, pts_global, headings_global, min_odist, clearing_dist = -1, smap = None, other_submap_idxs = None):# # #{
         n_pts = pts_global.shape[0]
         res = []
 
-        pts_in_smap_frame = transformPoints(pts_global, np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin))
+        pts_in_smap_frame = transformPoints(pts_global, np.linalg.inv(smap.T_global_to_own_origin))
         dists_from_start = np.linalg.norm(pts_global - pts_global[0, :], axis=1)
 
         odists = []
         for i in range(n_pts):
-            odist_fs = self.mapper.spheremap.getMaxDistToFreespaceEdge(pts_in_smap_frame[i, :]) * self.fspace_bonus_mod
-            odist_surf = self.mapper.spheremap.getMinDistToSurfaces(pts_in_smap_frame[i, :])
-            odist = min(odist_fs, odist_surf)
+            # odist_fs = smap.getMaxDistToFreespaceEdge(pts_in_smap_frame[i, :]) * self.fspace_bonus_mod
+            odist_surf = smap.getMinDistToSurfaces(pts_in_smap_frame[i, :])
+            # odist = min(odist_fs, odist_surf)
+            odist = odist_surf    
             print("CHECKING ODIST: " + str(odist))
 
             odists.append(odist)
@@ -1260,7 +1297,10 @@ class LocalNavigatorModule:
 
         if not future_pts is None:
             future_pts_dists = np.linalg.norm(future_pts - current_pos, axis=1)
-            unsafe_idxs, odists = self.find_unsafe_pt_idxs_on_global_path(future_pts, future_headings, self.safety_replanning_trigger_odist, -1)
+
+        # if not future_pts is None:
+        if False:
+            unsafe_idxs, odists = self.find_unsafe_pt_idxs_on_global_path(future_pts, future_headings, self.safety_replanning_trigger_odist, -1, self.mapper.spheremap)
             if unsafe_idxs.size > 0:
 
                 time_to_unsafety = relative_times[unsafe_idxs[0]]
@@ -1349,13 +1389,16 @@ class LocalNavigatorModule:
 
         # GET THE START POSE ALONG PREDICTED TRAJECTORY UP TO planning_time IN THE FUTURE
         if not future_pts is None:
-            after_planning_time = relative_times > planning_time + 0.2
-            start_idx = None
-            if not np.any(after_planning_time):
-                start_idx = relative_times.size - 1
-                pass
-            else:
-                start_idx = np.where(after_planning_time)[0][0]
+            print("shape of future pts:" ) 
+            print(future_pts.shape)
+            # after_planning_time = relative_times > planning_time + 0.2
+            # start_idx = None
+            # if not np.any(after_planning_time):
+            #     start_idx = relative_times.size - 1
+            #     pass
+            # else:
+            #     start_idx = np.where(after_planning_time)[0][0]
+            start_idx = 0
             print("ROADMAP - HAVE FUTURE PTS, PLANNING FROM VP OF INDEX " + str(start_idx) + " AT DIST " + str(future_pts_dists[start_idx]))
             startpos_smap_frame, startheading_smap_frame = transformViewpoints(future_pts[start_idx, :].reshape((1,3)), np.array([future_headings[start_idx]]), np.linalg.inv(self.mapper.spheremap.T_global_to_own_origin))
             planning_start_vp = Viewpoint(startpos_smap_frame, startheading_smap_frame[0])

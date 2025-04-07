@@ -312,6 +312,11 @@ class NavNode:
         print("PLANNING ITER")
         if not self.node_initialized:
             return
+
+        # HIGH RATE OBSTACLE AVOIDANCE
+        self.local_navigator_module.quick_replanning_iter(self.smap_copy)
+
+        # SLOW LONG PLANNING
         if self.n_plan_iters_without_smap_update > 1:
             print("NOT LOCAL NAVING, GIVING SMAP BUILDER CHANCE TO UPDATE!")
             return
@@ -392,7 +397,10 @@ class NavNode:
         # print("SMAP ITER")
         self.submap_builder_module.camera_update_iter(pcl_msg, points_info) 
         rospy.loginfo("copying spheremap")
+        interm_time2 = time.time()
         self.smap_copy = copy.deepcopy(self.submap_builder_module.spheremap)
+        copy_dt = time.time() - interm_time2
+        print("SMAP COPY DT: " + str((copy_dt) * 1000) +  " ms")
         rospy.loginfo("done copying spheremap")
 
         # print("SMAP ITER DONE")
