@@ -249,18 +249,21 @@ def process_all_bags_in_path(rootpath, proc_period):
             if file.endswith(".bag") and not file.endswith(".bag.") and file.count(".bag") == 1:
                 full_path = os.path.join(dirpath, file)
                 bag_files.append(full_path)
-    print("N found files: " + str(len(bag_files)))
+    nfiles = len(bag_files)
+    print("N found files: " + str(nfiles))
 
     # GO THRU ALL
+    index = 0
     for bag_file in bag_files:
-        print(f"\nProcessing file: {bag_file}")
+        index += 1
+        print(f"\nProcessing file {index}/{nfiles}: {bag_file}")
         basename = os.path.basename(bag_file)
 
         do_octomap = False
         if "astar" in basename:
             do_octomap = True
 
-        process_and_save_bagfile_data(bag_file, proc_period, do_octomap, show_res = True)
+        process_and_save_bagfile_data(bag_file, proc_period, do_octomap)
 
     return True
 
@@ -272,7 +275,7 @@ def main():
         process_all_bags_in_path(current_path, proc_period)
     elif len(sys.argv > 2):
         print("Processing one bag:")
-        process_and_save_bagfile_data(sys.argv[1], float(sys.argv[2]), do_octomap = True, show_res = False)
+        process_and_save_bagfile_data(sys.argv[1], float(sys.argv[2]), do_octomap = True)
     else:
         print("Usage: rosrun your_package script.py <bagfile_path> <proc_period> /OR/ script.py <proc_period> to process all nearby pts")
         return
