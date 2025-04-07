@@ -947,6 +947,17 @@ class LocalNavigatorModule:
         return smap.points[np.array(path), :], g_score[end_node_index]
 # # #}
 
+    def quick_replanning_iter(self, spheremap_copy):# # #{
+        # CUT SPHEREMAP? (or not!)
+
+        # GET PREDICTED TRAJ OR LAST PATH
+
+        # PUBLISH UNSAFETY MARKER
+        
+        # ACT - SEND REFERENCE/TRAJ TO SAVE DRONE
+
+    # # #}
+
     def planning_loop_iter(self):# # #{
         # TODO - service to toggle this
         if not self.planning_enabled:
@@ -966,7 +977,9 @@ class LocalNavigatorModule:
 
                 self.tryAddingGoalsNearby(current_vp_smap_frame)
                 self.visualize_exploration_goals()
-                self.exploration_logic()
+                rerun_following_iter = self.exploration_logic()
+                if rerun_following_iter:
+                    self.roadmap_following_iter()
 
             # HOMING LOGIC
             elif self.main_state == 'homing':
@@ -1656,7 +1669,7 @@ class LocalNavigatorModule:
             print("ROADMAP NAV TO EXPLORATION GLOBAL GOAL FAILED")
             self.stop_following_roadmap_and_stop()
             self.tryAddingGoalsNearby(current_vp_smap_frame, search_dist = 10, planning_time = 0.2)
-            return
+            return False
 
         elif self.roadmap_navigation_success:
 
@@ -1689,7 +1702,7 @@ class LocalNavigatorModule:
                     # print("N GOALS NOW:" + str(
 
                     self.tryAddingGoalsNearby(current_vp_smap_frame, search_dist = 100)
-                    return
+                    return True
             else:
                 print("EXPLORATION - LOCAL GOAL FOUND!")
                 self.local_reconsidering_index = 0
@@ -1702,6 +1715,8 @@ class LocalNavigatorModule:
             # HAVE ROADMAP, BUT CAN RECONSIDER IF LONG AND LOCAL GOALS NEARBY!
             # self.global_reconsidering_last_time
             pass
+
+        return False
 
     # # #}
 

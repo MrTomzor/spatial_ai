@@ -12,7 +12,7 @@ import os
 OCTOMAP_FREESPACE_TOPICNAME = "/uav1/octomap_local_vis/free_cells_vis_array_throttled"
 SPHERES_FREESPACE_TOPICNAME = "/spheremap_freespace"
 GOALS_TOPICNAME = "/exploration_goals"
-SPHERES_CELLSIZE = 1
+SPHERES_CELLSIZE = 3
 OCTOMAP_CELLSIZE = 0.5
 
 def world_to_grid(coord, cellsize):
@@ -24,22 +24,78 @@ def mark_sphere_explored(grid, center, radius, cellsize):
     x_c, y_c, z_c = center
     r_cells = int(radius / cellsize)  # Radius in grid cells
 
-    # Iterate over grid cells inside the bounding box
+    # # Iterate over grid cells inside the bounding box
+    # for x in range(world_to_grid(x_c - radius, cellsize), world_to_grid(x_c + radius, cellsize) + 1):
+    #     for y in range(world_to_grid(y_c - radius, cellsize), world_to_grid(y_c + radius, cellsize) + 1):
+    #         for z in range(world_to_grid(z_c - radius, cellsize), world_to_grid(z_c + radius, cellsize) + 1):
+    #             # Convert grid indices back to world coordinates
+    #             x_w = x * cellsize
+    #             y_w = y * cellsize
+    #             z_w = z * cellsize
+                
+    #             # Check if the grid cell center is inside the sphere
+    #             if (x_w - x_c) ** 2 + (y_w - y_c) ** 2 + (z_w - z_c) ** 2 <= radius ** 2:
+    #                 grid[(x, y, z)] = True  # Store in hash map (dictionary)
+
+    # 2D - Iterate over grid cells inside the bounding box
     for x in range(world_to_grid(x_c - radius, cellsize), world_to_grid(x_c + radius, cellsize) + 1):
         for y in range(world_to_grid(y_c - radius, cellsize), world_to_grid(y_c + radius, cellsize) + 1):
-            for z in range(world_to_grid(z_c - radius, cellsize), world_to_grid(z_c + radius, cellsize) + 1):
-                # Convert grid indices back to world coordinates
-                x_w = x * cellsize
-                y_w = y * cellsize
-                z_w = z * cellsize
-                
-                # Check if the grid cell center is inside the sphere
-                if (x_w - x_c) ** 2 + (y_w - y_c) ** 2 + (z_w - z_c) ** 2 <= radius ** 2:
-                    grid[(x, y, z)] = True  # Store in hash map (dictionary)
+            # Convert grid indices back to world coordinates
+            x_w = x * cellsize
+            y_w = y * cellsize
+            
+            # Check if the grid cell center is inside the sphere
+            if (x_w - x_c) ** 2 + (y_w - y_c) ** 2 <= radius ** 2:
+                grid[(x, y)] = True  # Store in hash map (dictionary)
 
 
 # def compute_free_space(markerarray, cell_size):
     # Get bounds
+
+def process_explored_volume_octomap_gridmarking(bag, cellsize, gridmarking_cellsize, proc_period):
+    timestamps = []
+    explored_space = []
+    start_time = None
+    last_proc_time = None
+    grid = {}
+
+    message_index = 0
+    for topic, msg, t in bag.read_messages(topics=[OCTOMAP_FREESPACE_TOPICNAME ]):
+        if last_proc_time is None:
+            start_time = t.to_sec()
+            last_proc_time = start_time
+
+        if t.to_sec() - last_proc_time > proc_period:
+            last_proc_time = t.to_sec()
+            explored_volume = 0
+            marker_sizes = []
+
+            # EACH MARKER = CUBE ARRAY
+            index = 0
+            for marker in msg.markers:
+                sidelen_mod = (len(msg.markers) - index)
+                sidelen = OCTOMAP_CELLSIZE * sidelen_mod
+                cube_volume = np.power(sidelen, 3) 
+                n_cubes = len(marker.points)
+
+                for pt in marker.points:
+                    center = (pt.x, pt.y, pt.z)
+                    mark_sphere_explored(grid, center, sidelen, gridmarking_cellsize)
+                index += 1
+
+            # Compute explored volume
+            explored_cells = len(grid)  # Unique occupied cells
+            explored_volume = explored_cells * (gridmarking_cellsize ** 3)
+            print("Explored volume: " + str(explored_volume))
+
+            # add data
+            timestamps.append(t.to_sec() - start_time)
+            explored_space.append(explored_volume)
+
+        message_index += 1
+
+    return timestamps, explored_space
+
 
 def process_explored_volume_octomap(bag, cellsize, proc_period):
     timestamps = []
@@ -65,19 +121,9 @@ def process_explored_volume_octomap(bag, cellsize, proc_period):
                 sidelen_mod = (len(msg.markers) - index)
                 cube_volume = np.power(OCTOMAP_CELLSIZE * sidelen_mod, 3) 
                 n_cubes = len(marker.points)
-                # print(marker.type)
-                # print("sidelen_mod:" + str(sidelen_mod))
-                # print("vol:" + str(cube_volume))
-                # print("cubes:" + str(n_cubes))
 
                 explored_volume += n_cubes * cube_volume
                 index += 1
-
-            # marker_sizes = np.array(marker_sizes)
-            # marker_sizes_unique = np.unique(marker_sizes)
-            # print("UNIQUE SIZES:") 
-            # print(marker_sizes_unique)
-
 
             # Compute explored volume
             print("Explored volume: " + str(explored_volume))
@@ -212,7 +258,8 @@ def process_and_save_bagfile_data(bagfile_path, proc_period, do_octomap = False,
         timestamps, explored_space = process_explored_volume_spheres(bag, SPHERES_CELLSIZE, proc_period)
     else:
         print("processing octomap volume")
-        timestamps, explored_space = process_explored_volume_octomap(bag, OCTOMAP_CELLSIZE, proc_period)
+        # timestamps, explored_space = process_explored_volume_octomap(bag, OCTOMAP_CELLSIZE, proc_period)
+        timestamps, explored_space = process_explored_volume_octomap_gridmarking(bag, OCTOMAP_CELLSIZE, SPHERES_CELLSIZE, proc_period)
     if len(explored_space ) > 0:
         endvals['Total Explored Volume'] = explored_space[-1]
 

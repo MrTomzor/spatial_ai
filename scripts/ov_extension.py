@@ -131,7 +131,7 @@ class NavNode:
         self.submap_builder_rate = 10
         self.submap_builder_timer = rospy.Timer(rospy.Duration(1.0 / self.submap_builder_rate), self.submap_builder_update_iter)
 
-        self.planning_frequency = 0.5
+        self.planning_frequency = 5
         self.planning_timer = rospy.Timer(rospy.Duration(1.0 / self.planning_frequency), self.planning_loop_iter)
 
         self.global_nav_frequency = 2
@@ -258,6 +258,7 @@ class NavNode:
         self.fire_slam_module = FireSLAMModule(self.width, self.height, self.K, self.camera_frame, self.odom_frame, self.tf_listener, self.camera_info)
 
         # SUBMAP BUILDER
+        self.smap_copy = None
         self.submap_builder_input_mutex = threading.Lock()
         self.submap_builder_input_pcl = None
         self.submap_builder_input_point_ids = None
@@ -390,6 +391,10 @@ class NavNode:
 
         # print("SMAP ITER")
         self.submap_builder_module.camera_update_iter(pcl_msg, points_info) 
+        rospy.loginfo("copying spheremap")
+        self.smap_copy = copy.deepcopy(self.submap_builder_module.spheremap)
+        rospy.loginfo("done copying spheremap")
+
         # print("SMAP ITER DONE")
         self.n_plan_iters_without_smap_update = 0
         self.n_smap_iters_since_last_planning += 1
