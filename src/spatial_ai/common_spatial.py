@@ -767,7 +767,8 @@ class SphereMap:
             idxs = np.arange(self.points.shape[0])[checked_other_sphere_idxs]
             distvectors = self.points[idxs, :] - position
             norms = np.linalg.norm(distvectors, axis=1)
-            intersecting_inner = norms < self.radii + radius
+            sphere_intersection_reserve = 0.1
+            intersecting_inner = norms < self.radii + radius - sphere_intersection_reserve
             # TODO - some minimal radius of intersection!! (IN SEPARATE FUNCTION!!)
 
             res_mask[idxs] = intersecting_inner

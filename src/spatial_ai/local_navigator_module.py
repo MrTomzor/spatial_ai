@@ -92,6 +92,10 @@ class LocalNavigatorModule:
         # OUTPUT PATH PUB
         self.path_for_trajectory_generator_pub = rospy.Publisher(output_path_topic, mrs_msgs.msg.Path, queue_size=10)
 
+        # OUTPUT REFERENCE PUB
+        self.control_reference_pub = rospy.Publisher("/uav1/control_manager/reference", mrs_msgs.msg.ReferenceStamped, queue_size=10) #FIXME parametrize
+
+
         # VIS PUB
         # vis_prefix = "AAA/"
         vis_prefix = ""
@@ -970,7 +974,7 @@ class LocalNavigatorModule:
         rospy.loginfo("future pts: " + str(future_pts.size / 3))
 
         # Check path
-        unsafe_idxs, odists = self.find_unsafe_pt_idxs_on_global_path(future_pts, future_headings, self.safety_replanning_trigger_odist, -1, smap)
+        unsafe_idxs, odists = self.find_unsafe_pt_idxs_on_global_path(future_pts, future_headings, self.safety_replanning_trigger_odist, self.planning_clearing_dist, smap)
         if len(unsafe_idxs) == 0:
             return
 
@@ -983,6 +987,7 @@ class LocalNavigatorModule:
         self.visualize_arrow(arrow_pos.flatten(), arrow_pos2.flatten(), r=0.5, scale=0.8, marker_idx=1)
         
         # ACT - SEND REFERENCE/TRAJ TO SAVE DRONE
+        self.stop_following_roadmap_and_stop(do_hardstop = True)
 
     # # #}
 
@@ -1119,7 +1124,7 @@ class LocalNavigatorModule:
             odist_surf = smap.getMinDistToSurfaces(pts_in_smap_frame[i, :])
             # odist = min(odist_fs, odist_surf)
             odist = odist_surf    
-            print("CHECKING ODIST: " + str(odist))
+            # print("CHECKING ODIST: " + str(odist))
 
             odists.append(odist)
             if odist < min_odist and dists_from_start[i] > clearing_dist:
@@ -1478,7 +1483,12 @@ class LocalNavigatorModule:
         self.last_carrot_update = rospy.Time.now()
     # # #}
 
-    def stop_following_roadmap_and_stop(self):# # #{
+    def hardstop(self):# # #{
+        self.send_path_to_trajectory_generator(np.zeros((1,3)), [0])
+
+    # # #}
+
+    def stop_following_roadmap_and_stop(self, do_hardstop = False):# # #{
         # RESET ROADMAP STUFF
         self.roadmap = None
         self.roadmap_navigation_failed = False
@@ -1486,9 +1496,25 @@ class LocalNavigatorModule:
         self.roadmap_index = 0
 
         # SEND CURRENT POSE AS REFERENCE
+        rospy.loginfo("STOPPING!")
         T_global_to_fcu = lookupTransformAsMatrix(self.odom_frame, self.fcu_frame, self.tf_listener)
+
+        if do_hardstop:
+            self.hardstop()
+
         # self.send_path_to_trajectory_generator(T_global_to_fcu[:3,3].T.reshape((1,3)), [transformationMatrixToHeading(T_global_to_fcu)])
-        print(" KINDA STOPPING ")
+
+        # pos = T_global_to_fcu[:3,3].T.reshape((1,3)).flatten()
+        # heading = transformationMatrixToHeading(T_global_to_fcu)
+
+        # ref = mrs_msgs.msg.ReferenceStamped()
+        # ref.header.stamp = rospy.Time.now()
+        # ref.header.frame_id = self.odom_frame
+        # ref.reference.position.x = pos[0]
+        # ref.reference.position.y = pos[1]
+        # ref.reference.position.z = pos[2]
+        # ref.reference.heading = heading
+        # self.control_reference_pub.publish(ref)
     # # #}
 
 

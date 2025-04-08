@@ -43,24 +43,24 @@ windows:
       layout: tiled
       panes:
         # - waitForOdometry; rosrun spatial_ai ov_extension.py
-        - waitForOffboard; sleep 15; roslaunch spatial_ai mrs_openvins_explore.launch custom_config:=./custom_configs/exploration_area_config.yaml
-        # - waitForOffboard; roslaunch spatial_ai random_octomap_explorer.launch custom_config:=./custom_configs/exploration_area_config.yaml
+        # - waitForOffboard; sleep 15; roslaunch spatial_ai mrs_openvins_explore.launch custom_config:=./custom_configs/exploration_area_config.yaml
+        - waitForOffboard; roslaunch spatial_ai random_octomap_explorer.launch custom_config:=./custom_configs/exploration_area_config.yaml
   - octomap_pcl_retransform:
       layout: tiled
       panes:
         # - waitForOdometry; rosrun spatial_ai ov_extension.py
         - waitForHw; rosrun spatial_ai pointcloud_transformer.py
-  # - mapplan:
-  #     layout: tiled
-  #     panes:
-  #       - waitForHw; roslaunch spatial_ai mapplan.launch
-  #         config_octomap_server:=./custom_configs/octomap_server.yaml
-  #         config_octomap_planner:=./custom_configs/octomap_planner.yaml
-  #         # custom_config:=./custom_configs/custom_config.yaml
-  #         # config_octomap_planner:=./config/octomap_planner.yaml
-  #         # config_pcl_filter_ouster:=./config/ouster_filter_mapping.yaml
-  #         # config_pcl_filter_rs_front:=./config/rs_front_filter.yaml
-  #         # config_pcl_filter_rs_down:=./config/rs_down_filter.yaml
+  - mapplan:
+      layout: tiled
+      panes:
+        - waitForHw; roslaunch spatial_ai mapplan.launch
+          config_octomap_server:=./custom_configs/octomap_server.yaml
+          config_octomap_planner:=./custom_configs/octomap_planner.yaml
+          # custom_config:=./custom_configs/custom_config.yaml
+          # config_octomap_planner:=./config/octomap_planner.yaml
+          # config_pcl_filter_ouster:=./config/ouster_filter_mapping.yaml
+          # config_pcl_filter_rs_front:=./config/rs_front_filter.yaml
+          # config_pcl_filter_rs_down:=./config/rs_down_filter.yaml
   - exploration_start:
       layout: tiled
       panes:
