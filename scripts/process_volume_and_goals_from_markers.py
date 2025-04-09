@@ -12,8 +12,12 @@ import os
 OCTOMAP_FREESPACE_TOPICNAME = "/uav1/octomap_local_vis/free_cells_vis_array_throttled"
 SPHERES_FREESPACE_TOPICNAME = "/spheremap_freespace"
 GOALS_TOPICNAME = "/exploration_goals"
-SPHERES_CELLSIZE = 3
+EVAL_CELLSIZE = 2.5
 OCTOMAP_CELLSIZE = 0.5
+
+# exp_area_xbounds = [-50, 12]
+# exp_area_ybounds = [-40, 10]
+# exp_area_zbounds = [0, 7]
 
 def world_to_grid(coord, cellsize):
     """Convert a world coordinate to a discrete grid index."""
@@ -166,6 +170,7 @@ def process_explored_volume_spheres(bag, cellsize, proc_period):
             explored_cells = len(grid)  # Unique occupied cells
             explored_volume = explored_cells * (cellsize ** 3)
             print("Explored volume: " + str(explored_volume))
+            # print(grid.keys())
 
             # add data
             timestamps.append(t.to_sec() - start_time)
@@ -255,11 +260,11 @@ def process_and_save_bagfile_data(bagfile_path, proc_period, do_octomap = False,
     # VOLUME PROC - get octomap OR sphere data
     if not do_octomap:
         print("processing spheremap volume")
-        timestamps, explored_space = process_explored_volume_spheres(bag, SPHERES_CELLSIZE, proc_period)
+        timestamps, explored_space = process_explored_volume_spheres(bag, EVAL_CELLSIZE, proc_period)
     else:
         print("processing octomap volume")
         # timestamps, explored_space = process_explored_volume_octomap(bag, OCTOMAP_CELLSIZE, proc_period)
-        timestamps, explored_space = process_explored_volume_octomap_gridmarking(bag, OCTOMAP_CELLSIZE, SPHERES_CELLSIZE, proc_period)
+        timestamps, explored_space = process_explored_volume_octomap_gridmarking(bag, OCTOMAP_CELLSIZE, EVAL_CELLSIZE, proc_period)
     if len(explored_space ) > 0:
         endvals['Total Explored Volume'] = explored_space[-1]
 
@@ -320,9 +325,9 @@ def main():
         proc_period = float(sys.argv[1])
         current_path = os.getcwd()
         process_all_bags_in_path(current_path, proc_period)
-    elif len(sys.argv > 2):
+    elif len(sys.argv) > 2:
         print("Processing one bag:")
-        process_and_save_bagfile_data(sys.argv[1], float(sys.argv[2]), do_octomap = True)
+        process_and_save_bagfile_data(sys.argv[1], float(sys.argv[2]), do_octomap = False)
     else:
         print("Usage: rosrun your_package script.py <bagfile_path> <proc_period> /OR/ script.py <proc_period> to process all nearby pts")
         return

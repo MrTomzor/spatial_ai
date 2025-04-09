@@ -221,7 +221,7 @@ class RandomExplorer:
                 return True
             elif dist < mindist:
                 mindist = dist
-        rospy.loginfo("best dist: " + str(mindist))
+        # rospy.loginfo("best dist: " + str(mindist))
         return False
 
 if __name__ == "__main__":

@@ -3,6 +3,9 @@ import sys
 import matplotlib.pyplot as plt
 import os
 from collections import defaultdict
+import numpy as np
+
+MAX_EXPERIMENT_TIME = 20 * 60
 
 def read_data_from_txt(filename):
     # timestamps, explored_space, visited_vps, nonvisited_vps = [], [], [], []
@@ -28,9 +31,9 @@ def plot_exploration_progress_simple(datas):
     # plt.figure()
     for experiment in datas:
         plt.plot(experiment['timestamps'], experiment['explored_volumes'], marker='o', linestyle='-', label = experiment['name'])
-    plt.xlabel('time (s)')
-    plt.ylabel('total explored free space (sum of sphere radii)')
-    plt.title('explored free space over time')
+    plt.xlabel('Time [s]')
+    plt.ylabel('Explored Area [columns]')
+    # plt.title('explored free space over time')
     plt.legend()
     plt.grid()
     plt.show()
@@ -46,9 +49,9 @@ def plot_exploration_progress_clustered(datas):
         if experiment['method'] in colors.keys():
             clr = colors[experiment['method']]
         plt.plot(experiment['timestamps'], experiment['explored_volumes'], linestyle='-', color = clr)
-    plt.xlabel('time (s)')
-    plt.ylabel('total explored free space (sum of sphere radii)')
-    plt.title('explored free space over time')
+    plt.xlabel('Time [s]')
+    plt.ylabel('Explored Area [m^2]')
+    plt.title('Exploration Progress - Fireworld')
     # plt.legend()
     plt.grid()
     plt.show()
@@ -59,6 +62,7 @@ def extract_table_data(datas):
         'num_experiments': 0,
         'total_volume': 0.0,
         'max_volume': 0.0,
+        'best_volume_rosbag': 'none',
         'num_crashes': 0
     })
 
@@ -68,7 +72,10 @@ def extract_table_data(datas):
         
         method_stats[method]['num_experiments'] += 1
         method_stats[method]['total_volume'] += final_volume
-        method_stats[method]['max_volume'] = max(method_stats[method]['max_volume'], final_volume)
+        # method_stats[method]['max_volume'] = max(method_stats[method]['max_volume'], final_volume)
+        if method_stats[method]['max_volume'] < final_volume:
+            method_stats[method]['max_volume'] = final_volume
+            method_stats[method]['best_volume_rosbag'] = experiment['name']
         if experiment['crash']:
             method_stats[method]['num_crashes'] += 1
 
@@ -79,18 +86,38 @@ def extract_table_data(datas):
         print(f"  Number of Experiments: {stats['num_experiments']}")
         print(f"  Average Volume Explored: {avg_volume:.2f}")
         print(f"  Max Volume Explored: {stats['max_volume']:.2f}")
+        print(f"  Max Volume Rosbag {stats['best_volume_rosbag']:s}")
         print(f"  Number of Crashes: {stats['num_crashes']}")
         print("---------------------------")
 
 def extract_datas(files):
     datas = []
+
+    column_volume = (2.5 ** 3)
+    # area_x_min =  -50
+    # area_x_max =  12
+    # area_y_min =  -40
+    # area_y_max =  10
+    # area_max = (area_x_max - area_x_min) * (area_y_max - area_y_min)
+    # column_area = 2.5 ** 2.5
+
     for i in range(len(files)):
         filename = files[i]
         print("reading experiment " + str(i) + "from file: " + filename)
         timestamps, explored_volumes = read_data_from_txt(filename)
         experiment = {}
         experiment['timestamps'] = timestamps
-        experiment['explored_volumes'] = explored_volumes 
+        experiment['explored_volumes'] = (np.array(explored_volumes) / 2.5).tolist()
+        # experiment['explored_volumes'] = (np.array(explored_volumes) / column_volume).tolist()
+        # experiment['explored_volumes'] = ((column_area *(np.array(explored_volumes) / column_volume)) / area_max).tolist()
+
+        # CUT EXPERIMENT LEN (e.g. for when rosbag recording was left running for longer)
+        if timestamps[-1] > MAX_EXPERIMENT_TIME:
+            endval_index = np.argmax(np.array(timestamps) > MAX_EXPERIMENT_TIME)
+            experiment['timestamps'] = experiment['timestamps'][:endval_index]
+            experiment['explored_volumes'] = experiment['explored_volumes'][:endval_index] # end the data at this time
+            experiment['explored_volumes'][-1] = experiment['explored_volumes'][-2] # set this so that the drawn line goes a bit behind the max time for drawing purposes
+
 
         experiment['method'] = 'unknown'
         if "nofake" in filename:
@@ -136,7 +163,7 @@ def plot_progress_from_all_files(rootpath):
 
     
 
-    return true
+    return True
 
 def main():
     if len(sys.argv) > 1:
