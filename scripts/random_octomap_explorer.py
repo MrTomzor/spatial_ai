@@ -59,6 +59,7 @@ class RandomExplorer:
         # self.world_frame = "uav1/vio_origin"
         self.world_frame = "global"
         self.octomap_frame = "uav1/vio_origin"
+        self.markers_frame = "uav1/vio_origin"
 
         rospy.loginfo("Random Explorer node started.")
 
@@ -102,7 +103,8 @@ class RandomExplorer:
     def marker_callback(self, msg):
         """Updates the list of free-space markers."""
         # self.free_space_markers = [marker.pose.position for marker in msg.markers]
-        # print(msg.markers[0].header)
+        # print(msg.markers[0].header.frame_id)
+        self.markers_frame = msg.markers[0].header.frame_id
         self.free_space_markers_pts = []
         for i in range(len(msg.markers)):
             # print(len(msg.markers[i].points))
@@ -196,20 +198,30 @@ class RandomExplorer:
                     continue
 
 
-            # if self.is_near_free_marker(x, y, z):
-            if True:
+            if self.is_near_free_marker(x, y, z, self.world_frame):
+            # if True:
                 goal = Point(x=x, y=y, z=z)
                 return goal
         rospy.logwarn("Could not find a free random point.")
         return None
 
-    def is_near_free_marker(self, x, y, z):
+    def is_near_free_marker(self, x, y, z, pt_frame):
         """Checks if the sampled point is near any free-space marker."""
+        pt = Point(x=x, y=y, z=z)
+        trans_pt = self.transform_point(pt, pt_frame,  self.markers_frame )
+        x = trans_pt.x
+        y = trans_pt.y
+        z = trans_pt.z
+
+        mindist = 10000
         for marker in self.free_space_markers_pts:
             # dist = math.sqrt((marker.x - x) ** 2 + (marker.y - y) ** 2 + (marker.z - z) ** 2)
             dist = math.sqrt((marker.x - x) ** 2 + (marker.y - y) ** 2 + (marker.z - z) ** 2)
             if dist < self.free_threshold:
                 return True
+            elif dist < mindist:
+                mindist = dist
+        rospy.loginfo("best dist: " + str(mindist))
         return False
 
 if __name__ == "__main__":

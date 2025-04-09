@@ -1,0 +1,125 @@
+name: vio_simulation
+socket_name: mrs
+# tmux_options: -f /etc/ctu-mrs/tmux.conf
+root: ./
+startup_window: navigation
+pre_window: export UAV_NAME=uav1; export RUN_TYPE=simulation; export UAV_TYPE=f330; export WORLD_NAME=simulation; export SENSORS="garmin_down"
+windows:
+  - roscore:
+      layout: tiled
+      panes:
+        - roscore
+  - rosbag:
+      layout: tiled
+      panes:
+        - waitForOffboard; ./record_only_exploration.sh
+  - gazebo:
+      layout: tiled
+      panes:
+        # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_name:=forest gui:=true
+        # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_name:=grass_plane gui:=true
+        # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/schoolworld.sdf gui:=true
+        # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/flood3.sdf gui:=true
+        # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/sparse_world.sdf gui:=true
+        # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/wide_world1.sdf gui:=true
+        # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/garage2.sdf gui:=true
+        # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/crane_world7.sdf gui:=true
+        # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/brokencranes2.sdf gui:=true
+        # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/fireworld1.sdf gui:=true
+        # - waitForRos; export GAZEBO_MODEL_PATH=/home/tom/unity_robotics_ws/src/; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/widecave2.world gui:=true
+        - waitForRos; export GAZEBO_MODEL_PATH=/home/tom/unity_robotics_ws/src/; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/doublecave4.sdf gui:=true
+        # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/towers.sdf gui:=true
+        - waitForOdometry; gz camera -c gzclient_camera -f uav1; history -s gz camera -c gzclient_camera -f uav1
+
+  - hw_api:
+      layout: tiled
+      panes:
+        - waitForTime; roslaunch mrs_uav_px4_api api.launch
+  - status:
+      layout: tiled
+      panes:
+        - waitForSimulation; roslaunch mrs_uav_status status.launch
+  - navigation:
+      layout: tiled
+      panes:
+        # - waitForOdometry; rosrun spatial_ai ov_extension.py
+        - waitForOffboard; sleep 15; roslaunch spatial_ai mrs_openvins_explore.launch custom_config:=./custom_configs/exploration_area_config.yaml
+        # - waitForOffboard; roslaunch spatial_ai random_octomap_explorer.launch custom_config:=./custom_configs/exploration_area_config.yaml
+  - octomap_pcl_retransform:
+      layout: tiled
+      panes:
+        # - waitForOdometry; rosrun spatial_ai ov_extension.py
+        - waitForHw; rosrun spatial_ai pointcloud_transformer.py
+  - exploration_start:
+      layout: tiled
+      panes:
+        # - waitForOdometry; rosrun spatial_ai ov_extension.py
+        - waitForOffboard; sleep 22; rosservice call /navigation/setstate_exploring
+  - start_maneuver:
+      layout: tiled
+      panes:
+        - waitForOffboard; sleep 22; rosrun spatial_ai cave_start_maneuver.sh
+        # - waitForOffboard; sleep 22; rosrun spatial_ai goforward5m.sh
+  - VINS:
+      layout: tiled
+      panes:
+        # -  waitForOdometry; roslaunch vins_estimator simulation_fisheye.launch
+        -  waitForOdometry; roslaunch ov_repub simulation_bluefox2.launch
+  - VINS_republisher:
+      layout: tiled
+      panes:
+        -  waitForOdometry; roslaunch vins_republisher2 vins_republisher_openvins_bluefox.launch
+        # -  waitForOdometry; roslaunch vins_republisher vins_republisher.launch
+  - change_odom_source:
+      layout: tiled
+      panes:
+        -  waitForOffboard; sleep 40; rosservice call /$UAV_NAME/estimation_manager/change_estimator "open_vins"
+  - spawn:
+      layout: tiled
+      panes:
+        # CRANES
+        # - waitForSimulation; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-vio --pos 0 0 3 1.57"
+        # BROKEN CRANES
+        # - waitForSimulation; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-vio --pos 0 2 3 1.57"
+        # - waitForSimulation; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-vio --pos -13 -50 2 1.57"
+        # - waitForSimulation; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-vio --pos -8 -35 3 1.57"
+        # - waitForSimulation; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-vio --pos -20 -70 5 -1.57"
+        - waitForSimulation; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-vio --pos -23 -65 5 -1.57"
+        # FOREST
+        # - waitForSimulation; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-vio --pos 3 3 0 1.57"
+        # - waitForSimulation; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-vio --pos 0 5 0 0"
+        # - waitForSimulation; rosservice call /mrs_drone_spawner/spawn "1 $UAV_TYPE --enable-rangefinder --enable-vio --pos 3 0 0 0"
+  - control:
+      layout: tiled
+      panes:
+        # - waitForOdometry; roslaunch mrs_uav_core core.launch config_odometry:=./custom_configs/default_config.yaml config_constraint_manager:=./custom_configs/constraints.yaml config_uav_manager:=./custom_configs/uav_manager.yaml world_config:=./custom_configs/world_config.yaml
+        - waitForOdometry; roslaunch mrs_uav_core core.launch custom_config:=./custom_configs/custom_config.yaml world_config:=./custom_configs/world_config.yaml platform_config:=`rospack find mrs_uav_gazebo_simulation`/config/mrs_uav_system/$UAV_TYPE.yaml network_config:=./custom_configs/network_config.yaml
+  - takeoff:
+      layout: tiled
+      panes:
+        # - waitForSimulation; roslaunch mrs_uav_general automatic_start.launch
+        - waitForSimulation; roslaunch mrs_uav_autostart automatic_start.launch
+        - 'waitForControlNoOdom;
+          sleep 2;
+          rosservice call /$UAV_NAME/mavros/cmd/arming 1;
+          sleep 2;
+          rosservice call /$UAV_NAME/mavros/set_mode 0 offboard'
+  - rviz:
+      layout: tiled
+      panes:
+        - waitForControlNoOdom; roslaunch spatial_ai rviz.launch
+        # - waitForControlNoOdom; roslaunch mrs_uav_core rviz.launch
+        # - waitForControlNoOdom; roslaunch mrs_rviz_plugins load_robot.launch
+        # - waitForControlNoOdom; roslaunch mrs_rviz_plugins rviz_interface.launch
+        # - waitForControl; roslaunch mrs_uav_testing rviz_ov_navigation.launch
+        # - waitForControl; roslaunch mrs_uav_testing rviz_random_simulation.launch
+        # - waitForControl; roslaunch mrs_rviz_plugins load_robot.launch
+  - easy_control:
+      layout: tiled
+      panes:
+        # - waitForControl; waitForControl; roslaunch mrs_uav_general logitech_joystick.launch
+        - waitForControl; waitForControl; roslaunch mrs_rviz_plugins rviz_interface.launch
+  - layout:
+      layout: tiled
+      panes:
+        - waitForControl; sleep 3; ~/.i3/layout_manager.sh ./layout.json
