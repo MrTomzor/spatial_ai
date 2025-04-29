@@ -12,7 +12,8 @@ windows:
   - rosbag:
       layout: tiled
       panes:
-        - waitForOffboard; ./record_only_exploration.sh
+        # - waitForOffboard; ./record_only_exploration.sh
+        - waitForOffboard; ../record_exploration_and_camera.sh
   - gazebo:
       layout: tiled
       panes:
@@ -28,7 +29,8 @@ windows:
         # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/fireworld1.sdf gui:=true
         # - waitForRos; export GAZEBO_MODEL_PATH=/home/tom/unity_robotics_ws/src/; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/widecave2.world gui:=true
         # - waitForRos; export GAZEBO_MODEL_PATH=/home/tom/unity_robotics_ws/src/; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/doublecave4.sdf gui:=true
-        - waitForRos; export GAZEBO_MODEL_PATH=/home/tom/unity_robotics_ws/src/; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/cave_trees.sdf gui:=true
+        # - waitForRos; export GAZEBO_MODEL_PATH=/home/tom/unity_robotics_ws/src/; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/cave_trees.sdf gui:=true
+        - waitForRos; export GAZEBO_MODEL_PATH=/home/tom/unity_robotics_ws/src/; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/lushcave_morelights.sdf gui:=true
         # - waitForRos; roslaunch mrs_uav_gazebo_simulation simulation.launch world_file:=`rospack find spatial_ai`/worlds/towers.sdf gui:=true
         - waitForOdometry; gz camera -c gzclient_camera -f uav1; history -s gz camera -c gzclient_camera -f uav1
 

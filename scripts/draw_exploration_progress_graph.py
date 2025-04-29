@@ -28,7 +28,7 @@ def read_data_from_txt(filename):
     return timestamps, explored_space
 
 def plot_exploration_progress_simple(datas):
-    # plt.figure()
+
     for experiment in datas:
         plt.plot(experiment['timestamps'], experiment['explored_volumes'], marker='o', linestyle='-', label = experiment['name'])
     plt.xlabel('Time [s]')
@@ -39,6 +39,10 @@ def plot_exploration_progress_simple(datas):
     plt.show()
 
 def plot_exploration_progress_clustered(datas):
+
+    my_dpi = 100
+    plt.figure(figsize=(650/my_dpi, 650/my_dpi), dpi=my_dpi)
+
     colors = {}
     colors['openspace'] = 'green'
     colors['basemono'] = 'red'
@@ -49,9 +53,9 @@ def plot_exploration_progress_clustered(datas):
         if experiment['method'] in colors.keys():
             clr = colors[experiment['method']]
         plt.plot(experiment['timestamps'], experiment['explored_volumes'], linestyle='-', color = clr)
-    plt.xlabel('Time [s]')
-    plt.ylabel('Explored Area [m^2]')
-    plt.title('Exploration Progress - Fireworld')
+    plt.xlabel('Time [s]', fontsize = 18)
+    plt.ylabel('Explored Area [m^2]', fontsize = 18)
+    plt.title('Exploration Progress', fontsize = 20)
     # plt.legend()
     plt.grid()
     plt.show()
@@ -66,12 +70,20 @@ def extract_table_data(datas):
         'num_crashes': 0
     })
 
+    print("max experiment min: " + str(MAX_EXPERIMENT_TIME / 60))
     for experiment in datas:
         method = experiment['method']
         final_volume = experiment['explored_volumes'][-1] if experiment['explored_volumes'] else 0.0
+        maxtime = experiment['total_time']
         
         method_stats[method]['num_experiments'] += 1
         method_stats[method]['total_volume'] += final_volume
+
+        # print("Method " + method + " MAXTIME: " + str(maxtime) + " Total Volume: " + str(final_volume) + " Exper: " + experiment['name']) 
+        print("Method " + method + " MAXTIME: " + str(maxtime) + " Total Volume: " + str(final_volume)) 
+        print( " Exper: " + experiment['name']) 
+        print("---") 
+
         # method_stats[method]['max_volume'] = max(method_stats[method]['max_volume'], final_volume)
         if method_stats[method]['max_volume'] < final_volume:
             method_stats[method]['max_volume'] = final_volume
@@ -107,6 +119,7 @@ def extract_datas(files):
         timestamps, explored_volumes = read_data_from_txt(filename)
         experiment = {}
         experiment['timestamps'] = timestamps
+        experiment['total_time'] = timestamps[-1]
         experiment['explored_volumes'] = (np.array(explored_volumes) / 2.5).tolist()
         # experiment['explored_volumes'] = (np.array(explored_volumes) / column_volume).tolist()
         # experiment['explored_volumes'] = ((column_area *(np.array(explored_volumes) / column_volume)) / area_max).tolist()
@@ -122,7 +135,7 @@ def extract_datas(files):
         experiment['method'] = 'unknown'
         if "nofake" in filename:
             experiment['method'] = 'basemono'
-        elif "fake" in filename:
+        elif "fake" in filename or "monospheres" in filename:
             experiment['method'] = 'openspace'
         elif "astar" in filename:
             experiment['method'] = 'octomap'

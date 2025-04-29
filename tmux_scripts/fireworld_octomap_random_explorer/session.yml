@@ -12,7 +12,8 @@ windows:
   - rosbag:
       layout: tiled
       panes:
-        - waitForOffboard; ./record_only_exploration.sh
+        # - waitForOffboard; ./record_only_exploration.sh
+        - waitForOffboard; ../record_exploration_and_camera.sh
   - gazebo:
       layout: tiled
       panes:

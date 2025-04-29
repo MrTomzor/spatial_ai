@@ -25,6 +25,9 @@ max_waypoint_distance: -1.0 # [m] // or set negative for no padding
 # planning_tree:
 #   resolution: 0.1
 
+# visualization
+points_scale: 0.2
+lines_scale: 0.02
 
 
 # SUBT

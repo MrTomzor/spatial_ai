@@ -148,7 +148,7 @@ class LocalNavigatorModule:
         self.roadmap_navigation_success = False
 
         self.local_reconsidering_index = 0
-        self.max_local_reconsidering_index = 2
+        self.max_local_reconsidering_index = 3
 
         self.global_reconsidering_last_time = rospy.Time.now()
         self.global_reconsidering_period  = 2

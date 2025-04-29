@@ -198,8 +198,8 @@ class RandomExplorer:
                     continue
 
 
-            if self.is_near_free_marker(x, y, z, self.world_frame):
-            # if True:
+            # if self.is_near_free_marker(x, y, z, self.world_frame):
+            if True:
                 goal = Point(x=x, y=y, z=z)
                 return goal
         rospy.logwarn("Could not find a free random point.")
