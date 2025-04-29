@@ -232,7 +232,7 @@ class SubmapBuilderModule:
                 return
             point_cloud_array = np.array(pc_list, dtype=np.float32)
 
-            # OpenVINS outputs always some point at origin, and it is not really useful for us, breaks hull shit
+            # OpenVINS outputs always some point at origin, and it is not really useful for us, breaks hull stuff
             #TODO - solve what to do with this in future
             nonzero_pts = np.array(np.linalg.norm(point_cloud_array, axis=1) > 0)
             if not np.any(nonzero_pts):
