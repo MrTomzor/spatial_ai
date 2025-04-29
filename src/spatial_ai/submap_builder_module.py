@@ -156,19 +156,19 @@ class SubmapBuilderModule:
         self.visual_kf_addition_heading = 3.14159 /2
         self.visual_kf_addition_dist = 2
 
-        self.fake_freespace_pts_enabled = rospy.get_param("local_mapping/fake_freespace_pts_enabled")
-        self.ff_points_always_active = rospy.get_param("local_mapping/fake_freespace_pts_always_active")
-        self.ff_points_ignore_tracking = rospy.get_param("local_mapping/fake_freespace_ignore_tracking")
+        self.ofs_freespace_pts_enabled = rospy.get_param("local_mapping/ofs_pts_enabled")
+        self.ff_points_always_active = rospy.get_param("local_mapping/ofs_pts_always_active")
+        self.ff_points_ignore_tracking = rospy.get_param("local_mapping/ofs_ignore_tracking")
 
 
-        # LOAD FAKE FREESPACE POINTS
-        self.ff_dist = rospy.get_param("local_mapping/fake_freespace_pts_dist")
-        self.ff_min_parallax = rospy.get_param("local_mapping/fake_freespace_min_parallax")
+        # LOAD ofs FREESPACE POINTS
+        self.ff_dist = rospy.get_param("local_mapping/ofs_pts_dist")
+        self.ff_min_parallax = rospy.get_param("local_mapping/ofs_min_parallax")
         self.ff_pts_W = 5
         self.ff_pts_H = 5
-        self.init_fake_freespace_pts();
+        self.init_ofs_freespace_pts();
         self.ff_pose_buffer = []
-        self.max_ff_buffer_len = rospy.get_param("local_mapping/fake_freespace_tracking_buffer_len")
+        self.max_ff_buffer_len = rospy.get_param("local_mapping/ofs_tracking_buffer_len")
         
         # # #}
 
@@ -183,7 +183,7 @@ class SubmapBuilderModule:
         runtime_obstacles_and_frontiers_update = 0
         runtime_connectivity_update = 0
 
-        self.fake_freespace_update()
+        self.ofs_freespace_update()
 
         # Add new visual keyframe if enough distance has been traveled# # #{
         with ScopedLock(self.spheremap_mutex):
@@ -421,9 +421,9 @@ class SubmapBuilderModule:
             # BY DEFAULT THE MESH PTS ARE JUS TTHE VISIBLE PTS (and origin added later)
             fullmesh_pts = positive_z_points
 
-            # GET ACTIVATED AND USABLE FAKE FREESPACE PTS
+            # GET ACTIVATED AND USABLE OFS FREESPACE PTS
             added_ff_pts = None
-            if np.any(self.ff_points_active_mask) and self.fake_freespace_pts_enabled:
+            if np.any(self.ff_points_active_mask) and self.ofs_freespace_pts_enabled:
                 # positive_z_points  = np.concatenate((positive_z_points, self.egocentric_ff_pts[self.ff_points_active_mask, :].T), axis = 1)
                 pixpos_ff_pts = getPixelPositions(self.egocentric_ff_pts.T, self.K, self.distortion_coeffs)
                 inhull = np.array([visible_obstacle_pts_polygon.contains(geometry.Point(pixpos_ff_pts[i, 0], pixpos_ff_pts[i, 1])) for i in range(pixpos_ff_pts.shape[0])])
@@ -436,11 +436,11 @@ class SubmapBuilderModule:
                 # print("PIXPOS ACTIVE AND OUTSIDE HULL:")
                 # print(pixpos_ff_pts[addition_mask, :])
 
-                self.faked_pixpos_lastframe = pixpos_ff_pts[addition_mask, :]
+                self.ofs_pixpos_lastframe = pixpos_ff_pts[addition_mask, :]
 
             # ADD THEM IF SOME CAN BE ADDED
             if not added_ff_pts is None:
-                # print("ADDING " + str(added_ff_pts.shape[1]) + " FAKE FREESPACE PTS THAT DO NOT LIE IN CURRENT VISIBLE PT POLYGON")
+                # print("ADDING " + str(added_ff_pts.shape[1]) + " OFS FREESPACE PTS THAT DO NOT LIE IN CURRENT VISIBLE PT POLYGON")
                 fullmesh_pts = np.concatenate((fullmesh_pts, added_ff_pts), axis = 1)
                 # RECOMPUTE HULL 
                 pixpos = getPixelPositions(fullmesh_pts, self.K, self.distortion_coeffs)
@@ -603,7 +603,7 @@ class SubmapBuilderModule:
                     print(time.time() - tick)
 
                     tick = time.time()
-                    # CHECK IF THE SURFELS PROJECT TO HULL FORMED BY ONLY OBSTACLE PTS (dont delete pts with fake freespace!)
+                    # CHECK IF THE SURFELS PROJECT TO HULL FORMED BY ONLY OBSTACLE PTS (dont delete pts with OFS freespace!)
                     pixpos = getPixelPositions(surfel_points_in_camframe[surfels_in_bbx_idxs, :].T, self.K)
                     # print("AAA")
                     # inhull = np.array([visible_obstacle_pts_polygon.contains(geometry.Point(pixpos[i, 0], pixpos[i, 1])) for i in range(pixpos.shape[0])])
@@ -959,10 +959,10 @@ class SubmapBuilderModule:
                 print("SPHEREMAP visualization time: " + str((comp_time) * 1000) +  " ms")
 # # #}
 
-    # def fake_freespace_update(self):# #{
-    def fake_freespace_update(self):
-        print("FAKE FREESPACE")
-        self.visualize_fake_freespace_pts()
+    # def ofs_freespace_update(self):# #{
+    def ofs_freespace_update(self):
+        print("ofs FREESPACE")
+        self.visualize_ofs_freespace_pts()
         # T_odom_to_cam = lookupTransformAsMatrix(self.fcu_frame, self.mapper.camera_frame, self.tf_listener) @ T_fcu_to_cam 
 
         T_odom_to_cam = lookupTransformAsMatrix(self.odom_frame, self.camera_frame, self.tf_listener)
@@ -1068,10 +1068,10 @@ class SubmapBuilderModule:
             self.ff_points_active_mask = np.full((n_pts,1), True).flatten()
                 # # #}
 
-    # def init_fake_freespace_pts(self):# #{
-    def init_fake_freespace_pts(self):
+    # def init_ofs_freespace_pts(self):# #{
+    def init_ofs_freespace_pts(self):
 
-        self.faked_pixpos_lastframe = None
+        self.ofs_pixpos_lastframe = None
         self.ff_trim = 0.2
 
         xstart = self.ff_trim* self.width
@@ -1084,7 +1084,7 @@ class SubmapBuilderModule:
         pts_2d = np.array([[xstart + x * xstep, ystart + y * ystep] for x in range(self.ff_pts_W+1) for y in range(self.ff_pts_H+1)])
         n_pts = pts_2d.shape[0]
 
-        print("INIT FAKE FSPACE PTS:")
+        print("INIT OFS FSPACE PTS:")
         print(pts_2d)
 
         print("KOCKA")
@@ -1143,7 +1143,7 @@ class SubmapBuilderModule:
 
     # VISUALIZE
 
-    def visualize_fake_freespace_pts(self):# # #{
+    def visualize_ofs_freespace_pts(self):# # #{
         marker_array = MarkerArray()
 
         ms = self.marker_scale
@@ -1264,12 +1264,12 @@ class SubmapBuilderModule:
                 cv2.rectangle(rgb, top_left, bottom_right, point_clr, -1)
 
 
-        # FAKE FSPACE
+        # OFS FSPACE
         if do_ffs:
-            if not self.faked_pixpos_lastframe is None:
-                for i in range(self.faked_pixpos_lastframe.shape[0]):
-                    x = int(self.faked_pixpos_lastframe[i, 0])
-                    y = int(self.faked_pixpos_lastframe[i, 1])
+            if not self.ofs_pixpos_lastframe is None:
+                for i in range(self.ofs_pixpos_lastframe.shape[0]):
+                    x = int(self.ofs_pixpos_lastframe[i, 0])
+                    y = int(self.ofs_pixpos_lastframe[i, 1])
                     # rgb = cv2.circle(rgb, (x, y), 5, 
                     #                # (0, 255, 0), -1) 
                     #                ffs_clr, -1) 

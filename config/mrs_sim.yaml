@@ -29,12 +29,12 @@ local_mapping:
   get_camera_calib_from_topic: False
   camera_info_topic: '/uav1/vio/camera/camera_info'
 
-  fake_freespace_pts_enabled: True
-  fake_freespace_pts_dist: 15
-  fake_freespace_min_parallax: 0.07
-  fake_freespace_pts_always_active: False #DANGEROUS if True
-  fake_freespace_ignore_tracking: False #DANGEROUS if True
-  fake_freespace_tracking_buffer_len: 10
+  ofs_pts_enabled: True
+  ofs_pts_dist: 15
+  ofs_min_parallax: 0.07
+  ofs_pts_always_active: False #DANGEROUS if True
+  ofs_ignore_tracking: False #DANGEROUS if True
+  ofs_tracking_buffer_len: 10
 
 local_nav:
   enabled: True

@@ -45,7 +45,6 @@ def plot_exploration_progress_clustered(datas):
 
     colors = {}
     colors['openspace'] = 'green'
-    colors['basemono'] = 'red'
     colors['octomap'] = 'blue'
 
     for experiment in datas:
@@ -133,11 +132,9 @@ def extract_datas(files):
 
 
         experiment['method'] = 'unknown'
-        if "nofake" in filename:
-            experiment['method'] = 'basemono'
-        elif "fake" in filename or "monospheres" in filename:
+        if "monospheres" in filename:
             experiment['method'] = 'openspace'
-        elif "astar" in filename:
+        elif "gridbased" in filename:
             experiment['method'] = 'octomap'
 
         experiment['crash'] = "crash" in filename
